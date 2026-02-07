@@ -5,5 +5,17 @@
         <link>https://allthingsclaude.github.io/battery/appcast.xml</link>
         <description>Battery - Claude Code usage monitor</description>
         <language>en</language>
-    </channel>
+            <item>
+            <title>Version 0.1.0</title>
+            <pubDate>Sat, 07 Feb 2026 13:11:24 +0000</pubDate>
+            <sparkle:version>17</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure
+                url="https://github.com/allthingsclaude/battery/releases/download/v0.1.0/Battery-0.1.0.dmg"
+                length="1904223"
+                type="application/octet-stream"
+                sparkle:edSignature="r82p1teLtIeiY1/MDLsQs3oAXHpyEAaTO2rcIGZv00I99bcFAj9ghkar4kAwpBJmn5WbHGcVs67FsTABlhikBg=="
+            />
+        </item>    </channel>
 </rss>
