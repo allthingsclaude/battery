@@ -113,5 +113,17 @@
                 type="application/octet-stream"
                 sparkle:edSignature="Yx+JDxvohEue+a6krcNT0WhWmWGCwo+fFwO7owRt/bB/9M83G+H2UzuGEW+tkYlfFyX1cKMIkCAPWOBh54zfBw=="
             />
+        </item>            <item>
+            <title>Version 0.1.2</title>
+            <pubDate>Mon, 09 Feb 2026 14:04:57 +0000</pubDate>
+            <sparkle:version>49</sparkle:version>
+            <sparkle:shortVersionString>0.1.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure
+                url="https://github.com/allthingsclaude/battery/releases/download/v0.1.2/Battery-0.1.2.dmg"
+                length="3030315"
+                type="application/octet-stream"
+                sparkle:edSignature="Q3D0o2xwQM4MjOLORYh5s8oYfPiHsHA9F3dXCQEidZrPMvIEIM0WO/7fw9tOvP31Y9hIjJx6+9kV3qoiH8aTBA=="
+            />
         </item>    </channel>
 </rss>
