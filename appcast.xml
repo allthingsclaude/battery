@@ -190,5 +190,18 @@
                 sparkle:edSignature="+HTStu841lOtFAYWUR85HhnDGd6WmbfHNf+K+ZFwE0dbGE2i7aa5pi8DlP33TtgsgCRvapfjnfTX7iruqSHiBQ=="
             />
         </item>
+            <item>
+            <title>Version 0.2.3</title>
+            <pubDate>Sat, 14 Feb 2026 07:51:21 +0000</pubDate>
+            <sparkle:version>69</sparkle:version>
+            <sparkle:shortVersionString>0.2.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure
+                url="https://github.com/allthingsclaude/battery/releases/download/v0.2.3/Battery-0.2.3.dmg"
+                length="3388538"
+                type="application/octet-stream"
+                sparkle:edSignature="Yc9CFeaPsm0dFpBucDtcd9GjhbC3cwIS7NjupAfgNNiwyH1RiXSNV9W9i6Y1vqmruNOC0vbl2AmQrkDCDDdeDw=="
+            />
+        </item>
     </channel>
 </rss>
