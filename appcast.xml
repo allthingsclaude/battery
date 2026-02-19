@@ -255,5 +255,18 @@
                 sparkle:edSignature="b/A+S/Zi8x0ru2VV25lMghEVT+aFU7res7ya60+xAdl3iyFmEm5pnh5V50MX5irBmNrJjAfU+8X8ZM6mF1sxAg=="
             />
         </item>
+            <item>
+            <title>Version 0.2.8</title>
+            <pubDate>Thu, 19 Feb 2026 12:50:09 +0000</pubDate>
+            <sparkle:version>87</sparkle:version>
+            <sparkle:shortVersionString>0.2.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure
+                url="https://github.com/allthingsclaude/battery/releases/download/v0.2.8/Battery-0.2.8.dmg"
+                length="3430846"
+                type="application/octet-stream"
+                sparkle:edSignature="EI+XEX3X2Kqx9feQw/QT6oimKjMyOaMDXug+52VKywNjvJy2vls88+ZzlMWq1UTBa1EA3yKPLzxshXOVYC4XBQ=="
+            />
+        </item>
     </channel>
 </rss>
