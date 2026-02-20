@@ -268,5 +268,18 @@
                 sparkle:edSignature="EI+XEX3X2Kqx9feQw/QT6oimKjMyOaMDXug+52VKywNjvJy2vls88+ZzlMWq1UTBa1EA3yKPLzxshXOVYC4XBQ=="
             />
         </item>
+            <item>
+            <title>Version 0.2.9</title>
+            <pubDate>Fri, 20 Feb 2026 14:08:42 +0000</pubDate>
+            <sparkle:version>91</sparkle:version>
+            <sparkle:shortVersionString>0.2.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure
+                url="https://github.com/allthingsclaude/battery/releases/download/v0.2.9/Battery-0.2.9.dmg"
+                length="3432316"
+                type="application/octet-stream"
+                sparkle:edSignature="9dXka4GvBIfrD8cNKIAATPzX03gPN6DE4OIs7R6oPBaiYX2r+/GQ/gxv1fnvcHMDkt26+K2eh2F/aJTKRlNyBA=="
+            />
+        </item>
     </channel>
 </rss>
