@@ -294,5 +294,18 @@
                 sparkle:edSignature="VxpxLyokZ6cFltJQbCTBwQfsA1e/uHsOUt7aETe8cqPFt2GDsn7S/ocBF+aiftQZcz1+5Aw5v8yoxRefd3WYAQ=="
             />
         </item>
+            <item>
+            <title>Version 0.2.11</title>
+            <pubDate>Fri, 20 Feb 2026 14:59:46 +0000</pubDate>
+            <sparkle:version>98</sparkle:version>
+            <sparkle:shortVersionString>0.2.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure
+                url="https://github.com/allthingsclaude/battery/releases/download/v0.2.11/Battery-0.2.11.dmg"
+                length="3433252"
+                type="application/octet-stream"
+                sparkle:edSignature="vrds8ovsqCvJ5GmhFq/zLQLhGU//+I3kvA9QTql+jFuWP6i2UXUcuG/hS0oQJs/mKnRtyBv0dLskDNxeY23qAA=="
+            />
+        </item>
     </channel>
 </rss>
