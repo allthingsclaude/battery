@@ -1,6 +1,6 @@
 cask "claude-battery" do
   version "0.3.6"
-  sha256 "67b03901d28255482f4ef0bf5248d1f138f49cb4fe45a97afa9446154b41c586"
+  sha256 "99815b2c798c34bc250d73931714bff09fafd7a5234d4bd780287482c653492e"
 
   url "https://github.com/allthingsclaude/battery/releases/download/v0.3.6/Battery-0.3.6.dmg"
   name "Battery"
