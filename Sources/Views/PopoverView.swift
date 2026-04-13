@@ -10,12 +10,16 @@ struct PopoverView: View {
         Group {
             if showSettings {
                 SettingsView(updaterService: updaterService, usageViewModel: viewModel, onClose: { showSettings = false })
+                    .id("settings")
             } else if viewModel.needsLogin {
                 LoginView(viewModel: viewModel)
+                    .id("login")
             } else {
                 mainContent
+                    .id("main")
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .animation(.none, value: showSettings)
         .animation(.none, value: viewModel.needsLogin)
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
