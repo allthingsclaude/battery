@@ -5,21 +5,31 @@ struct PopoverView: View {
     @ObservedObject var viewModel: UsageViewModel
     @ObservedObject var updaterService: UpdaterService
     @State private var showSettings = false
+    @State private var mainContentHeight: CGFloat = 460
 
     var body: some View {
         Group {
             if showSettings {
                 SettingsView(updaterService: updaterService, usageViewModel: viewModel, onClose: { showSettings = false })
+                    .frame(height: mainContentHeight)
                     .id("settings")
             } else if viewModel.needsLogin {
                 LoginView(viewModel: viewModel)
                     .id("login")
             } else {
                 mainContent
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(key: MainContentHeightKey.self, value: geo.size.height)
+                        }
+                    )
                     .id("main")
             }
         }
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .onPreferenceChange(MainContentHeightKey.self) { newValue in
+            if newValue > 0 { mainContentHeight = newValue }
+        }
         .animation(.none, value: showSettings)
         .animation(.none, value: viewModel.needsLogin)
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
@@ -220,5 +230,12 @@ struct PopoverView: View {
         .padding(16)
         .animation(.none, value: viewModel.selectedAccountId)
         .background(AppSettings.shared.activeTheme.popoverBackground)
+    }
+}
+
+private struct MainContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
