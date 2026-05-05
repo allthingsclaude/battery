@@ -24,6 +24,7 @@ struct PopoverView: View {
                         }
                     )
                     .id("main")
+                    .onAppear { viewModel.refresh() }
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)

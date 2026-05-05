@@ -16,11 +16,13 @@ struct MenuBarIconView: View {
             }
 
             if viewModel.isConnected {
-                let text = viewModel.menuBarText
-                if !text.isEmpty {
-                    Text(" \(text)")
-                        .font(.caption)
-                        .monospacedDigit()
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let text = viewModel.menuBarText(at: context.date)
+                    if !text.isEmpty {
+                        Text(" \(text)")
+                            .font(.caption)
+                            .monospacedDigit()
+                    }
                 }
             } else {
                 Text("--")

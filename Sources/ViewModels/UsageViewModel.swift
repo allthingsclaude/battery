@@ -77,19 +77,25 @@ class UsageViewModel: ObservableObject {
         UsageLevel.from(utilization: weeklyUtilization).color
     }
 
-    var menuBarText: String {
+    var menuBarText: String { menuBarText(at: Date()) }
+
+    func menuBarText(at now: Date) -> String {
         let settings = AppSettings.shared
         guard settings.showMenuBarText else { return "" }
 
         let pct = settings.displayPercentage(for: sessionUtilization)
 
         let time: String
-        if settings.showTimeSinceReset, let resetsAt = sessionResetsAt {
-            // 5-hour window: time since reset = 5h - time remaining
-            let elapsed = 18000 - max(0, resetsAt.timeIntervalSinceNow)
-            time = TimeFormatting.shortDuration(max(0, elapsed))
+        if let resetsAt = sessionResetsAt {
+            let remaining = max(0, resetsAt.timeIntervalSince(now))
+            if settings.showTimeSinceReset {
+                // 5-hour window: time since reset = 5h - time remaining
+                time = TimeFormatting.shortDuration(max(0, 18000 - remaining))
+            } else {
+                time = TimeFormatting.shortDuration(remaining)
+            }
         } else {
-            time = TimeFormatting.shortDuration(sessionTimeRemaining)
+            time = TimeFormatting.shortDuration(0)
         }
 
         switch settings.displayMode {
