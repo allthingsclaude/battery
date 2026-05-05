@@ -16,20 +16,34 @@ struct MenuBarIconView: View {
             }
 
             if viewModel.isConnected {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    let text = viewModel.menuBarText(at: context.date)
-                    if !text.isEmpty {
-                        Text(" \(text)")
-                            .font(.caption)
-                            .monospacedDigit()
-                    }
-                }
+                MenuBarTickingText(viewModel: viewModel)
             } else {
                 Text("--")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+/// Live-updating menu bar text. Owns its own 1s timer so the parent
+/// `MenuBarIconView` does not re-render (and reallocate the progress
+/// bar `NSImage`) on every tick.
+private struct MenuBarTickingText: View {
+    @ObservedObject var viewModel: UsageViewModel
+    @State private var now: Date = Date()
+    private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        let text = viewModel.menuBarText(at: now)
+        Group {
+            if !text.isEmpty {
+                Text(" \(text)")
+                    .font(.caption)
+                    .monospacedDigit()
+            }
+        }
+        .onReceive(tick) { now = $0 }
     }
 }
 
