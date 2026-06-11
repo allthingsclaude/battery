@@ -27,7 +27,7 @@ struct PopoverView: View {
                     .onAppear { viewModel.refresh() }
             }
         }
-        .frame(maxHeight: .infinity, alignment: .top)
+        .fixedSize(horizontal: false, vertical: true)
         .onPreferenceChange(MainContentHeightKey.self) { newValue in
             if newValue > 0 { mainContentHeight = newValue }
         }
