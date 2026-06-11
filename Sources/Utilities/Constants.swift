@@ -23,4 +23,7 @@ enum Constants {
 
     // Database
     static let dataRetentionDays: Int = 90
+
+    // UI — Tahoe-style corner radius for the menu bar panel
+    static let panelCornerRadius: CGFloat = 24
 }

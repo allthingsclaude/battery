@@ -9,6 +9,7 @@ struct BatteryApp: App {
         MenuBarExtra {
             PopoverView(viewModel: viewModel, updaterService: updaterService)
                 .frame(width: 320)
+                .background(PanelCornerStyler(cornerRadius: Constants.panelCornerRadius))
         } label: {
             MenuBarIconView(viewModel: viewModel)
         }
