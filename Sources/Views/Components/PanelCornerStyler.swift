@@ -52,8 +52,14 @@ struct PanelCornerStyler: NSViewRepresentable {
             super.viewDidMoveToWindow()
             apply()
             // The panel finishes configuring itself after attaching views,
-            // so re-apply once it has settled.
-            DispatchQueue.main.async { [weak self] in self?.apply() }
+            // so re-apply once it has settled. The height sync runs only
+            // here — once per opening, after layout, never from within a
+            // setFrame cascade (it would recurse) — to correct the stale
+            // height the panel caches between openings.
+            DispatchQueue.main.async { [weak self] in
+                self?.apply()
+                self?.syncWindowHeight()
+            }
 
             // The panel resizes as content loads, which can rebuild the
             // glass backdrop layers with the stock radius — re-apply.
@@ -106,7 +112,6 @@ struct PanelCornerStyler: NSViewRepresentable {
 
             PanelCornerStyler.overrideCornerMask(on: window, radius: cornerRadius)
 
-            syncWindowHeight()
             window.invalidateShadow()
         }
 
@@ -115,7 +120,11 @@ struct PanelCornerStyler: NSViewRepresentable {
         /// old height and floats the content in the middle. This view is the
         /// content's background, so its own height is the content's ideal
         /// height — resize the window to match, keeping the top edge
-        /// anchored under the menu bar.
+        /// anchored under the menu bar. Must never be called from apply():
+        /// apply() runs from the frame-change notification that setFrame
+        /// posts synchronously, and the content view hasn't resized at that
+        /// point, so the mismatch re-triggers and recurses to stack
+        /// overflow.
         private func syncWindowHeight() {
             guard let window, let contentView = window.contentView else { return }
             let target = frame.height
