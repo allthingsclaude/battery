@@ -2,17 +2,11 @@ import SwiftUI
 
 @main
 struct BatteryApp: App {
-    @StateObject private var viewModel = UsageViewModel()
-    @StateObject private var updaterService = UpdaterService()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        MenuBarExtra {
-            PopoverView(viewModel: viewModel, updaterService: updaterService)
-                .frame(width: 320)
-                .background(PanelCornerStyler(cornerRadius: Constants.panelCornerRadius))
-        } label: {
-            MenuBarIconView(viewModel: viewModel)
+        Settings {
+            EmptyView()
         }
-        .menuBarExtraStyle(.window)
     }
 }

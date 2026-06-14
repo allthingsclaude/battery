@@ -19,6 +19,17 @@ swift build 2>&1 | tail -1
 # Bundle
 bash "$SCRIPT_DIR/bundle.sh" debug
 
+# Verify the bundle actually contains the binary we just built —
+# codesigning rewrites bytes, but the Mach-O UUID survives it.
+BUILT_UUID=$(dwarfdump --uuid "$PROJECT_DIR/.build/debug/Battery" | awk '{print $2}')
+BUNDLED_UUID=$(dwarfdump --uuid "$PROJECT_DIR/Battery.app/Contents/MacOS/Battery" | awk '{print $2}')
+if [[ "$BUILT_UUID" != "$BUNDLED_UUID" ]]; then
+    echo "ERROR: Bundled binary is stale (UUID mismatch)" >&2
+    echo "  built:   $BUILT_UUID" >&2
+    echo "  bundled: $BUNDLED_UUID" >&2
+    exit 1
+fi
+
 # Launch
 echo "Launching..."
 open "$PROJECT_DIR/Battery.app"
