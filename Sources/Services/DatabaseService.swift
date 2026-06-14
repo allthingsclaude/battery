@@ -19,9 +19,16 @@ actor DatabaseService {
     private let colPlanTier = SQLite.Expression<String>("plan_tier")
     private let colAccountId = SQLite.Expression<String?>("account_id")
 
-    func initialize() throws {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let batteryDir = appSupport.appendingPathComponent("Battery", isDirectory: true)
+    /// - Parameter directory: Override for the database directory. Defaults to
+    ///   the app's Application Support folder; tests pass a temp directory.
+    func initialize(directory: URL? = nil) throws {
+        let batteryDir: URL
+        if let directory {
+            batteryDir = directory
+        } else {
+            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            batteryDir = appSupport.appendingPathComponent("Battery", isDirectory: true)
+        }
         try FileManager.default.createDirectory(at: batteryDir, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
         let dbPath = batteryDir.appendingPathComponent("battery.db").path
@@ -40,6 +47,7 @@ actor DatabaseService {
             t.column(colSonnetUtil)
             t.column(colOpusUtil)
             t.column(colPlanTier)
+            t.column(colAccountId)
         })
 
         // Create index on timestamp for efficient range queries
@@ -116,15 +124,18 @@ actor DatabaseService {
 
     private func migrateAddAccountId() {
         guard let db = db else { return }
-        // Check if column exists by trying a query; if it fails, add the column
+        // Detect the column via PRAGMA. A SELECT-based probe is unreliable here:
+        // SQLite.swift's `scalar` swallows the prepare-time "no such column"
+        // error on an empty table and returns nil instead of throwing, so the
+        // column would never be added and every insert that references it would
+        // fail silently (breaking snapshot persistence and projections).
         do {
-            _ = try db.scalar(snapshots.select(colAccountId).limit(1))
+            let columns = try db.prepare("PRAGMA table_info(usage_snapshots)")
+                .compactMap { $0[1] as? String }
+            guard !columns.contains("account_id") else { return }
+            try db.run(snapshots.addColumn(colAccountId))
         } catch {
-            do {
-                try db.run(snapshots.addColumn(colAccountId))
-            } catch {
-                print("Migration: account_id column may already exist: \(error.localizedDescription)")
-            }
+            print("Migration: failed to add account_id column: \(error.localizedDescription)")
         }
     }
 }
