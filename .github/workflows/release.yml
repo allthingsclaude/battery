@@ -63,9 +63,19 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH"
 
       # ── Build universal binary ────────────────────────────────────────
+      # Retry to absorb transient SPM binary-artifact download timeouts
+      # (e.g. the Sparkle zip); SwiftPM does not retry these on its own.
       - name: Build universal binary
         run: |
-          swift build -c release --arch arm64 --arch x86_64
+          for attempt in 1 2 3; do
+            if swift build -c release --arch arm64 --arch x86_64; then
+              exit 0
+            fi
+            echo "::warning::Build attempt $attempt failed (often a transient dependency download); retrying in 15s…"
+            sleep 15
+          done
+          echo "::error::Build failed after 3 attempts"
+          exit 1
 
       # ── Run tests ─────────────────────────────────────────────────────
       - name: Test

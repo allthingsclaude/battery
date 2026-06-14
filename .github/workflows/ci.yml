@@ -17,8 +17,19 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
+      # Retry to absorb transient SPM binary-artifact download timeouts
+      # (e.g. the Sparkle zip); SwiftPM does not retry these on its own.
       - name: Build
-        run: swift build
+        run: |
+          for attempt in 1 2 3; do
+            if swift build; then
+              exit 0
+            fi
+            echo "::warning::Build attempt $attempt failed (often a transient dependency download); retrying in 15s…"
+            sleep 15
+          done
+          echo "::error::Build failed after 3 attempts"
+          exit 1
 
       - name: Test
         run: swift test
