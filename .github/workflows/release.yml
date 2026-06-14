@@ -9,7 +9,10 @@ env:
 
 jobs:
   release:
-    runs-on: macos-latest
+    # macos-26 (Xcode 26 / macOS 26 SDK) is required: PanelRootView uses the
+    # Liquid Glass `glassEffect` API, which only exists in the macOS 26 SDK.
+    # macos-latest still resolves to macOS 15 / Xcode 16.4, where it won't compile.
+    runs-on: macos-26
     permissions:
       contents: write
       issues: none
