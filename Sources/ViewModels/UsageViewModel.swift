@@ -29,6 +29,8 @@ class UsageViewModel: ObservableObject {
     @Published var currentStreak: Int = 0
     @Published var activeDays: [Date: Double] = [:]
     @Published var todaySessionCount: Int = 0
+    @Published var sessionProjectTokenUsage: [ProjectTokenUsage] = []
+    @Published var weeklyProjectTokenUsage: [ProjectTokenUsage] = []
 
     // Hook-driven session awareness
     @Published var isSessionActive: Bool = false
@@ -53,6 +55,11 @@ class UsageViewModel: ObservableObject {
     private var todayPeakSeen: Double = 0
     private var todayPeakDate: Date = Calendar.current.startOfDay(for: Date())
     private var isReauthenticating = false
+    private var projectTokenUsageTask: Task<Void, Never>?
+    private var lastProjectTokenUsageRefresh: Date?
+    private var lastProjectTokenUsageSessionReset: Date?
+    private var lastProjectTokenUsageWeeklyReset: Date?
+    private let projectTokenUsageRefreshInterval: TimeInterval = 5 * 60
 
     // Per-account usage state cache
     private var accountUsageStates: [UUID: AccountUsageState] = [:]
@@ -135,6 +142,7 @@ class UsageViewModel: ObservableObject {
     }
 
     deinit {
+        projectTokenUsageTask?.cancel()
         pollingService.stopPolling()
         hookWatcher.stopWatching()
         statsCacheService.stopWatching()
@@ -323,6 +331,8 @@ class UsageViewModel: ObservableObject {
         state.currentStreak = currentStreak
         state.activeDays = activeDays
         state.todaySessionCount = todaySessionCount
+        state.sessionProjectTokenUsage = sessionProjectTokenUsage
+        state.weeklyProjectTokenUsage = weeklyProjectTokenUsage
         return state
     }
 
@@ -346,6 +356,8 @@ class UsageViewModel: ObservableObject {
         currentStreak = state.currentStreak
         activeDays = state.activeDays
         todaySessionCount = state.todaySessionCount
+        sessionProjectTokenUsage = state.sessionProjectTokenUsage
+        weeklyProjectTokenUsage = state.weeklyProjectTokenUsage
     }
 
     // MARK: - Private: Database
@@ -482,6 +494,8 @@ class UsageViewModel: ObservableObject {
             statsCacheService.reload()
         }
 
+        refreshProjectTokenUsage()
+
         // Reset notification thresholds when utilization drops
         notificationService.resetThresholds(below: sessionUtilization)
 
@@ -557,5 +571,51 @@ class UsageViewModel: ObservableObject {
         guard !peaks.contains(where: { Calendar.current.isDate($0.date, inSameDayAs: today) }) else { return peaks }
         guard isConnected, todayPeakSeen > 0 else { return peaks }
         return peaks + [(date: today, peak: todayPeakSeen)]
+    }
+
+    private func refreshProjectTokenUsage() {
+        let now = Date()
+        let resetWindowChanged = sessionResetsAt != lastProjectTokenUsageSessionReset
+            || weeklyResetsAt != lastProjectTokenUsageWeeklyReset
+        if !resetWindowChanged,
+           let lastProjectTokenUsageRefresh,
+           now.timeIntervalSince(lastProjectTokenUsageRefresh) < projectTokenUsageRefreshInterval {
+            return
+        }
+
+        lastProjectTokenUsageRefresh = now
+        lastProjectTokenUsageSessionReset = sessionResetsAt
+        lastProjectTokenUsageWeeklyReset = weeklyResetsAt
+
+        let sessionStart = sessionResetsAt.map { $0.addingTimeInterval(-5 * 60 * 60) }
+        let sessionEnd = sessionResetsAt.map { min($0, now) }
+        let weeklyStart = weeklyResetsAt.map { $0.addingTimeInterval(-7 * 24 * 60 * 60) }
+        let weeklyEnd = weeklyResetsAt.map { min($0, now) }
+        let statsCacheService = statsCacheService
+
+        projectTokenUsageTask?.cancel()
+        projectTokenUsageTask = Task.detached(priority: .utility) { [weak statsCacheService] in
+            guard let statsCacheService else { return }
+
+            let sessionUsage: [ProjectTokenUsage]
+            if let sessionStart, let sessionEnd, !Task.isCancelled {
+                sessionUsage = statsCacheService.scanProjectTokenUsage(from: sessionStart, to: sessionEnd)
+            } else {
+                sessionUsage = []
+            }
+
+            let weeklyUsage: [ProjectTokenUsage]
+            if let weeklyStart, let weeklyEnd, !Task.isCancelled {
+                weeklyUsage = statsCacheService.scanProjectTokenUsage(from: weeklyStart, to: weeklyEnd)
+            } else {
+                weeklyUsage = []
+            }
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self.sessionProjectTokenUsage = sessionUsage
+                self.weeklyProjectTokenUsage = weeklyUsage
+            }
+        }
     }
 }

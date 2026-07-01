@@ -21,4 +21,6 @@ struct AccountUsageState {
     var currentStreak: Int = 0
     var activeDays: [Date: Double] = [:]
     var todaySessionCount: Int = 0
+    var sessionProjectTokenUsage: [ProjectTokenUsage] = []
+    var weeklyProjectTokenUsage: [ProjectTokenUsage] = []
 }

@@ -5,6 +5,10 @@ struct PopoverView: View {
     @ObservedObject var viewModel: UsageViewModel
     @ObservedObject var updaterService: UpdaterService
     @State private var showSettings = false
+    @State private var showDetails = true
+    @State private var renderDetails = true
+    @State private var detailsRevealed = true
+    @State private var detailsToggleGeneration = 0
     @State private var mainContentHeight: CGFloat = 460
 
     var body: some View {
@@ -63,7 +67,6 @@ struct PopoverView: View {
             HStack {
                 Text("Claude Battery")
                     .font(.headline)
-                Spacer()
                 if let tier = Optional(viewModel.planTier), tier != .unknown {
                     Text(tier.displayName)
                         .font(.caption)
@@ -71,6 +74,18 @@ struct PopoverView: View {
                         .padding(.vertical, 2)
                         .background(.quaternary)
                         .clipShape(Capsule())
+                }
+                Spacer()
+                VStack(spacing: 4) {
+                    Toggle("", isOn: showDetailsBinding)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .labelsHidden()
+                        .tint(detailsTint)
+                        .help(showDetails ? "Hide details" : "Show details")
+                    Text("details")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundStyle(showDetails ? detailsTint : Color.secondary.opacity(0.45))
                 }
             }
             .padding(.bottom, 4)
@@ -119,6 +134,9 @@ struct PopoverView: View {
                         resetsAt: viewModel.sessionResetsAt,
                         color: viewModel.sessionColor
                     )
+                    if renderDetails {
+                        ProjectTokenBreakdownView(entries: viewModel.sessionProjectTokenUsage, revealed: detailsRevealed)
+                    }
                 } else {
                     HStack(spacing: 6) {
                         Image(systemName: "moon.zzz.fill")
@@ -141,6 +159,9 @@ struct PopoverView: View {
                     resetsAt: viewModel.weeklyResetsAt,
                     color: viewModel.weeklyColor
                 )
+                if renderDetails {
+                    ProjectTokenBreakdownView(entries: viewModel.weeklyProjectTokenUsage, revealed: detailsRevealed)
+                }
 
                 // Opus gauge (if applicable)
                 if let opusUtil = viewModel.opusUtilization {
@@ -230,7 +251,63 @@ struct PopoverView: View {
         }
         .padding(16)
         .animation(.none, value: viewModel.selectedAccountId)
+        .animation(detailsResizeAnimation, value: renderDetails)
         .background(AppSettings.shared.activeTheme.popoverBackground)
+    }
+
+    private var detailsTint: Color {
+        AppSettings.shared.activeTheme == .default ? ColorTheme.brand : .orange
+    }
+
+    private var showDetailsBinding: Binding<Bool> {
+        Binding(
+            get: { showDetails },
+            set: { newValue in
+                setDetailsVisible(newValue)
+            }
+        )
+    }
+
+    private let detailsResizeDuration: Double = 0.2
+    private let detailsFadeOutDuration: Double = 0.1
+
+    private var detailsResizeAnimation: Animation {
+        .easeInOut(duration: detailsResizeDuration)
+    }
+
+    /// Show and hide are kept symmetric: the panel only ever resizes while the
+    /// rows are invisible, and the rows only ever fade while the panel size is
+    /// fixed. Overlapping the two (as a naive show did) makes the panel resize
+    /// under half-faded rows, which reads as a layout jump. The per-row
+    /// staggered fade itself lives in ProjectTokenBreakdownView, keyed on
+    /// `detailsRevealed`.
+    private func setDetailsVisible(_ visible: Bool) {
+        guard visible != showDetails else { return }
+
+        detailsToggleGeneration += 1
+        let generation = detailsToggleGeneration
+        showDetails = visible
+
+        if visible {
+            // Grow the panel first (rows invisible), then stagger the rows in.
+            detailsRevealed = false
+            withAnimation(detailsResizeAnimation) {
+                renderDetails = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + detailsResizeDuration + 0.01) {
+                guard generation == detailsToggleGeneration, showDetails else { return }
+                detailsRevealed = true
+            }
+        } else {
+            // Fade the rows out first, then shrink the panel.
+            detailsRevealed = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + detailsFadeOutDuration + 0.01) {
+                guard generation == detailsToggleGeneration, !showDetails else { return }
+                withAnimation(detailsResizeAnimation) {
+                    renderDetails = false
+                }
+            }
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Darwin
 
 /// Watches `~/.claude/stats-cache.json` for changes and publishes
 /// streak, heatmap, sparkline, and session count data derived from it.
@@ -9,9 +10,17 @@ class StatsCacheService: ObservableObject {
     @Published var dailyPeaks: [(date: Date, peak: Double)] = []
     @Published var todaySessionCount: Int = 0
 
+    private static let assistantTypeData = Data(#""type":"assistant""#.utf8)
+    private static let usageData = Data(#""usage""#.utf8)
+    private static let inputTokensData = Data(#""input_tokens":"#.utf8)
+    private static let outputTokensData = Data(#""output_tokens":"#.utf8)
+    private static let cacheCreationTokensData = Data(#""cache_creation_input_tokens":"#.utf8)
+    private static let cacheReadTokensData = Data(#""cache_read_input_tokens":"#.utf8)
+
     private let filePath: String
     private let projectsPath: String
     private let supplementPath: String
+    private let userName: String
     private var fileDescriptor: Int32 = -1
     private var source: DispatchSourceFileSystemObject?
     private var fallbackTimer: Timer?
@@ -22,11 +31,18 @@ class StatsCacheService: ObservableObject {
     private var cachedTodayFileModDates: [String: Date] = [:]
     private var cachedTodayActivity: StatsCache.DailyActivity?
 
+    private struct ProjectTokenAccumulator {
+        let name: String
+        let path: String
+        var tokens: Int
+    }
+
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         self.filePath = home.appendingPathComponent(".claude/stats-cache.json").path
         self.projectsPath = home.appendingPathComponent(".claude/projects").path
         self.supplementPath = home.appendingPathComponent(".battery/stats-supplement.json").path
+        self.userName = home.lastPathComponent
     }
 
     func startWatching() {
@@ -212,6 +228,83 @@ class StatsCacheService: ObservableObject {
             self?.activeDays = days
             self?.dailyPeaks = peaks
         }
+    }
+
+    // MARK: - Project Token Usage
+
+    func scanProjectTokenUsage(from startDate: Date, to endDate: Date, limit: Int = 6) -> [ProjectTokenUsage] {
+        guard startDate < endDate else { return [] }
+
+        let fm = FileManager.default
+        guard let projectDirs = try? fm.contentsOfDirectory(atPath: projectsPath) else { return [] }
+
+        var totals: [String: ProjectTokenAccumulator] = [:]
+
+        for dir in projectDirs {
+            if Task.isCancelled { return [] }
+            let dirPath = (projectsPath as NSString).appendingPathComponent(dir)
+            guard let files = try? fm.contentsOfDirectory(atPath: dirPath) else { continue }
+
+            for file in files where file.hasSuffix(".jsonl") {
+                if Task.isCancelled { return [] }
+                let fullPath = (dirPath as NSString).appendingPathComponent(file)
+                guard let attrs = try? fm.attributesOfItem(atPath: fullPath),
+                      let modDate = attrs[.modificationDate] as? Date,
+                      modDate >= startDate else { continue }
+
+                scanProjectTokensInJSONLFile(
+                    path: fullPath,
+                    projectDirectoryName: dir,
+                    startDate: startDate,
+                    endDate: endDate,
+                    into: &totals
+                )
+            }
+        }
+
+        let totalTokens = totals.values.reduce(0) { $0 + $1.tokens }
+        guard totalTokens > 0 else { return [] }
+
+        let sortedTotals = totals
+            .values
+            .sorted { lhs, rhs in
+                if lhs.tokens == rhs.tokens {
+                    return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                }
+                return lhs.tokens > rhs.tokens
+            }
+
+        guard sortedTotals.count > limit, limit > 1 else {
+            return sortedTotals.prefix(limit).map {
+                ProjectTokenUsage(
+                    id: $0.path,
+                    name: $0.name,
+                    path: $0.path,
+                    tokens: $0.tokens,
+                    percentage: Double($0.tokens) / Double(totalTokens) * 100.0
+                )
+            }
+        }
+
+        let visibleCount = limit - 1
+        let visible = sortedTotals.prefix(visibleCount).map {
+            ProjectTokenUsage(
+                id: $0.path,
+                name: $0.name,
+                path: $0.path,
+                tokens: $0.tokens,
+                percentage: Double($0.tokens) / Double(totalTokens) * 100.0
+            )
+        }
+        let otherTokens = sortedTotals.dropFirst(visibleCount).reduce(0) { $0 + $1.tokens }
+        let other = ProjectTokenUsage(
+            id: "__other_projects__",
+            name: "Other projects",
+            path: "Other projects",
+            tokens: otherTokens,
+            percentage: Double(otherTokens) / Double(totalTokens) * 100.0
+        )
+        return visible + [other]
     }
 
     // MARK: - JSONL Supplement
@@ -487,6 +580,232 @@ class StatsCacheService: ObservableObject {
         }
 
         dayCounts[dateStr] = entry
+    }
+
+    private func scanProjectTokensInJSONLFile(
+        path: String,
+        projectDirectoryName: String,
+        startDate: Date,
+        endDate: Date,
+        into totals: inout [String: ProjectTokenAccumulator]
+    ) {
+        guard let file = fopen(path, "r") else { return }
+        defer { fclose(file) }
+
+        let parser = TimestampParser()
+        let startTimestamp = parser.string(from: startDate)
+        let endTimestamp = parser.string(from: endDate)
+
+        var linePointer: UnsafeMutablePointer<CChar>?
+        var capacity = 0
+        defer { free(linePointer) }
+
+        while getline(&linePointer, &capacity, file) > 0 {
+            if Task.isCancelled { return }
+            guard let linePointer else { continue }
+
+            let length = strlen(linePointer)
+            guard length > 0 else { continue }
+            let lineLength = linePointer[length - 1] == UInt8(ascii: "\n") ? length - 1 : length
+            guard lineLength > 0 else { continue }
+
+            let lineData = Data(
+                bytesNoCopy: UnsafeMutableRawPointer(linePointer),
+                count: lineLength,
+                deallocator: .none
+            )
+            processProjectTokenLine(
+                lineData,
+                projectDirectoryName: projectDirectoryName,
+                startDate: startDate,
+                endDate: endDate,
+                startTimestamp: startTimestamp,
+                endTimestamp: endTimestamp,
+                timestampParser: parser,
+                into: &totals
+            )
+        }
+    }
+
+    private func processProjectTokenLine(
+        _ lineData: Data,
+        projectDirectoryName: String,
+        startDate: Date,
+        endDate: Date,
+        startTimestamp: String,
+        endTimestamp: String,
+        timestampParser: TimestampParser,
+        into totals: inout [String: ProjectTokenAccumulator]
+    ) {
+        guard lineData.range(of: Self.assistantTypeData) != nil,
+              lineData.range(of: Self.usageData) != nil else { return }
+        guard let timestamp = extractJSONStringValue("timestamp", from: lineData),
+              timestampIsInRange(
+                timestamp,
+                startDate: startDate,
+                endDate: endDate,
+                startTimestamp: startTimestamp,
+                endTimestamp: endTimestamp,
+                parser: timestampParser
+              ),
+              let tokenCount = tokenCount(from: lineData),
+              tokenCount > 0 else { return }
+
+        let project = projectIdentity(cwd: extractJSONStringValue("cwd", from: lineData), projectDirectoryName: projectDirectoryName)
+        var entry = totals[project.path] ?? ProjectTokenAccumulator(name: project.name, path: project.path, tokens: 0)
+        entry.tokens += tokenCount
+        totals[project.path] = entry
+    }
+
+    private func timestampIsInRange(
+        _ timestamp: String,
+        startDate: Date,
+        endDate: Date,
+        startTimestamp: String,
+        endTimestamp: String,
+        parser: TimestampParser
+    ) -> Bool {
+        if timestamp.hasSuffix("Z") {
+            return timestamp >= startTimestamp && timestamp <= endTimestamp
+        }
+
+        guard let date = parser.date(from: timestamp) else { return false }
+        return date >= startDate && date <= endDate
+    }
+
+    private func tokenCount(from lineData: Data) -> Int? {
+        let total =
+            extractJSONIntValue(Self.inputTokensData, from: lineData)
+            + extractJSONIntValue(Self.outputTokensData, from: lineData)
+            + extractJSONIntValue(Self.cacheCreationTokensData, from: lineData)
+            + extractJSONIntValue(Self.cacheReadTokensData, from: lineData)
+        return total > 0 ? total : nil
+    }
+
+    private func extractJSONIntValue(_ pattern: Data, from lineData: Data) -> Int {
+        guard let range = lineData.range(of: pattern) else { return 0 }
+        var index = range.upperBound
+        while index < lineData.endIndex, lineData[index] == UInt8(ascii: " ") {
+            index += 1
+        }
+
+        let start = index
+        var value = 0
+        while index < lineData.endIndex {
+            let byte = lineData[index]
+            guard byte >= UInt8(ascii: "0"), byte <= UInt8(ascii: "9") else { break }
+            value = value * 10 + Int(byte - UInt8(ascii: "0"))
+            index += 1
+        }
+        guard start < index else { return 0 }
+        return value
+    }
+
+    private func extractJSONStringValue(_ key: String, from lineData: Data) -> String? {
+        let pattern = Data("\"\(key)\":\"".utf8)
+        guard let range = lineData.range(of: pattern) else { return nil }
+        var index = range.upperBound
+        var value = Data()
+        var escaped = false
+
+        while index < lineData.endIndex {
+            let byte = lineData[index]
+            if escaped {
+                value.append(byte)
+                escaped = false
+            } else if byte == UInt8(ascii: "\\") {
+                escaped = true
+            } else if byte == UInt8(ascii: "\"") {
+                return String(data: value, encoding: .utf8)
+            } else {
+                value.append(byte)
+            }
+            index += 1
+        }
+
+        return nil
+    }
+
+    private func projectIdentity(cwd: String?, projectDirectoryName: String) -> (name: String, path: String) {
+        if let cwd, !cwd.isEmpty {
+            return (displayName(forPath: cwd) ?? cwd, cwd)
+        }
+
+        let decoded = projectDirectoryName.hasPrefix("-")
+            ? "/" + projectDirectoryName.dropFirst().replacingOccurrences(of: "-", with: "/")
+            : projectDirectoryName.replacingOccurrences(of: "-", with: "/")
+        return (displayName(forPath: decoded) ?? projectDirectoryName, decoded)
+    }
+
+    /// Directory names that group packages inside a monorepo — a leaf under one
+    /// of these tells us nothing on its own, so we qualify it with the repo.
+    private static let monorepoContainers: Set<String> = [
+        "apps", "app", "packages", "package", "services", "service",
+        "libs", "lib", "modules", "sites", "examples", "crates",
+        "pkgs", "projects", "workspaces"
+    ]
+
+    /// Leaf names that are too generic to identify a project on their own.
+    private static let genericLeaves: Set<String> = [
+        "web", "app", "www", "site", "frontend", "backend", "server",
+        "client", "api", "docs", "landing", "admin", "dashboard", "mobile",
+        "desktop", "core", "common", "shared", "ui", "cli", "src"
+    ]
+
+    /// Turns a working-directory path into a label that disambiguates monorepo
+    /// packages: a package under a container dir (e.g. `…/mozhe/apps/landing`)
+    /// becomes `mozhe/landing`, and a generic leaf directly under a repo
+    /// (e.g. `…/shiftover/web`) becomes `shiftover/web`. Plain repos keep their
+    /// bare folder name. Returns nil for an unusable path.
+    private func displayName(forPath path: String) -> String? {
+        let parts = path.split(separator: "/").map(String.init)
+        guard let leaf = parts.last else { return nil }
+        guard parts.count >= 2 else { return leaf }
+
+        let parent = parts[parts.count - 2]
+
+        // Package inside a known monorepo container → qualify with the repo
+        // (the container's parent), which is the meaningful, unique name.
+        if Self.monorepoContainers.contains(parent.lowercased()) {
+            if parts.count >= 3 {
+                let repo = parts[parts.count - 3]
+                return isUserName(repo) ? leaf : "\(repo)/\(leaf)"
+            }
+            return leaf
+        }
+
+        // Generic leaf sitting directly under its repo → qualify with the repo.
+        if Self.genericLeaves.contains(leaf.lowercased()) {
+            return isUserName(parent) ? leaf : "\(parent)/\(leaf)"
+        }
+
+        return leaf
+    }
+
+    /// A qualifier equal to the home-directory name (the macOS user) carries no
+    /// information — `~/apps/marco` should read as `marco`, not `markoradak/marco`.
+    private func isUserName(_ segment: String) -> Bool {
+        !userName.isEmpty && segment.caseInsensitiveCompare(userName) == .orderedSame
+    }
+
+    private final class TimestampParser {
+        private let fractionalFormatter: ISO8601DateFormatter
+        private let wholeSecondFormatter: ISO8601DateFormatter
+
+        init() {
+            fractionalFormatter = ISO8601DateFormatter()
+            fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            wholeSecondFormatter = ISO8601DateFormatter()
+            wholeSecondFormatter.formatOptions = [.withInternetDateTime]
+        }
+
+        func date(from string: String) -> Date? {
+            fractionalFormatter.date(from: string) ?? wholeSecondFormatter.date(from: string)
+        }
+
+        func string(from date: Date) -> String {
+            fractionalFormatter.string(from: date)
+        }
     }
 
     private func countConsecutiveDays(from startDay: Date, activeDates: Set<Date>, calendar: Calendar) -> Int {

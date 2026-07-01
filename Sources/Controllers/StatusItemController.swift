@@ -145,17 +145,28 @@ final class StatusItemController: NSObject {
         guard panel.isVisible else { return }
         guard abs(panel.frame.height - size.height) > 0.5
             || abs(panel.frame.width - size.width) > 0.5 else { return }
-        layoutPanel()
+        layoutPanel(animated: true)
     }
 
     /// Place the panel so the visible card is centered under the status item
     /// (clamped to the screen edge) with its top just below the menu bar.
     /// Called on every content size change — the top edge stays anchored, so
     /// the panel grows and shrinks downward.
-    private func layoutPanel() {
+    private func layoutPanel(animated: Bool = false) {
+        let frame = targetPanelFrame()
+        guard frame != .zero else { return }
+
+        if animated {
+            panel.setFrame(frame, display: true, animate: true)
+        } else {
+            panel.setFrame(frame, display: true)
+        }
+    }
+
+    private func targetPanelFrame() -> NSRect {
         guard let button = statusItem.button,
               let buttonWindow = button.window,
-              let screen = buttonWindow.screen else { return }
+              let screen = buttonWindow.screen else { return .zero }
 
         let size = contentSize.width > 1 ? contentSize : hostingView.fittingSize
         let buttonFrame = buttonWindow.frame
@@ -168,10 +179,7 @@ final class StatusItemController: NSObject {
         x = min(max(x, minX), maxX)
 
         let top = buttonFrame.minY
-        panel.setFrame(
-            NSRect(x: x, y: top - size.height, width: size.width, height: size.height),
-            display: true
-        )
+        return NSRect(x: x, y: top - size.height, width: size.width, height: size.height)
     }
 
     // MARK: - Dismiss on outside click
