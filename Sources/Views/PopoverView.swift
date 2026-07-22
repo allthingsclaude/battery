@@ -4,18 +4,22 @@ import SwiftUI
 struct PopoverView: View {
     @ObservedObject var viewModel: UsageViewModel
     @ObservedObject var updaterService: UpdaterService
+    @ObservedObject var layout: PanelLayout
     @State private var showSettings = false
     @State private var showDetails = true
     @State private var renderDetails = true
     @State private var detailsRevealed = true
     @State private var detailsToggleGeneration = 0
     @State private var mainContentHeight: CGFloat = 460
+    @State private var bodyHeight: CGFloat = 380
+    @State private var headerHeight: CGFloat = 56
+    @State private var footerHeight: CGFloat = 40
 
     var body: some View {
         Group {
             if showSettings {
                 SettingsView(updaterService: updaterService, usageViewModel: viewModel, onClose: { showSettings = false })
-                    .frame(height: mainContentHeight)
+                    .frame(height: min(mainContentHeight, layout.maxCardHeight))
                     .id("settings")
             } else if viewModel.needsLogin {
                 LoginView(viewModel: viewModel)
@@ -48,22 +52,48 @@ struct PopoverView: View {
         }
     }
 
+    /// The card is a scrolling body sandwiched between two pinned bars.
+    /// The bars are safe-area insets over the scroll view, so body content
+    /// slides behind their translucent material when it scrolls. Height is
+    /// content-driven up to `layout.maxCardHeight` (screen space below the
+    /// menu bar), after which the body scrolls.
     private var mainContent: some View {
-        VStack(spacing: 16) {
-            // Account tabs (only when multiple accounts)
-            if viewModel.accounts.count > 1 {
-                AccountTabsView(
-                    accounts: viewModel.accounts,
-                    selectedAccountId: viewModel.selectedAccountId,
-                    onSelect: { viewModel.selectAccount(id: $0) },
-                    onAddAccount: {
-                        NSApp.keyWindow?.close()
-                        viewModel.startOAuthLogin { _ in }
+        ScrollView(.vertical) {
+            bodyContent
+                // The body itself never animates on an account switch — only
+                // the card's height does. Otherwise rows tween to new values
+                // while the frame moves under them, which reads as drift.
+                .animation(.none, value: viewModel.selectedAccountId)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 12)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: BodyHeightKey.self, value: geo.size.height)
                     }
                 )
-            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) { headerBar }
+        .safeAreaInset(edge: .bottom, spacing: 0) { footerBar }
+        // The card always reports its final height immediately; the panel
+        // window animates its frame toward it (see StatusItemController).
+        // Animating here too would be invisible — `.fixedSize` upstream makes
+        // the ideal height authoritative, so geometry never interpolates.
+        .frame(height: cardHeight)
+        .onPreferenceChange(BodyHeightKey.self) { if $0 > 0 { bodyHeight = $0 } }
+        .onPreferenceChange(HeaderHeightKey.self) { if $0 > 0 { headerHeight = $0 } }
+        .onPreferenceChange(FooterHeightKey.self) { if $0 > 0 { footerHeight = $0 } }
+        .background(AppSettings.shared.activeTheme.popoverBackground)
+    }
 
-            // Header
+    private var cardHeight: CGFloat {
+        min(headerHeight + bodyHeight + footerHeight, layout.maxCardHeight)
+    }
+
+    /// Pinned header: title + details toggle, account tabs beneath, sitting
+    /// on a hairline the tabs visually attach to.
+    private var headerBar: some View {
+        VStack(spacing: 0) {
             HStack {
                 Text("Claude Battery")
                     .font(.headline)
@@ -88,8 +118,85 @@ struct PopoverView: View {
                         .foregroundStyle(showDetails ? detailsTint : Color.secondary.opacity(0.45))
                 }
             }
-            .padding(.bottom, 4)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, viewModel.accounts.count > 1 ? 8 : 10)
 
+            if viewModel.accounts.count > 1 {
+                AccountTabsView(
+                    accounts: viewModel.accounts,
+                    selectedAccountId: viewModel.selectedAccountId,
+                    onSelect: { viewModel.selectAccount(id: $0) },
+                    onAddAccount: {
+                        NSApp.keyWindow?.close()
+                        viewModel.startOAuthLogin { _ in }
+                    }
+                )
+                .padding(.horizontal, 16)
+            }
+
+            Divider()
+        }
+        .background(.ultraThinMaterial)
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: HeaderHeightKey.self, value: geo.size.height)
+            }
+        )
+    }
+
+    /// Pinned footer: last-updated + action buttons.
+    private var footerBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack {
+                if let lastUpdated = viewModel.lastUpdated {
+                    Text("Updated \(TimeFormatting.relativeTime(lastUpdated))")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                Spacer()
+
+                Button(action: { showSettings = true }) {
+                    Image(systemName: "gearshape")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+
+                Button(action: { viewModel.refresh() }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+
+                Button(action: { updaterService.checkForUpdates() }) {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .disabled(!updaterService.canCheckForUpdates)
+                .help("Check for Updates")
+                .focusable(false)
+
+                QuitButton()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .background(.ultraThinMaterial)
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: FooterHeightKey.self, value: geo.size.height)
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var bodyContent: some View {
+        VStack(spacing: 16) {
             if let error = viewModel.error, !viewModel.isConnected {
                 // Error state (only when we have no data at all)
                 VStack(spacing: 8) {
@@ -210,49 +317,7 @@ struct PopoverView: View {
                     )
                 }
             }
-
-            Divider()
-
-            // Footer
-            HStack {
-                if let lastUpdated = viewModel.lastUpdated {
-                    Text("Updated \(TimeFormatting.relativeTime(lastUpdated))")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-
-                Spacer()
-
-                Button(action: { showSettings = true }) {
-                    Image(systemName: "gearshape")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-
-                Button(action: { viewModel.refresh() }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-
-                Button(action: { updaterService.checkForUpdates() }) {
-                    Image(systemName: "arrow.down.circle")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .disabled(!updaterService.canCheckForUpdates)
-                .help("Check for Updates")
-                .focusable(false)
-
-                QuitButton()
-            }
         }
-        .padding(16)
-        .animation(.none, value: viewModel.selectedAccountId)
-        .animation(detailsResizeAnimation, value: renderDetails)
-        .background(AppSettings.shared.activeTheme.popoverBackground)
     }
 
     private var detailsTint: Color {
@@ -290,10 +355,10 @@ struct PopoverView: View {
 
         if visible {
             // Grow the panel first (rows invisible), then stagger the rows in.
+            // The rows are added at their final layout immediately; the panel
+            // window is what animates toward the new height.
             detailsRevealed = false
-            withAnimation(detailsResizeAnimation) {
-                renderDetails = true
-            }
+            renderDetails = true
             DispatchQueue.main.asyncAfter(deadline: .now() + detailsResizeDuration + 0.01) {
                 guard generation == detailsToggleGeneration, showDetails else { return }
                 detailsRevealed = true
@@ -303,15 +368,34 @@ struct PopoverView: View {
             detailsRevealed = false
             DispatchQueue.main.asyncAfter(deadline: .now() + detailsFadeOutDuration + 0.01) {
                 guard generation == detailsToggleGeneration, !showDetails else { return }
-                withAnimation(detailsResizeAnimation) {
-                    renderDetails = false
-                }
+                renderDetails = false
             }
         }
     }
 }
 
 private struct MainContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct BodyHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct HeaderHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct FooterHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())

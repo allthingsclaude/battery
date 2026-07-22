@@ -11,6 +11,12 @@ enum PanelMetrics {
     static let bottomMargin: CGFloat = 36
 }
 
+/// Screen-dependent layout limits pushed down from the controller, so the
+/// card can cap its own height and scroll instead of running off-screen.
+final class PanelLayout: ObservableObject {
+    @Published var maxCardHeight: CGFloat = 800
+}
+
 /// Root view of the status item panel: the popover content wrapped in
 /// self-drawn chrome — glass background, continuous rounded corners, and
 /// shadows. The window is fully transparent; everything visible is drawn
@@ -18,10 +24,11 @@ enum PanelMetrics {
 struct PanelRootView: View {
     @ObservedObject var viewModel: UsageViewModel
     @ObservedObject var updaterService: UpdaterService
+    @ObservedObject var layout: PanelLayout
     var onSizeChange: (CGSize) -> Void = { _ in }
 
     var body: some View {
-        PopoverView(viewModel: viewModel, updaterService: updaterService)
+        PopoverView(viewModel: viewModel, updaterService: updaterService, layout: layout)
             .frame(width: PanelMetrics.cardWidth)
             .background {
                 if #available(macOS 26.0, *) {

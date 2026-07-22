@@ -33,6 +33,7 @@ final class StatusItemController: NSObject {
     private var clickMonitors: [Any] = []
     private var contentSize: CGSize = .zero
     private var labelCancellables = Set<AnyCancellable>()
+    private let panelLayout = PanelLayout()
 
     init(viewModel: UsageViewModel, updaterService: UpdaterService) {
         self.viewModel = viewModel
@@ -61,10 +62,19 @@ final class StatusItemController: NSObject {
         hostingView = NSHostingView(rootView: PanelRootView(
             viewModel: viewModel,
             updaterService: updaterService,
+            layout: panelLayout,
             onSizeChange: { [weak self] size in
                 self?.contentSizeChanged(size)
             }
         ))
+        // Stop the hosting view from sizing the window. By default it pins the
+        // window to SwiftUI's intrinsic content size and applies the new size
+        // immediately, which silently overrides any animated setFrame — the
+        // panel would jump to its final height before the animation could run.
+        // With sizing disowned, `layoutPanel` is the only thing that moves the
+        // frame, so it can animate.
+        hostingView.sizingOptions = []
+        hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView
 
         if let button = statusItem.button {
@@ -140,6 +150,10 @@ final class StatusItemController: NSObject {
 
     // MARK: - Sizing & Position
 
+    /// SwiftUI reports the card's final height in one step — `.fixedSize`
+    /// upstream makes the ideal height authoritative, so its own animations
+    /// never reach this geometry. The window is therefore the only thing that
+    /// can animate the resize, and it does so here.
     private func contentSizeChanged(_ size: CGSize) {
         contentSize = size
         guard panel.isVisible else { return }
@@ -152,14 +166,42 @@ final class StatusItemController: NSObject {
     /// (clamped to the screen edge) with its top just below the menu bar.
     /// Called on every content size change — the top edge stays anchored, so
     /// the panel grows and shrinks downward.
+    /// Duration of the panel's grow/shrink. Kept in step with
+    /// `PopoverView.detailsResizeDuration`, which schedules the row fade
+    /// against it.
+    private static let resizeDuration: TimeInterval = 0.2
+
     private func layoutPanel(animated: Bool = false) {
+        updateMaxCardHeight()
         let frame = targetPanelFrame()
         guard frame != .zero else { return }
 
+        // `setFrame(display:animate:)` derives its own duration from the frame
+        // delta, so big and small changes run at different speeds and never
+        // line up with the content choreography. Drive it explicitly instead.
         if animated {
-            panel.setFrame(frame, display: true, animate: true)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Self.resizeDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                panel.animator().setFrame(frame, display: true)
+            }
         } else {
             panel.setFrame(frame, display: true)
+        }
+    }
+
+    /// Push the space between the menu bar and the bottom of the visible
+    /// screen down to the SwiftUI layer, so the card caps its height and
+    /// scrolls its body instead of extending past the screen edge.
+    private func updateMaxCardHeight() {
+        guard let button = statusItem.button,
+              let buttonWindow = button.window,
+              let screen = buttonWindow.screen else { return }
+        let available = buttonWindow.frame.minY - screen.visibleFrame.minY
+            - PanelMetrics.topMargin - PanelMetrics.bottomMargin
+        let clamped = max(240, available)
+        if abs(panelLayout.maxCardHeight - clamped) > 0.5 {
+            panelLayout.maxCardHeight = clamped
         }
     }
 

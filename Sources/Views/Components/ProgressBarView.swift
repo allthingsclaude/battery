@@ -14,10 +14,12 @@ struct ProgressBarView: View {
                     .fill(.quaternary)
                     .frame(height: height)
 
+                // No fill animation: usage changes almost always arrive while
+                // the panel is closed, so the tween is never seen — but it does
+                // play on account switches, where it reads as drift.
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(color)
                     .frame(width: geometry.size.width * min(max(value, 0), 1.0), height: height)
-                    .animation(.easeInOut(duration: 0.5), value: value)
             }
         }
         .frame(height: height)
