@@ -67,14 +67,6 @@ final class StatusItemController: NSObject {
                 self?.contentSizeChanged(size)
             }
         ))
-        // Stop the hosting view from sizing the window. By default it pins the
-        // window to SwiftUI's intrinsic content size and applies the new size
-        // immediately, which silently overrides any animated setFrame — the
-        // panel would jump to its final height before the animation could run.
-        // With sizing disowned, `layoutPanel` is the only thing that moves the
-        // frame, so it can animate.
-        hostingView.sizingOptions = []
-        hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView
 
         if let button = statusItem.button {
@@ -150,10 +142,6 @@ final class StatusItemController: NSObject {
 
     // MARK: - Sizing & Position
 
-    /// SwiftUI reports the card's final height in one step — `.fixedSize`
-    /// upstream makes the ideal height authoritative, so its own animations
-    /// never reach this geometry. The window is therefore the only thing that
-    /// can animate the resize, and it does so here.
     private func contentSizeChanged(_ size: CGSize) {
         contentSize = size
         guard panel.isVisible else { return }
@@ -166,25 +154,13 @@ final class StatusItemController: NSObject {
     /// (clamped to the screen edge) with its top just below the menu bar.
     /// Called on every content size change — the top edge stays anchored, so
     /// the panel grows and shrinks downward.
-    /// Duration of the panel's grow/shrink. Kept in step with
-    /// `PopoverView.detailsResizeDuration`, which schedules the row fade
-    /// against it.
-    private static let resizeDuration: TimeInterval = 0.2
-
     private func layoutPanel(animated: Bool = false) {
         updateMaxCardHeight()
         let frame = targetPanelFrame()
         guard frame != .zero else { return }
 
-        // `setFrame(display:animate:)` derives its own duration from the frame
-        // delta, so big and small changes run at different speeds and never
-        // line up with the content choreography. Drive it explicitly instead.
         if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = Self.resizeDuration
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                panel.animator().setFrame(frame, display: true)
-            }
+            panel.setFrame(frame, display: true, animate: true)
         } else {
             panel.setFrame(frame, display: true)
         }

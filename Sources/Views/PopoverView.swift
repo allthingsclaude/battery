@@ -60,10 +60,6 @@ struct PopoverView: View {
     private var mainContent: some View {
         ScrollView(.vertical) {
             bodyContent
-                // The body itself never animates on an account switch — only
-                // the card's height does. Otherwise rows tween to new values
-                // while the frame moves under them, which reads as drift.
-                .animation(.none, value: viewModel.selectedAccountId)
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
                 .padding(.bottom, 12)
@@ -75,19 +71,13 @@ struct PopoverView: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) { headerBar }
         .safeAreaInset(edge: .bottom, spacing: 0) { footerBar }
-        // The card always reports its final height immediately; the panel
-        // window animates its frame toward it (see StatusItemController).
-        // Animating here too would be invisible — `.fixedSize` upstream makes
-        // the ideal height authoritative, so geometry never interpolates.
-        .frame(height: cardHeight)
+        .frame(height: min(headerHeight + bodyHeight + footerHeight, layout.maxCardHeight))
         .onPreferenceChange(BodyHeightKey.self) { if $0 > 0 { bodyHeight = $0 } }
         .onPreferenceChange(HeaderHeightKey.self) { if $0 > 0 { headerHeight = $0 } }
         .onPreferenceChange(FooterHeightKey.self) { if $0 > 0 { footerHeight = $0 } }
+        .animation(.none, value: viewModel.selectedAccountId)
+        .animation(detailsResizeAnimation, value: renderDetails)
         .background(AppSettings.shared.activeTheme.popoverBackground)
-    }
-
-    private var cardHeight: CGFloat {
-        min(headerHeight + bodyHeight + footerHeight, layout.maxCardHeight)
     }
 
     /// Pinned header: title + details toggle, account tabs beneath, sitting
@@ -355,10 +345,10 @@ struct PopoverView: View {
 
         if visible {
             // Grow the panel first (rows invisible), then stagger the rows in.
-            // The rows are added at their final layout immediately; the panel
-            // window is what animates toward the new height.
             detailsRevealed = false
-            renderDetails = true
+            withAnimation(detailsResizeAnimation) {
+                renderDetails = true
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + detailsResizeDuration + 0.01) {
                 guard generation == detailsToggleGeneration, showDetails else { return }
                 detailsRevealed = true
@@ -368,7 +358,9 @@ struct PopoverView: View {
             detailsRevealed = false
             DispatchQueue.main.asyncAfter(deadline: .now() + detailsFadeOutDuration + 0.01) {
                 guard generation == detailsToggleGeneration, !showDetails else { return }
-                renderDetails = false
+                withAnimation(detailsResizeAnimation) {
+                    renderDetails = false
+                }
             }
         }
     }
