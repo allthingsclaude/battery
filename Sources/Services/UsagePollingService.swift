@@ -72,8 +72,12 @@ class UsagePollingService: ObservableObject {
             switch tokenError {
             case .networkError:
                 return false
-            case .refreshFailed, .noRefreshToken:
+            case .noRefreshToken:
                 return true
+            case .refreshFailed(let statusCode, _):
+                // Only 400/401/403 mean the grant itself was rejected.
+                // 5xx, 429 etc. are server trouble — retry, don't force login.
+                return [400, 401, 403].contains(statusCode)
             }
         }
         if let apiError = error as? AnthropicAPI.APIError {

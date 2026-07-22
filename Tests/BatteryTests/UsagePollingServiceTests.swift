@@ -15,6 +15,26 @@ final class UsagePollingServiceTests: XCTestCase {
         XCTAssertTrue(UsagePollingService.requiresReauth(for: error))
     }
 
+    func testRefreshFailedUnauthorizedRequiresReauth() {
+        let error = TokenRefreshService.TokenError.refreshFailed(statusCode: 401, body: "invalid_client")
+        XCTAssertTrue(UsagePollingService.requiresReauth(for: error))
+    }
+
+    func testRefreshFailedServerErrorDoesNotRequireReauth() {
+        let error = TokenRefreshService.TokenError.refreshFailed(statusCode: 503, body: "unavailable")
+        XCTAssertFalse(UsagePollingService.requiresReauth(for: error))
+    }
+
+    func testRefreshFailedRateLimitedDoesNotRequireReauth() {
+        let error = TokenRefreshService.TokenError.refreshFailed(statusCode: 429, body: "slow down")
+        XCTAssertFalse(UsagePollingService.requiresReauth(for: error))
+    }
+
+    func testRefreshFailedInvalidResponseDoesNotRequireReauth() {
+        let error = TokenRefreshService.TokenError.refreshFailed(statusCode: 0, body: "Invalid response")
+        XCTAssertFalse(UsagePollingService.requiresReauth(for: error))
+    }
+
     func testNoRefreshTokenRequiresReauth() {
         let error = TokenRefreshService.TokenError.noRefreshToken
         XCTAssertTrue(UsagePollingService.requiresReauth(for: error))
