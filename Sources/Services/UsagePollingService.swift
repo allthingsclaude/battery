@@ -91,6 +91,19 @@ class UsagePollingService: ObservableObject {
         return false
     }
 
+    /// Returns true when the error is a rate limit from either endpoint,
+    /// so polling should back off rather than retry at full speed.
+    static func isRateLimited(_ error: Error) -> Bool {
+        if let apiError = error as? AnthropicAPI.APIError, case .rateLimited = apiError {
+            return true
+        }
+        if let tokenError = error as? TokenRefreshService.TokenError,
+           case .refreshFailed(let statusCode, _) = tokenError, statusCode == 429 {
+            return true
+        }
+        return false
+    }
+
     @MainActor
     func pollNow() async {
         guard let tokens = currentTokens else {
@@ -113,7 +126,7 @@ class UsagePollingService: ObservableObject {
             self.consecutiveRateLimits = 0
         } catch {
             // Rate limits are transient — don't overwrite lastError if we have cached data
-            if let apiError = error as? AnthropicAPI.APIError, case .rateLimited = apiError {
+            if Self.isRateLimited(error) {
                 consecutiveRateLimits += 1
                 // Only surface error if we have no cached data at all
                 if latestUsage == nil {

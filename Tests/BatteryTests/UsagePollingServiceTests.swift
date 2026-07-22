@@ -72,4 +72,28 @@ final class UsagePollingServiceTests: XCTestCase {
         let error = NSError(domain: "test", code: 42)
         XCTAssertFalse(UsagePollingService.requiresReauth(for: error))
     }
+
+    // MARK: - isRateLimited
+
+    func testAPIRateLimitedIsRateLimited() {
+        let error = AnthropicAPI.APIError.rateLimited(retryAfter: 30)
+        XCTAssertTrue(UsagePollingService.isRateLimited(error))
+    }
+
+    func testTokenEndpoint429IsRateLimited() {
+        let error = TokenRefreshService.TokenError.refreshFailed(statusCode: 429, body: "slow down")
+        XCTAssertTrue(UsagePollingService.isRateLimited(error))
+    }
+
+    func testTokenEndpoint400IsNotRateLimited() {
+        let error = TokenRefreshService.TokenError.refreshFailed(statusCode: 400, body: "invalid_grant")
+        XCTAssertFalse(UsagePollingService.isRateLimited(error))
+    }
+
+    func testNetworkErrorIsNotRateLimited() {
+        let error = TokenRefreshService.TokenError.networkError(
+            NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+        )
+        XCTAssertFalse(UsagePollingService.isRateLimited(error))
+    }
 }
