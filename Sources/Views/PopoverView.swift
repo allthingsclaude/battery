@@ -12,6 +12,7 @@ struct PopoverView: View {
     @State private var detailsToggleGeneration = 0
     @State private var mainContentHeight: CGFloat = 460
     @State private var bodyHeight: CGFloat = 380
+    @State private var animateBodyHeight = false
     @State private var headerHeight: CGFloat = 56
     @State private var footerHeight: CGFloat = 40
 
@@ -72,7 +73,18 @@ struct PopoverView: View {
         .safeAreaInset(edge: .top, spacing: 0) { headerBar }
         .safeAreaInset(edge: .bottom, spacing: 0) { footerBar }
         .frame(height: min(headerHeight + bodyHeight + footerHeight, layout.maxCardHeight))
-        .onPreferenceChange(BodyHeightKey.self) { if $0 > 0 { bodyHeight = $0 } }
+        // The frame follows `bodyHeight`, which arrives via preference — an
+        // untransacted write, so it has to carry its own animation. Only the
+        // details toggle animates it; account switches snap, so rows with
+        // differing project counts don't drift.
+        .onPreferenceChange(BodyHeightKey.self) { newValue in
+            guard newValue > 0, newValue != bodyHeight else { return }
+            if animateBodyHeight {
+                withAnimation(detailsResizeAnimation) { bodyHeight = newValue }
+            } else {
+                bodyHeight = newValue
+            }
+        }
         .onPreferenceChange(HeaderHeightKey.self) { if $0 > 0 { headerHeight = $0 } }
         .onPreferenceChange(FooterHeightKey.self) { if $0 > 0 { footerHeight = $0 } }
         .animation(.none, value: viewModel.selectedAccountId)
@@ -342,6 +354,14 @@ struct PopoverView: View {
         detailsToggleGeneration += 1
         let generation = detailsToggleGeneration
         showDetails = visible
+
+        // Let the card's height tween for the length of this toggle only.
+        animateBodyHeight = true
+        let settleDelay = detailsFadeOutDuration + detailsResizeDuration + 0.1
+        DispatchQueue.main.asyncAfter(deadline: .now() + settleDelay) {
+            guard generation == detailsToggleGeneration else { return }
+            animateBodyHeight = false
+        }
 
         if visible {
             // Grow the panel first (rows invisible), then stagger the rows in.
