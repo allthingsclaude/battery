@@ -65,6 +65,28 @@ class UsagePollingService: ObservableObject {
         currentInterval = interval
     }
 
+    /// Returns true only for errors that mean stored credentials cannot be used
+    /// without a fresh OAuth login. Transient network failures return false.
+    static func requiresReauth(for error: Error) -> Bool {
+        if let tokenError = error as? TokenRefreshService.TokenError {
+            switch tokenError {
+            case .networkError:
+                return false
+            case .refreshFailed, .noRefreshToken:
+                return true
+            }
+        }
+        if let apiError = error as? AnthropicAPI.APIError {
+            switch apiError {
+            case .unauthorized:
+                return true
+            case .networkError, .rateLimited, .serverError, .decodingError:
+                return false
+            }
+        }
+        return false
+    }
+
     @MainActor
     func pollNow() async {
         guard let tokens = currentTokens else {
@@ -98,10 +120,10 @@ class UsagePollingService: ObservableObject {
 
             self.lastError = error
 
-            // On 401 or token refresh failure, try force refresh
+            // On 401, try force refresh; other auth-fatal errors need reauth
             if let apiError = error as? AnthropicAPI.APIError, apiError.isUnauthorized {
                 await retryWithForceRefresh()
-            } else if error is TokenRefreshService.TokenError {
+            } else if Self.requiresReauth(for: error) {
                 self.needsReauth = true
             }
         }
@@ -131,7 +153,9 @@ class UsagePollingService: ObservableObject {
             self.consecutiveRateLimits = 0
         } catch {
             self.lastError = error
-            self.needsReauth = true
+            if Self.requiresReauth(for: error) {
+                self.needsReauth = true
+            }
         }
     }
 }
