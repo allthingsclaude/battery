@@ -12,7 +12,7 @@ class UsagePollingService: ObservableObject {
     private let api = AnthropicAPI()
     private var pollingTask: Task<Void, Never>?
     private var currentInterval: TimeInterval
-    private var currentTokens: StoredTokens?
+    private var tokenProvider: (() -> StoredTokens?)?
     private var onTokensRefreshed: ((StoredTokens) -> Void)?
 
     /// Exponential backoff state for rate limiting
@@ -24,11 +24,14 @@ class UsagePollingService: ObservableObject {
         self.currentInterval = interval
     }
 
-    /// Configure the polling service with tokens and a callback for when tokens are refreshed.
-    func configure(tokens: StoredTokens?, onTokensRefreshed: @escaping (StoredTokens) -> Void) {
-        self.currentTokens = tokens
+    /// Configure the polling service with a token provider and a callback for
+    /// when tokens are refreshed. The provider is consulted on EVERY poll so
+    /// tokens updated on disk (or Claude Code live credentials) are picked up
+    /// without reconfiguring.
+    func configure(tokenProvider: @escaping () -> StoredTokens?, onTokensRefreshed: @escaping (StoredTokens) -> Void) {
+        self.tokenProvider = tokenProvider
         self.onTokensRefreshed = onTokensRefreshed
-        self.needsReauth = (tokens == nil)
+        self.needsReauth = (tokenProvider() == nil)
     }
 
     func startPolling() {
@@ -106,17 +109,23 @@ class UsagePollingService: ObservableObject {
 
     @MainActor
     func pollNow() async {
-        guard let tokens = currentTokens else {
+        guard let tokens = tokenProvider?() else {
             needsReauth = true
             return
         }
 
         do {
-            let (accessToken, updatedTokens) = try await tokenRefreshService.refreshIfNeeded(tokens: tokens)
-
-            if let updated = updatedTokens {
-                currentTokens = updated
-                onTokensRefreshed?(updated)
+            let accessToken: String
+            if tokens.isLive {
+                // Live Claude Code credential: use as-is, never refresh it —
+                // rotating a shared chain would strand Claude Code's copy.
+                accessToken = tokens.accessToken
+            } else {
+                let (token, updatedTokens) = try await tokenRefreshService.refreshIfNeeded(tokens: tokens)
+                accessToken = token
+                if let updated = updatedTokens {
+                    onTokensRefreshed?(updated)
+                }
             }
 
             let usage = try await api.fetchUsage(accessToken: accessToken)
@@ -137,18 +146,22 @@ class UsagePollingService: ObservableObject {
 
             self.lastError = error
 
-            // On 401, try force refresh; other auth-fatal errors need reauth
+            // On 401, try force refresh; other auth-fatal errors need reauth.
+            // Live tokens are exempt: a stale live token is transient — Claude
+            // Code tooling refreshes it and the next poll picks it up.
             if let apiError = error as? AnthropicAPI.APIError, apiError.isUnauthorized {
-                await retryWithForceRefresh()
-            } else if Self.requiresReauth(for: error) {
+                if !tokens.isLive {
+                    await retryWithForceRefresh(tokens: tokens)
+                }
+            } else if Self.requiresReauth(for: error), !tokens.isLive {
                 self.needsReauth = true
             }
         }
     }
 
     @MainActor
-    private func retryWithForceRefresh() async {
-        guard let tokens = currentTokens, let refreshToken = tokens.refreshToken else {
+    private func retryWithForceRefresh(tokens: StoredTokens) async {
+        guard let refreshToken = tokens.refreshToken else {
             needsReauth = true
             return
         }
@@ -160,7 +173,6 @@ class UsagePollingService: ObservableObject {
                 refreshToken: response.refreshToken ?? tokens.refreshToken,
                 expiresIn: response.expiresIn
             )
-            currentTokens = updated
             onTokensRefreshed?(updated)
 
             let usage = try await api.fetchUsage(accessToken: response.accessToken)

@@ -32,6 +32,15 @@ struct StoredTokens: Codable {
     var refreshToken: String?
     var expiresAt: Int64  // milliseconds since epoch
 
+    /// True when read live from Claude Code's own credential (see
+    /// LiveCredentials). Live tokens are never refreshed or persisted by
+    /// Battery; external tooling keeps them fresh. Not encoded to disk.
+    var isLive: Bool = false
+
+    private enum CodingKeys: String, CodingKey {
+        case accessToken, refreshToken, expiresAt
+    }
+
     var expiryDate: Date {
         Date(timeIntervalSince1970: Double(expiresAt) / 1000.0)
     }
