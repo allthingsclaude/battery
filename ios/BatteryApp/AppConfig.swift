@@ -7,7 +7,7 @@ enum AppConfig {
     // API
     static let apiBaseURL = "https://api.anthropic.com"
     static let betaHeader = "oauth-2025-04-20"
-    static let userAgent = "Battery-iOS/0.1.0"
+    static let userAgent = BatteryVersion.userAgent
 
     // OAuth PKCE (same public client as the macOS app)
     static let oauthClientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"

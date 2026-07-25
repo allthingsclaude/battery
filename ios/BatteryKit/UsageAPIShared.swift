@@ -89,7 +89,7 @@ struct UsageBucket: Codable {
 enum UsageFetcher {
     static let apiBaseURL = "https://api.anthropic.com"
     static let betaHeader = "oauth-2025-04-20"
-    static let userAgent = "Battery-iOS/0.1.0"
+    static let userAgent = BatteryVersion.userAgent
 
     enum FetchError: Error { case unauthorized, rateLimited, server(Int), badResponse }
 

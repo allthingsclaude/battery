@@ -299,12 +299,20 @@ no paid account — App Groups just work there. If you have no iOS runtime yet:
 
 ## Shipping to TestFlight
 
-`.github/workflows/ios-release.yml` builds, signs, and uploads. Cutting a
-release is one tag:
+`.github/workflows/ios-release.yml` builds, signs, and uploads. Cut a release
+the same way as the Mac app, with its own script:
 
 ```bash
-git tag ios-v0.1.0 && git push origin ios-v0.1.0
+./Scripts/release-ios.sh patch      # or minor / major / an explicit 0.2.0
 ```
+
+It bumps `MARKETING_VERSION` in `project.yml`, commits, tags `ios-v<version>`,
+and pushes. Before any of that it checks the working tree is clean, the tag is
+new, and all five signing secrets exist — each of which otherwise fails the
+workflow several minutes in. Unlike the Mac script it **asks before pushing**:
+a GitHub release can be deleted, but a TestFlight build number is spent on
+Apple's side permanently and the build goes straight to your testers. `--yes`
+skips the prompt.
 
 The `ios-v*` namespace is separate from the Mac app's `v*` on purpose — the two
 ship on their own cadences, and a menu-bar patch shouldn't push a build to
@@ -315,7 +323,8 @@ The marketing version comes from the tag; the build number is the commit count,
 which only has to increase. Both are passed to `xcodebuild` and reach the bundle
 because the `info:` blocks in `project.yml` reference `$(MARKETING_VERSION)` and
 `$(CURRENT_PROJECT_VERSION)` — XcodeGen otherwise hardcodes `1.0` / `1`, and the
-override would be silently dropped.
+override would be silently dropped. `BatteryVersion` reads it back out of the
+bundle for the `User-Agent`, so there's no second place to remember to bump.
 
 ### Secrets
 
