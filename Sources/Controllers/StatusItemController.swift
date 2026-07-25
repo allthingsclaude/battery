@@ -147,23 +147,24 @@ final class StatusItemController: NSObject {
         guard panel.isVisible else { return }
         guard abs(panel.frame.height - size.height) > 0.5
             || abs(panel.frame.width - size.width) > 0.5 else { return }
-        layoutPanel(animated: true)
+        layoutPanel()
     }
 
     /// Place the panel so the visible card is centered under the status item
     /// (clamped to the screen edge) with its top just below the menu bar.
     /// Called on every content size change — the top edge stays anchored, so
     /// the panel grows and shrinks downward.
-    private func layoutPanel(animated: Bool = false) {
+    ///
+    /// The frame is never animated here. SwiftUI already tweens the card's
+    /// height and reports each intermediate size, so the window's job is to
+    /// track it exactly; `setFrame(_:display:animate:)` would instead block
+    /// the main thread in a nested run loop and ease its own way toward a
+    /// target that has already moved on, which reads as jitter.
+    private func layoutPanel() {
         updateMaxCardHeight()
         let frame = targetPanelFrame()
         guard frame != .zero else { return }
-
-        if animated {
-            panel.setFrame(frame, display: true, animate: true)
-        } else {
-            panel.setFrame(frame, display: true)
-        }
+        panel.setFrame(frame, display: true)
     }
 
     /// Push the space between the menu bar and the bottom of the visible

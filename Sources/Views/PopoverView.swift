@@ -70,16 +70,27 @@ struct PopoverView: View {
                     }
                 )
         }
+        // The body's measured height reaches the frame a frame late, so while
+        // the details rows are being added the content briefly overflows a
+        // frame that hasn't grown yet — enough for AppKit to flash an overlay
+        // scroller. Suppressing the scroller while the card fits keeps that
+        // transient overflow invisible; the rows are at opacity 0 during the
+        // resize anyway, so the clipping itself never shows.
+        .scrollIndicators(cardFitsWithoutScrolling ? .never : .automatic)
+        .scrollDisabled(cardFitsWithoutScrolling)
         .safeAreaInset(edge: .top, spacing: 0) { headerBar }
         .safeAreaInset(edge: .bottom, spacing: 0) { footerBar }
         .frame(height: min(headerHeight + bodyHeight + footerHeight, layout.maxCardHeight))
         // The frame follows `bodyHeight`, which arrives via preference — an
         // untransacted write, so it has to carry its own animation. Only the
         // details toggle animates it; account switches snap, so rows with
-        // differing project counts don't drift.
+        // differing project counts don't drift. Exactly one tween per toggle:
+        // if the measurement instead trickles in over several frames, tweening
+        // each one restarts the animation and the card lags its own content.
         .onPreferenceChange(BodyHeightKey.self) { newValue in
             guard newValue > 0, newValue != bodyHeight else { return }
             if animateBodyHeight {
+                animateBodyHeight = false
                 withAnimation(detailsResizeAnimation) { bodyHeight = newValue }
             } else {
                 bodyHeight = newValue
@@ -320,6 +331,12 @@ struct PopoverView: View {
                 }
             }
         }
+    }
+
+    /// True while the card is short enough to show its whole body, which is
+    /// every state except a very tall panel on a short screen.
+    private var cardFitsWithoutScrolling: Bool {
+        headerHeight + bodyHeight + footerHeight <= layout.maxCardHeight
     }
 
     private var detailsTint: Color {
