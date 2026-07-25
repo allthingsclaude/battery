@@ -343,16 +343,34 @@ final class PushRelayClient: ObservableObject {
         return "Couldn't reach the push relay. Check your connection."
     }
 
-    /// A build signed with a development profile gets sandbox push tokens; the
-    /// relay needs to know which APNs host to use. There's no runtime API for
-    /// this, but the presence of an embedded provisioning profile is a reliable
-    /// proxy: App Store builds don't ship one.
+    /// Which APNs host issued this build's push tokens.
+    ///
+    /// Read from the embedded provisioning profile's `aps-environment`
+    /// entitlement rather than inferred from the profile's mere presence — a
+    /// TestFlight build ships a profile *and* uses production APNs, so
+    /// presence alone reports the wrong host for every beta tester. The relay
+    /// would recover through its own probe, but only after wasting a rejected
+    /// round-trip per device.
     private static var apnsEnvironment: String {
         #if DEBUG
         return "sandbox"
         #else
-        return Bundle.main.path(forResource: "embedded", ofType: "mobileprovision") != nil
-            ? "sandbox" : "production"
+        // No profile at all means App Store, which is always production.
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url),
+              // The profile is CMS-signed binary with a plist embedded in it;
+              // isoLatin1 round-trips arbitrary bytes so the range survives.
+              let raw = String(data: data, encoding: .isoLatin1),
+              let start = raw.range(of: "<?xml"),
+              let end = raw.range(of: "</plist>"),
+              let plistData = String(raw[start.lowerBound..<end.upperBound]).data(using: .isoLatin1),
+              let plist = try? PropertyListSerialization.propertyList(
+                  from: plistData, options: [], format: nil) as? [String: Any],
+              let entitlements = plist["Entitlements"] as? [String: Any],
+              let environment = entitlements["aps-environment"] as? String
+        else { return "production" }
+
+        return environment == "development" ? "sandbox" : "production"
         #endif
     }
 
