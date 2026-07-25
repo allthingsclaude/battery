@@ -26,7 +26,7 @@ struct UsageLiveActivity: Widget {
                         VStack(alignment: .leading, spacing: 0) {
                             Text("Session").font(.caption2).foregroundStyle(.secondary)
                             Text("\(Int(state.sessionUtilization.rounded()))%")
-                                .font(BatteryFont.numeric(20, weight: .strong, relativeTo: .title3))
+                                .font(BatteryFont.numeric(17, weight: .strong, relativeTo: .headline))
                                 .foregroundStyle(level.color)
                         }
                     }
@@ -35,10 +35,9 @@ struct UsageLiveActivity: Widget {
                     VStack(alignment: .trailing, spacing: 0) {
                         Text("Resets").font(.caption2).foregroundStyle(.secondary)
                         if let reset = state.sessionResetsAt {
-                            // System-updating text: a Live Activity only re-renders
-                            // when the app pushes, so a static string would freeze.
-                            Text(reset, style: .relative)
-                                .font(BatteryFont.numeric(17, weight: .strong, relativeTo: .headline))
+                            // Compact for the same reason as the card above.
+                            Text(TimeFormatting.shortDuration(max(0, reset.timeIntervalSinceNow)))
+                                .font(BatteryFont.numeric(15, weight: .strong, relativeTo: .subheadline))
                                 .lineLimit(1).minimumScaleFactor(0.7)
                                 .multilineTextAlignment(.trailing)
                         } else {
@@ -54,7 +53,7 @@ struct UsageLiveActivity: Widget {
                           showsLabel: false, gradientStroke: true, glow: false)
             } compactTrailing: {
                 Text("\(Int(state.sessionUtilization.rounded()))%")
-                    .font(BatteryFont.numeric(17, weight: .strong, relativeTo: .body))
+                    .font(BatteryFont.numeric(14, weight: .strong, relativeTo: .footnote))
                     .foregroundStyle(level.color)
             } minimal: {
                 UsageRing(utilization: state.sessionUtilization, size: 20, lineWidth: 3,
@@ -89,6 +88,7 @@ struct LockScreenActivityView: View {
                         .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
                     Text(level.label.uppercased())
                         .font(.system(size: 9, weight: .bold)).tracking(0.5)
+                        .lineLimit(1).fixedSize()
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(level.color.opacity(0.28), in: Capsule())
                         .foregroundStyle(level.color)
@@ -98,22 +98,37 @@ struct LockScreenActivityView: View {
                 Text(weeklyLine)
                     .font(.caption2).foregroundStyle(.white.opacity(0.5))
             }
+            .layoutPriority(1)
 
             Spacer(minLength: 0)
 
             VStack(alignment: .trailing, spacing: 1) {
                 // `.relative` reserves a wide slot; trailing-align the glyphs within
                 // it so "Updated …" lines up with the countdown below.
+                // Stays `.relative` — this is the one line that must keep
+                // ticking, since it's what discloses a stale card. It reserves a
+                // wide slot for the longest phrasing it might reach, so let it
+                // scale rather than clip to "Updated…".
                 (Text("Updated ") + Text(state.updatedAt, style: .relative))
                     .font(.caption2).foregroundStyle(.white.opacity(0.4))
-                    .lineLimit(1).multilineTextAlignment(.trailing)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .multilineTextAlignment(.trailing)
                 if let reset = state.sessionResetsAt {
-                    // System-updating so the Lock Screen countdown keeps ticking
-                    // between app pushes (a static string would sit frozen).
-                    Text(reset, style: .relative)
-                        .font(BatteryFont.numeric(20, weight: .strong, relativeTo: .title3))
+                    // Compact ("2h 13m") rather than `Text(_, style: .relative)`.
+                    // `.relative` renders "2 hr, 13 min", which in a monospaced
+                    // face is far too wide for this column — it truncated either
+                    // itself or the app name beside it, whichever lost the
+                    // layout fight.
+                    //
+                    // The tradeoff is that a static string can't tick on its
+                    // own. That mattered when the phone refreshed only on the
+                    // system's schedule; now the relay pushes at least every
+                    // five minutes, and the live "Updated …" line directly above
+                    // discloses any lag, so the card can't quietly mislead.
+                    Text(TimeFormatting.shortDuration(max(0, reset.timeIntervalSinceNow)))
+                        .font(BatteryFont.numeric(17, weight: .strong, relativeTo: .headline))
                         .foregroundStyle(.white)
-                        .lineLimit(1).minimumScaleFactor(0.6)
+                        .lineLimit(1).minimumScaleFactor(0.7)
                         .multilineTextAlignment(.trailing)
                     Text("until reset").font(.caption2).foregroundStyle(.white.opacity(0.5))
                 }
