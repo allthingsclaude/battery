@@ -63,19 +63,19 @@ jobs:
       # Store and cannot sign an iOS app at all.
       - name: Set up keychain
         env:
-          IOS_DIST_CERTIFICATE: ${{ secrets.IOS_DIST_CERTIFICATE }}
-          IOS_DIST_CERTIFICATE_PWD: ${{ secrets.IOS_DIST_CERTIFICATE_PWD }}
+          IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+          IOS_CERTIFICATE_PWD: ${{ secrets.IOS_CERTIFICATE_PWD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           CERT_PATH="$RUNNER_TEMP/ios-dist.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/ios-signing.keychain-db"
 
-          echo "$IOS_DIST_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          echo "$IOS_CERTIFICATE" | base64 --decode > "$CERT_PATH"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$IOS_DIST_CERTIFICATE_PWD" \
+          security import "$CERT_PATH" -P "$IOS_CERTIFICATE_PWD" \
             -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple: \
             -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -84,6 +84,17 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
           rm -f "$CERT_PATH"
 
+          # The certificate is team-wide, so one shared across apps is normal —
+          # but it must belong to the team the project builds against, and a
+          # mismatch otherwise surfaces much later as an opaque profile error.
+          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+               | grep -q "Apple Distribution"; then
+            echo "::error::No Apple Distribution identity in the keychain. IOS_CERTIFICATE must be a .p12 exported from Keychain Access ▸ My Certificates with its private key — export the parent entry, not the bare certificate."
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+            exit 1
+          fi
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
       # ── App Store Connect API key ─────────────────────────────────────
       # Does double duty: lets xcodebuild create/renew the App Store
       # provisioning profiles for both bundle IDs, and authenticates the
@@ -91,24 +102,32 @@ jobs:
       # so the name is not arbitrary.
       - name: Write App Store Connect key
         env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_KEY: ${{ secrets.ASC_API_KEY }}
         run: |
           mkdir -p ~/.appstoreconnect/private_keys
-          KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
-          printf '%s\n' "$ASC_PRIVATE_KEY" > "$KEY_PATH"
+          KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_API_KEY_ID}.p8"
+          printf '%s\n' "$ASC_API_KEY" > "$KEY_PATH"
           chmod 600 "$KEY_PATH"
-          # Fail loudly here rather than with an opaque signing error later.
+
+          # Accept the key either as raw PEM or base64-wrapped — both are common
+          # ways to paste a .p8 into a secret store, and guessing wrong
+          # otherwise fails deep inside xcodebuild with nothing to go on.
           if ! grep -q "BEGIN PRIVATE KEY" "$KEY_PATH"; then
-            echo "::error::ASC_PRIVATE_KEY does not look like a PEM .p8 — paste the file's full contents, BEGIN/END lines included."
-            exit 1
+            if base64 --decode < "$KEY_PATH" 2>/dev/null | grep -q "BEGIN PRIVATE KEY"; then
+              base64 --decode < "$KEY_PATH" > "$KEY_PATH.pem" && mv "$KEY_PATH.pem" "$KEY_PATH"
+              chmod 600 "$KEY_PATH"
+            else
+              echo "::error::ASC_API_KEY is neither a PEM .p8 nor base64 of one. Store the file's full contents, BEGIN/END lines included."
+              exit 1
+            fi
           fi
 
       # ── Archive ───────────────────────────────────────────────────────
       - name: Archive
         env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
         run: |
           xcodebuild archive \
             -project ios/Battery.xcodeproj \
@@ -116,9 +135,9 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/Battery.xcarchive" \
             -allowProvisioningUpdates \
-            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_API_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_API_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_API_ISSUER_ID" \
             MARKETING_VERSION="${{ steps.version.outputs.version }}" \
             CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
             OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/ios-signing.keychain-db"
@@ -126,17 +145,17 @@ jobs:
       # ── Export .ipa ───────────────────────────────────────────────────
       - name: Export IPA
         env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
         run: |
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/Battery.xcarchive" \
             -exportOptionsPlist ios/config/ExportOptions.plist \
             -exportPath "$RUNNER_TEMP/export" \
             -allowProvisioningUpdates \
-            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_API_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_API_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_API_ISSUER_ID"
           ls -la "$RUNNER_TEMP/export"
 
       # ── Upload to TestFlight ──────────────────────────────────────────
@@ -144,14 +163,14 @@ jobs:
       # burning a build number, so a rejection is cheap to retry.
       - name: Upload to TestFlight
         env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
         run: |
           IPA="$RUNNER_TEMP/export/Battery.ipa"
           xcrun altool --validate-app -f "$IPA" -t ios \
-            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+            --apiKey "$ASC_API_KEY_ID" --apiIssuer "$ASC_API_ISSUER_ID"
           xcrun altool --upload-app -f "$IPA" -t ios \
-            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+            --apiKey "$ASC_API_KEY_ID" --apiIssuer "$ASC_API_ISSUER_ID"
 
       # Keep the build addressable even if the upload half fails.
       - name: Upload artifacts

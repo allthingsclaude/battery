@@ -327,32 +327,45 @@ keychain the job creates).
 
 | Secret | What it is |
 |---|---|
-| `IOS_DIST_CERTIFICATE` | Base64 of a `.p12` holding your **Apple Distribution** certificate *and its private key* |
-| `IOS_DIST_CERTIFICATE_PWD` | The password set when exporting that `.p12` |
-| `ASC_KEY_ID` | App Store Connect API key ID (the 10-char string in the filename) |
-| `ASC_ISSUER_ID` | The issuer UUID, shown above the key list |
-| `ASC_PRIVATE_KEY` | Full contents of `AuthKey_XXXXXXXXXX.p8`, `BEGIN`/`END` lines included |
+| `IOS_CERTIFICATE` | Base64 of a `.p12` holding an **Apple Distribution** certificate *and its private key* |
+| `IOS_CERTIFICATE_PWD` | The password set when exporting that `.p12` |
+| `ASC_API_KEY_ID` | App Store Connect API key ID (the 10-char string in the filename) |
+| `ASC_API_ISSUER_ID` | The issuer UUID, shown above the key list |
+| `ASC_API_KEY` | Contents of `AuthKey_XXXXXXXXXX.p8` — raw PEM or base64, both accepted |
+
+The names match the ones used by the other App Store projects in this account,
+so the five values can be copied straight across. All five are **account- or
+team-wide, not per-app**: one distribution certificate signs every app in the
+team, and the API key is scoped to the whole App Store Connect org. The only
+requirement is that they belong to the same Apple Developer Team the project
+builds against (`DEVELOPMENT_TEAM` in `project.yml`).
+
+A per-app `IOS_PROVISIONING_PROFILE` is *not* needed and must not be copied from
+another project — a profile is bound to one bundle ID, and this app needs two
+(app + widget extension). That's the reason for `-allowProvisioningUpdates`:
+Xcode fetches and renews both itself.
 
 Export the certificate from Keychain Access ▸ *My Certificates* — pick the
 **parent** entry with the disclosure triangle, not the bare certificate, or the
-private key won't be included and signing fails with a key-not-found error. Then:
+private key won't be included. (The workflow checks for an `Apple Distribution`
+identity right after import and fails there with that hint, rather than letting
+it surface later as an opaque profile error.)
 
 ```bash
-base64 -i Certificates.p12 | gh secret set IOS_DIST_CERTIFICATE
-gh secret set IOS_DIST_CERTIFICATE_PWD
+base64 -i Certificates.p12 | gh secret set IOS_CERTIFICATE
+gh secret set IOS_CERTIFICATE_PWD
 ```
 
 The App Store Connect key is created under *Users and Access ▸ Integrations ▸
-App Store Connect API*. It needs the **App Manager** role: the workflow relies on
-`-allowProvisioningUpdates`, so Xcode creates and renews the App Store
-provisioning profiles for both bundle IDs itself rather than us storing two more
-secrets that expire every twelve months. Apple lets you download the `.p8`
-exactly once — pipe it straight in so it never lands in shell history:
+App Store Connect API*, and needs the **App Manager** role — a key scoped only
+to uploads can't create provisioning profiles, so `-allowProvisioningUpdates`
+would fail. Apple lets you download the `.p8` exactly once; pipe it straight in
+so it never lands in shell history:
 
 ```bash
-gh secret set ASC_PRIVATE_KEY < AuthKey_XXXXXXXXXX.p8
-gh secret set ASC_KEY_ID
-gh secret set ASC_ISSUER_ID
+gh secret set ASC_API_KEY < AuthKey_XXXXXXXXXX.p8
+gh secret set ASC_API_KEY_ID
+gh secret set ASC_API_ISSUER_ID
 ```
 
 ### One-time setup in Apple's portals
