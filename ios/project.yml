@@ -1,0 +1,73 @@
+# XcodeGen spec — turns the loose ios/ Swift files into a runnable Xcode project.
+#   brew install xcodegen   (already installed here)
+#   cd ios && xcodegen generate && open Battery.xcodeproj
+#
+# Two targets: the app, and the widget/Live-Activity extension it embeds.
+# The shared BatteryKit/ folder is compiled into BOTH.
+
+name: Battery
+options:
+  bundleIdPrefix: com.allthingsclaude.battery.ios
+  deploymentTarget:
+    iOS: "16.2"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: "NO"      # XcodeGen writes the Info.plists below
+    TARGETED_DEVICE_FAMILY: "1"        # iPhone (Live Activities are iPhone-only)
+    DEVELOPMENT_TEAM: "746889X99S"     # applied to both targets; survives regeneration
+
+targets:
+  # ---------- App ----------
+  Battery:
+    type: application
+    platform: iOS
+    sources:
+      - BatteryApp
+      - BatteryKit
+    dependencies:
+      - target: BatteryWidgets            # embeds the extension automatically
+    # Emit a shared "Battery" scheme so it always shows in Xcode's scheme picker
+    # and is the one you Run (the widget/Live Activity ride inside the app).
+    scheme:
+      testTargets: []
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.allthingsclaude.battery.ios
+        CODE_SIGN_ENTITLEMENTS: config/BatteryApp.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: Generated/Battery-Info.plist
+      properties:
+        CFBundleDisplayName: Battery
+        NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
+        # remote-notification lets the relay's silent push wake us long enough to
+        # refresh the App Group snapshot and reload the widgets.
+        UIBackgroundModes: [fetch, processing, remote-notification]
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.allthingsclaude.battery.ios.refresh
+        UILaunchScreen: {}
+
+  # ---------- Widget + Live Activity extension ----------
+  BatteryWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - BatteryWidgets
+      - BatteryKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.allthingsclaude.battery.ios.widgets
+        CODE_SIGN_ENTITLEMENTS: config/BatteryWidgets.entitlements
+    info:
+      path: Generated/BatteryWidgets-Info.plist
+      properties:
+        CFBundleDisplayName: Battery
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension

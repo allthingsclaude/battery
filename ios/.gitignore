@@ -1,0 +1,11 @@
+# Both of these are generated from project.yml — run `xcodegen generate`.
+# Committing them means every regeneration shows up as noise in the diff, and
+# the .xcodeproj in particular is a merge-conflict factory.
+Battery.xcodeproj/
+Generated/
+
+# Xcode local state
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/

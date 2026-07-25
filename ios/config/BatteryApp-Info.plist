@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Reference Info.plist keys for the iOS APP target. Merge these into the target's
+  generated Info (or point INFOPLIST_FILE at a file containing them).
+-->
+<plist version="1.0">
+<dict>
+    <!-- Required to start/host Live Activities. -->
+    <key>NSSupportsLiveActivities</key>
+    <true/>
+
+    <!-- Lets the app update Live Activities more frequently when relevant. -->
+    <key>NSSupportsLiveActivitiesFrequentUpdates</key>
+    <true/>
+
+    <!-- Enable background app refresh + register our poll task id. -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>fetch</string>
+        <string>processing</string>
+    </array>
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>com.allthingsclaude.battery.ios.refresh</string>
+    </array>
+</dict>
+</plist>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Shared container the app writes and the widget/Live Activity read.
+         Must match SharedStore.appGroupID exactly and be enabled on BOTH targets. -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.allthingsclaude.battery</string>
+    </array>
+    <!-- APNs. Needed for ActivityKit push tokens (so the relay can update the
+         Live Activity while the app is suspended) and for the silent
+         content-available push that reloads Home Screen widgets.
+         Xcode rewrites "development" to "production" for App Store builds. -->
+    <key>aps-environment</key>
+    <string>development</string>
+</dict>
+</plist>
