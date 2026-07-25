@@ -13,6 +13,17 @@ enum Constants {
     static let oauthRedirectPath = "/callback"
     static let userAgent = "Battery/0.2.4"
 
+    // Push relay — the Cloudflare Worker that forwards Live Activity updates to
+    // the iPhone app (see worker/).
+    //
+    // Ships EMPTY on purpose, which hides the whole feature. A relay's APNs key
+    // is bound to one Apple team, so a shared URL can only ever work for that
+    // team's builds — anyone else pairing would register push tokens against a
+    // relay that can't reach their app. Self-hosters point this at their own
+    // Worker without rebuilding:
+    //   defaults write com.allthingsclaude.battery pushRelayURL https://…workers.dev
+    static let pushRelayURL = ""
+
     // Polling intervals (seconds)
     static let defaultPollInterval: TimeInterval = 60
     static let activePollInterval: TimeInterval = 60

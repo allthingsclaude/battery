@@ -1,0 +1,35 @@
+name = "battery-push"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# The device store. Create it once with:
+#   wrangler kv namespace create DEVICES
+# then paste the returned id below.
+[[kv_namespaces]]
+binding = "DEVICES"
+id = "298e81c101384f23a58bb3041ea0da33"
+
+[vars]
+# Your iOS app's bundle identifier — must match PRODUCT_BUNDLE_IDENTIFIER in
+# ios/project.yml. The Live Activity topic is derived from it.
+BUNDLE_ID = "com.allthingsclaude.battery.ios"
+
+# Apple Developer Team ID (Membership page) and the Key ID of the APNs auth key.
+APNS_TEAM_ID = "746889X99S"
+APNS_KEY_ID = "82R799PQ3X"
+
+# The Swift ActivityAttributes type name. Only change this if you rename the
+# type in ios/BatteryKit/UsageActivityAttributes.swift — push-to-start payloads
+# are silently discarded when it doesn't match.
+ATTRIBUTES_TYPE = "UsageActivityAttributes"
+
+# Cloud polling (opt-in): how often to poll Anthropic for devices that enabled
+# it. Every 5 minutes keeps a Live Activity current without approaching Apple's
+# per-activity update budget.
+[triggers]
+crons = ["*/5 * * * *"]
+
+# Two SECRETS — never put these here:
+#   wrangler secret put APNS_KEY < AuthKey_XXXXXXXXXX.p8
+#   wrangler secret put CLOUD_KEY        # any long random string; encrypts
+#                                        # cloud-sync refresh tokens at rest

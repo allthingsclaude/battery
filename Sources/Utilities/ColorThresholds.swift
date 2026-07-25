@@ -71,4 +71,8 @@ enum UsageLevel: String, CaseIterable {
         case .critical: return "Critical"
         }
     }
+
+    /// True once usage warrants surfacing an alert. Mirrors the same property on
+    /// the iOS side so both platforms escalate at identical thresholds.
+    var isAlarming: Bool { self == .high || self == .critical }
 }

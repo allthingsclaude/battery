@@ -36,6 +36,7 @@ struct SettingsView: View {
                     accountsSection
                     displaySection
                     notificationsSection
+                    iPhoneSection
                     pollingSection
                     dataSection
                     generalSection
@@ -258,6 +259,16 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private var iPhoneSection: some View {
+        // Hidden entirely when no relay is configured, matching iOS. Offering a
+        // pairing box that can't reach anything would just look broken.
+        if usageViewModel.pushRelayService.isConfigured {
+            PushRelaySection(relay: usageViewModel.pushRelayService)
+        }
+    }
+
+
     // MARK: - Polling
 
     private var pollingSection: some View {
@@ -381,6 +392,98 @@ struct SettingsView: View {
                 .controlSize(.small)
                 .focusable(false)
                 .disabled(!updaterService.canCheckForUpdates)
+            }
+        }
+    }
+}
+
+// MARK: - iPhone Live Updates
+//
+// Pairing for the iOS companion. This Mac already polls every minute, so it
+// relays each poll to the phone's Lock Screen Live Activity — which iOS would
+// otherwise freeze the moment that app is suspended. Its own view rather than a
+// computed property on SettingsView so the relay's published state is observed.
+
+private struct PushRelaySection: View {
+    @ObservedObject var relay: PushRelayService
+    @State private var code: String = ""
+
+    var body: some View {
+        SettingsSection(title: "iPhone", icon: "iphone") {
+            if relay.isPaired { connected } else { pairingForm }
+
+            if let error = relay.lastError {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var connected: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: relay.cloudPolling ? "cloud.fill" : "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(UsageLevel.low.color)
+                Text(relay.cloudPolling ? "Updating from the cloud" : "Sending live updates")
+                    .font(.caption)
+                Spacer()
+                Button("Disconnect") {
+                    Task { await relay.unpair() }
+                }
+                .font(.caption)
+                .controlSize(.small)
+                .focusable(false)
+            }
+
+            // When the phone opts into cloud updates it becomes the single
+            // source, so say why this Mac has gone quiet instead of looking
+            // broken.
+            if relay.cloudPolling {
+                Text("Your iPhone is polling on its own, so this Mac doesn’t need to send. Turn off Cloud Updates on the phone to switch back.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(relay.lastPushAt.map { "Last update \(TimeFormatting.relativeTime($0))" }
+                     ?? "Waiting for the next poll.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var pairingForm: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Enter the code from Battery on iPhone ▸ Settings ▸ Live Updates.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 6) {
+                TextField("000000", text: $code)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(width: 80)
+                    .onChange(of: code) { newValue in
+                        // Digits only, capped at six, so the Pair button's
+                        // enabled state is never ambiguous.
+                        code = String(newValue.filter(\.isNumber).prefix(6))
+                    }
+                Button("Pair") {
+                    Task {
+                        await relay.pair(code: code)
+                        if relay.isPaired { code = "" }
+                    }
+                }
+                .font(.caption)
+                .controlSize(.small)
+                .focusable(false)
+                .disabled(code.count != 6 || relay.isWorking)
+                Spacer()
+                if relay.isWorking { ProgressView().controlSize(.small) }
             }
         }
     }

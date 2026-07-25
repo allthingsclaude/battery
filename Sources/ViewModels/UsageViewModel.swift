@@ -45,6 +45,9 @@ class UsageViewModel: ObservableObject {
 
     let accountManager = AccountManager()
     let oauthService = OAuthService()
+    /// Forwards each poll to a paired iPhone so its Lock Screen Live Activity
+    /// stays current while that app is suspended. No-op until paired.
+    let pushRelayService = PushRelayService()
     private let pollingService = UsagePollingService()
     private let databaseService = DatabaseService()
     private let notificationService = NotificationService()
@@ -499,11 +502,32 @@ class UsageViewModel: ObservableObject {
         // Reset notification thresholds when utilization drops
         notificationService.resetThresholds(below: sessionUtilization)
 
+        // Relay to a paired iPhone. Uses the projection from the previous poll —
+        // it's a slow-moving estimate, and waiting for this poll's regression
+        // would delay the Lock Screen by a full cycle.
+        pushRelayService.send(pushSnapshot())
+
         // Save snapshot and compute projections (only with active session)
         guard dbInitialized, usage.fiveHour != nil else { return }
         Task {
             await saveSnapshotAndProject(usage)
         }
+    }
+
+    /// Current state in the shape the iPhone's Live Activity expects.
+    private func pushSnapshot() -> PushRelayService.Snapshot {
+        PushRelayService.Snapshot(
+            sessionUtilization: sessionUtilization,
+            sessionResetsAt: sessionResetsAt,
+            weeklyUtilization: weeklyUtilization,
+            burnRatePerHour: projection?.currentRate ?? 0,
+            projectedLimitAt: projection?.projectedLimitTime,
+            isSessionActive: isSessionActive,
+            // The phone hides an unknown tier rather than guessing, so send an
+            // empty string instead of the literal "Unknown".
+            planTier: planTier == .unknown ? "" : planTier.displayName,
+            accountName: accountManager.selectedAccount?.name ?? "Account"
+        )
     }
 
     private func saveSnapshotAndProject(_ usage: UsageResponse) async {

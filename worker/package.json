@@ -1,0 +1,18 @@
+{
+  "name": "battery-push",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "APNs relay that keeps the Battery iOS Live Activity current while the app is suspended",
+  "scripts": {
+    "test": "node test/smoke.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "setup": "./setup.sh",
+    "test:live": "node test/live.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.114.0"
+  }
+}

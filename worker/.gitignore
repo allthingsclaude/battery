@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+.dev.vars
+
+# APNs auth keys. These grant push access to every app under your Apple team —
+# they must never be committed.
+*.p8
