@@ -24,10 +24,12 @@ final class PushRelayService: ObservableObject {
     /// Timestamp of the last successful push — surfaced in Settings so a broken
     /// relay is visible rather than silently doing nothing.
     @Published private(set) var lastPushAt: Date?
-    /// The phone turned on cloud updates, so the relay polls Anthropic directly.
-    /// It's authoritative when on: we stand down rather than double-pushing and
-    /// burning through the activity's update budget twice as fast.
-    @Published private(set) var cloudPolling = false
+    /// The phone has cloud updates switched on as a fallback for when this Mac
+    /// isn't running. It does *not* mean we stop: an awake Mac is the better
+    /// source — it polls on the user's own tokens at a faster cadence and costs
+    /// the relay no upstream requests — so we stay primary and each push tells
+    /// the relay to hold the cron off for a while.
+    @Published private(set) var cloudEnabled = false
     @Published private(set) var lastError: String?
     @Published private(set) var isWorking = false
 
@@ -54,8 +56,6 @@ final class PushRelayService: ObservableObject {
     private let minimumDelta: Double = 1.0
     /// Floor between pushes, whatever else changed.
     private let minimumInterval: TimeInterval = 60
-    /// How often to check back in while cloud polling has the wheel.
-    private let cloudProbeInterval: TimeInterval = 15 * 60
     /// Push even with nothing to say, so the card doesn't cross its stale date.
     private let heartbeatInterval: TimeInterval = 5 * 60
     /// Tells iOS to dim the card if we go quiet for this long.
@@ -196,10 +196,6 @@ final class PushRelayService: ObservableObject {
         guard let previous = lastSent, let sentAt = lastSentAt else { return true }
 
         let elapsed = Date().timeIntervalSince(sentAt)
-        // While cloud polling owns the card, drop to an occasional probe. We
-        // learn it was switched off from the response to one of these, so going
-        // fully silent would strand us.
-        if cloudPolling { return elapsed >= cloudProbeInterval }
         guard elapsed >= minimumInterval else { return false }
         if elapsed >= heartbeatInterval { return true }
 
@@ -232,15 +228,12 @@ final class PushRelayService: ObservableObject {
             defer { inFlight = false }
             struct PushResponse: Decodable {
                 let ok: Bool
-                let skipped: String?
-                let cloudPolling: Bool?
+                let cloudEnabled: Bool?
             }
             do {
                 let response = try await post("/v1/push", to: base, body: body) as PushResponse
-                cloudPolling = response.cloudPolling ?? false
-                // A skipped push isn't a delivered one — don't claim otherwise
-                // in Settings.
-                if response.skipped == nil { lastPushAt = Date() }
+                cloudEnabled = response.cloudEnabled ?? false
+                lastPushAt = Date()
                 lastError = nil
             } catch RelayError.status(409, let reason) where reason == "no_activity_token" {
                 // No activity is running on the phone. If the session is worth

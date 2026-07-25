@@ -33,8 +33,10 @@ cron ──▶ Worker ──▶ Anthropic  ──▶  APNs  ──▶  iPhone
           OAuth grant, encrypted)
 ```
 
-When cloud polling is on it's authoritative and the Mac stands down, so the two
-never contend for Apple's per-activity update budget.
+**The Mac wins when it's awake.** It polls the user's own tokens from their own
+machine, every 60 seconds rather than every 5 minutes, and costs this service no
+upstream requests at all — so each Mac push claims the card for 12 minutes and
+the cron stands aside. Cloud polling covers the gaps, not the whole time.
 
 ## Why one Worker per person
 
@@ -88,8 +90,13 @@ on screen is pure waste:
 | Device state | Polled |
 |---|---|
 | No push tokens at all (Live Activities off) | never |
+| A paired Mac pushed in the last 12 min | never — it already did the work |
 | No card on screen | 1 tick in 3 (~15 min), staggered by device id |
-| Live Activity running | every tick (5 min) |
+| Live Activity running, no Mac | every tick (5 min) |
+
+The Mac's claim is renewed lazily (once per ~6 minutes of continuous pushing,
+not once per push), so keeping the cron quiet costs far fewer KV writes than the
+cloud pushes it replaces.
 
 In practice a card is up a few hours a day, so that's ~50 usage requests/day —
 about **a tenth** of what the Mac app already generates polling every 60 seconds.

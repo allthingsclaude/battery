@@ -424,10 +424,10 @@ private struct PushRelaySection: View {
     private var connected: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Image(systemName: relay.cloudPolling ? "cloud.fill" : "checkmark.circle.fill")
+                Image(systemName: "checkmark.circle.fill")
                     .font(.caption)
                     .foregroundStyle(UsageLevel.low.color)
-                Text(relay.cloudPolling ? "Updating from the cloud" : "Sending live updates")
+                Text("Sending live updates")
                     .font(.caption)
                 Spacer()
                 Button("Disconnect") {
@@ -438,19 +438,18 @@ private struct PushRelaySection: View {
                 .focusable(false)
             }
 
-            // When the phone opts into cloud updates it becomes the single
-            // source, so say why this Mac has gone quiet instead of looking
-            // broken.
-            if relay.cloudPolling {
-                Text("Your iPhone is polling on its own, so this Mac doesn’t need to send. Turn off Cloud Updates on the phone to switch back.")
+            Text(relay.lastPushAt.map { "Last update \(TimeFormatting.relativeTime($0))" }
+                 ?? "Waiting for the next poll.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            // Cloud updates only cover the gaps while this Mac is asleep — say
+            // so, or "on" in two places looks like double work.
+            if relay.cloudEnabled {
+                Text("Cloud updates are on as a backup, and pause while this Mac is sending.")
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text(relay.lastPushAt.map { "Last update \(TimeFormatting.relativeTime($0))" }
-                     ?? "Waiting for the next poll.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
         }
     }

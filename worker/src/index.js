@@ -52,6 +52,17 @@ const DISCOVERY_TICK_DIVISOR = 3;
 /** Rate-limit backoff, doubling per consecutive strike. */
 const BACKOFF_BASE_SECONDS = 5 * 60;
 const BACKOFF_MAX_SECONDS = 60 * 60;
+/**
+ * How long one Mac push holds the card against the cron, and how much of that
+ * must have elapsed before the claim is renewed. The gap between them is what
+ * keeps /v1/push from writing KV on every request: a Mac pushing once a minute
+ * writes roughly once every six.
+ *
+ * CARD_CLAIM_SECONDS also bounds how stale the card can get if the Mac dies
+ * mid-session — the cron takes back over that long afterwards.
+ */
+const CARD_CLAIM_SECONDS = 12 * 60;
+const CARD_CLAIM_RENEW_SECONDS = 6 * 60;
 
 export default {
   async fetch(request, env) {
@@ -205,13 +216,6 @@ async function relayPush(body, env) {
   if (!record || !record.pushKeyHash) return json({ error: 'not_paired' }, 404);
   if (record.pushKeyHash !== (await sha256(pushKey))) return json({ error: 'forbidden' }, 403);
 
-  // Cloud polling is authoritative when enabled. Telling the Mac to stand down
-  // is cheaper and less surprising than silently double-pushing and burning
-  // through the activity's update budget twice as fast.
-  if (await getCloud(env, deviceId)) {
-    return json({ ok: true, skipped: 'cloud_polling', cloudPolling: true });
-  }
-
   const event = body.event === 'start' || body.event === 'end' ? body.event : 'update';
   const state = body.contentState;
   if (!state || typeof state !== 'object') return json({ error: 'missing_content_state' }, 400);
@@ -246,8 +250,34 @@ async function relayPush(body, env) {
   // Group container only the app process can write. A silent push wakes it.
   const widgets = body.reloadWidgets ? await deliverWidgetReload(env, deviceId, record) : null;
 
+  // An awake Mac is the better source: it polls on the user's own tokens from
+  // their own machine, every 60s instead of every 5 minutes, and costs this
+  // service no upstream requests at all. So it claims the card, and the cron
+  // steps aside while the claim holds.
+  const cloudEnabled = result.ok ? await claimCardForMac(env, deviceId) : false;
+
   const status = result.ok ? 200 : result.status === 410 ? 410 : 502;
-  return json({ ok: result.ok, activity: result, widgets, cloudPolling: false }, status);
+  return json({ ok: result.ok, activity: result, widgets, cloudEnabled }, status);
+}
+
+/**
+ * Mark the card as Mac-driven, and report whether cloud sync is even enabled.
+ *
+ * The claim is renewed lazily rather than on every push, because /v1/push is
+ * the hot path and KV writes are the scarcest thing on the free tier. One write
+ * buys CARD_CLAIM_SECONDS of cron silence, so a continuously-pushing Mac costs
+ * roughly one write per CARD_CLAIM_RENEW_SECONDS rather than one per push.
+ */
+async function claimCardForMac(env, deviceId) {
+  const cloud = await getCloud(env, deviceId);
+  if (!cloud) return false; // nothing to hold off — cloud sync isn't on
+
+  const now = nowSeconds();
+  const remaining = (cloud.macActiveUntil || 0) - now;
+  if (remaining < CARD_CLAIM_RENEW_SECONDS) {
+    await putCloud(env, deviceId, { ...cloud, macActiveUntil: now + CARD_CLAIM_SECONDS });
+  }
+  return true;
 }
 
 /**
@@ -341,9 +371,12 @@ async function runCloudPoll(env, scheduledTime) {
   );
 
   const failed = results.filter((r) => r.status === 'rejected');
-  const polled = results.filter((r) => r.status === 'fulfilled' && r.value === 'polled').length;
+  const tally = (value) => results.filter((r) => r.status === 'fulfilled' && r.value === value).length;
   for (const failure of failed) console.error('cloud poll failed', failure.reason);
-  console.log(`cloud poll: ${deviceIds.length} enrolled, ${polled} polled, ${failed.length} failed`);
+  console.log(
+    `cloud poll: ${deviceIds.length} enrolled, ${tally('polled')} polled, `
+    + `${tally('mac-active')} deferred to Mac, ${failed.length} failed`,
+  );
 }
 
 /**
@@ -385,6 +418,13 @@ async function pollDevice(env, deviceId, scheduledTime) {
 
   // Parked by a previous 429. Costs one KV read and no upstream request.
   if ((cloud.backoffUntil || 0) > nowSeconds()) return 'skipped';
+
+  // An awake Mac is already keeping this card current, from the user's own
+  // machine at a faster cadence than we could manage. Polling anyway would
+  // spend Anthropic requests and KV writes to duplicate work that's already
+  // done — so stand aside until its claim lapses.
+  if ((cloud.macActiveUntil || 0) > nowSeconds()) return 'mac-active';
+
   if (!shouldPollNow(deviceId, record, scheduledTime)) return 'skipped';
 
   let usage;

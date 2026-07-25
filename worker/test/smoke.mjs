@@ -441,7 +441,10 @@ await check('a rejected grant is refused rather than stored', async () => {
   });
 });
 
-await check('the Mac stands down while cloud polling is on', async () => {
+await check('an awake Mac stays primary and claims the card', async () => {
+  // The Mac polls the user's own tokens from their own machine, every 60s
+  // rather than every 5 minutes, and costs the relay no upstream requests. So
+  // it keeps pushing, and holds the cron off rather than the other way round.
   apnsCalls.length = 0;
   const res = await worker.fetch(post('/v1/push', {
     deviceId: DEVICE_ID, pushKey,
@@ -449,12 +452,41 @@ await check('the Mac stands down while cloud polling is on', async () => {
   }), env);
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.equal(body.skipped, 'cloud_polling');
-  assert.equal(body.cloudPolling, true);
-  assert.equal(apnsCalls.length, 0, 'a deferred push must not reach APNs');
+  assert.equal(body.ok, true);
+  assert.equal(body.cloudEnabled, true, 'should report that cloud sync exists as a backup');
+  assert.ok(apnsCalls.length >= 1, 'the Mac push must actually be delivered');
+
+  const cloud = JSON.parse(env.DEVICES.store.get(`cloud:${DEVICE_ID}`));
+  assert.ok(cloud.macActiveUntil > Math.floor(Date.now() / 1000), 'claim not recorded');
 });
 
-await check('a cron tick polls Anthropic and pushes the result', async () => {
+await check('the cron defers while that claim holds', async () => {
+  anthropicCalls.length = 0;
+  apnsCalls.length = 0;
+  await cronTick();
+  assert.equal(anthropicCalls.length, 0, 'must not spend an Anthropic request duplicating the Mac');
+  assert.equal(apnsCalls.length, 0);
+});
+
+await check('claiming the card does not write KV on every push', async () => {
+  // /v1/push is the hot path and KV writes are the scarcest free-tier resource,
+  // so a fresh claim must be reused rather than rewritten each time.
+  const before = JSON.parse(env.DEVICES.store.get(`cloud:${DEVICE_ID}`)).updatedAt;
+  for (let i = 0; i < 3; i++) {
+    await worker.fetch(post('/v1/push', {
+      deviceId: DEVICE_ID, pushKey,
+      contentState: { sessionUtilization: 56 + i, weeklyUtilization: 20 },
+    }), env);
+  }
+  const after = JSON.parse(env.DEVICES.store.get(`cloud:${DEVICE_ID}`)).updatedAt;
+  assert.equal(after, before, 'claim was rewritten while still fresh');
+});
+
+await check('the cron takes over once the Mac goes quiet', async () => {
+  const cloud = JSON.parse(env.DEVICES.store.get(`cloud:${DEVICE_ID}`));
+  cloud.macActiveUntil = 0; // the claim lapses — Mac asleep or quit
+  env.DEVICES.store.set(`cloud:${DEVICE_ID}`, JSON.stringify(cloud));
+
   apnsCalls.length = 0;
   await cronTick();
 
@@ -672,12 +704,14 @@ await check('a revoked grant disables cloud polling instead of retrying forever'
   assert.equal(env.DEVICES.store.get(`cloud:${DEVICE_ID}`), undefined,
                'the cloud record should be gone');
 
-  // And with it gone, the Mac takes over again.
+  // The Mac keeps working regardless, and now reports no cloud backup.
   const res = await worker.fetch(post('/v1/push', {
     deviceId: DEVICE_ID, pushKey,
     contentState: { sessionUtilization: 30, weeklyUtilization: 10 },
   }), env);
-  assert.equal((await res.json()).cloudPolling, false);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.cloudEnabled, false);
 });
 
 // ── teardown ─────────────────────────────────────────────────────────────

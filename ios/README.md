@@ -168,9 +168,10 @@ The credential this needs is deliberately the narrowest one that works:
   token — which they would if they shared one.
 - Encrypted at rest under a Worker secret, so KV access alone can't read it.
 
-Cloud polling is authoritative while on: `/v1/push` answers the Mac with
-`cloudPolling: true` and `PushRelayService` drops to a 15-minute probe, so the
-two never double-push and halve the activity's update budget.
+The Mac stays primary whenever it's awake — it's both faster (60s vs 5 min) and
+free, since it polls on the user's own tokens from their own machine. Each Mac
+push claims the card for 12 minutes and the cron skips that device entirely;
+cloud polling fills the gaps rather than duplicating the work.
 
 It also polls as little as it can get away with, because the budget that matters
 here is Anthropic's rate limit, not Cloudflare's bill. A device with no Live
