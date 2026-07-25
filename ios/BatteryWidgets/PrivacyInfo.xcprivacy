@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Privacy manifest for the widget / Live Activity extension. It ships as its
+  own bundle inside the app, and it compiles BatteryKit — so it reaches a
+  required-reason API in its own right and needs its own declaration.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSPrivacyTracking</key>
+    <false/>
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <!-- 1C8F.1 only: the extension reads the App Group defaults the
+                     app writes (SharedStore.swift). It never touches defaults
+                     of its own. -->
+                <string>1C8F.1</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

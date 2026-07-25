@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Privacy manifest for the app target. Apple rejects uploads that call a
+  "required reason" API without declaring why (ITMS-91053), so this is not
+  optional paperwork — without it the build bounces during processing.
+
+  See BatteryWidgets/PrivacyInfo.xcprivacy for the extension's copy: it is a
+  separate bundle and declares only the API it actually reaches.
+-->
+<plist version="1.0">
+<dict>
+    <!-- No tracking: nothing here is linked with third-party data for
+         advertising, and there is no ad or analytics SDK in the app. -->
+    <key>NSPrivacyTracking</key>
+    <false/>
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+
+    <!-- NSPrivacyCollectedDataTypes intentionally left empty.
+         Everything the app reads stays on the device — usage snapshots in the
+         App Group, OAuth tokens in the Keychain. The one exception is the push
+         relay, which is off unless the user turns it on, and is self-hosted:
+         the data goes to a Worker the *user* deploys under their own Cloudflare
+         and Apple Developer accounts, not to us. Apple's definition of "collect"
+         is transmitting data off-device in a way that lets **the developer**
+         access it, which never happens here.
+
+         If a shared, first-party relay is ever offered, this must be revisited
+         together with the App Privacy answers in App Store Connect. -->
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <!-- CA92.1 — the app's own defaults: Live Activity mode
+                     (Settings.swift), account list (Account.swift), and the
+                     pushRelayURL debug override (AppConfig.swift). -->
+                <string>CA92.1</string>
+                <!-- 1C8F.1 — the App Group defaults shared with the widget
+                     extension (SharedStore.swift). The app is a member of
+                     group.com.allthingsclaude.battery. -->
+                <string>1C8F.1</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

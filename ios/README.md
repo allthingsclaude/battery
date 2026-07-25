@@ -387,6 +387,12 @@ Automatic provisioning can create profiles, but not the records they point at:
   project-wide block.
 - `ITSAppUsesNonExemptEncryption: false` is in the app's Info.plist so uploads
   don't park in "Missing Compliance" waiting on a manual answer.
+- Both targets ship a **`PrivacyInfo.xcprivacy`**. Reading `UserDefaults` is a
+  "required reason" API, and an upload that uses one without declaring why is
+  rejected during processing (ITMS-91053). `NSPrivacyCollectedDataTypes` is
+  empty: everything stays on the device, and the push relay is self-hosted, so
+  no data reaches *us*. Offering a shared first-party relay would change that
+  answer — and the App Privacy answers in App Store Connect along with it.
 - `aps-environment` is `development` in the entitlements; the App Store profile
   supplies `production`. `PushRelayClient` reads the value out of the embedded
   profile at runtime rather than inferring it, so TestFlight builds — which ship
