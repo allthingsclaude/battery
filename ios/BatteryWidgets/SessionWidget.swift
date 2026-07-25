@@ -134,8 +134,7 @@ struct MediumOverviewView: View {
                 SectionLabel(title: title)
                 Spacer()
                 Text("\(Int(util.rounded()))%")
-                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                    .monospacedDigit()
+                    .font(BatteryFont.numeric(15, weight: .strong, relativeTo: .subheadline))
                     .foregroundStyle(UsageLevel.from(utilization: util).color)
             }
             BatteryProgressBar(utilization: util, height: 7)

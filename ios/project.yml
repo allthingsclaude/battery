@@ -52,6 +52,15 @@ targets:
         UIBackgroundModes: [fetch, processing, remote-notification]
         BGTaskSchedulerPermittedIdentifiers:
           - com.allthingsclaude.battery.ios.refresh
+        # Brand typefaces (see BatteryKit/BatteryFont.swift). Both targets
+        # register them: an extension is a separate bundle, so the app's
+        # registration does not carry over to the widgets or Live Activity.
+        UIAppFonts:
+          - Inter-Regular.ttf
+          - Inter-SemiBold.ttf
+          - SpaceGrotesk-Bold.ttf
+          - JetBrainsMono-Regular.ttf
+          - JetBrainsMono-SemiBold.ttf
         UILaunchScreen: {}
 
   # ---------- Widget + Live Activity extension ----------
@@ -69,5 +78,11 @@ targets:
       path: Generated/BatteryWidgets-Info.plist
       properties:
         CFBundleDisplayName: Battery
+        UIAppFonts:
+          - Inter-Regular.ttf
+          - Inter-SemiBold.ttf
+          - SpaceGrotesk-Bold.ttf
+          - JetBrainsMono-Regular.ttf
+          - JetBrainsMono-SemiBold.ttf
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension

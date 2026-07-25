@@ -86,7 +86,7 @@ struct LiveCountdown: View {
                     .foregroundStyle(.tertiary)
                 if remaining > 86400 {
                     Text("Resets \(Self.dateFormatter.string(from: target))")
-                        .font(.caption2)
+                        .font(BatteryFont.numeric(11, relativeTo: .caption2))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -95,8 +95,7 @@ struct LiveCountdown: View {
                         Text(prefix).font(.caption2).foregroundStyle(.tertiary)
                     }
                     Text(remaining > 0 ? TimeFormatting.shortDuration(remaining) : "now")
-                        .font(.caption)
-                        .monospacedDigit()
+                        .font(BatteryFont.numeric(12, relativeTo: .caption))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -141,8 +140,8 @@ struct SectionLabel: View {
                 Image(systemName: systemImage).font(.caption2).foregroundStyle(.tertiary)
             }
             Text(title.uppercased())
-                .font(.caption2.weight(.semibold))
-                .tracking(0.6)
+                .font(BatteryFont.label(11))
+                .tracking(0.8)
                 .foregroundStyle(.secondary)
         }
     }

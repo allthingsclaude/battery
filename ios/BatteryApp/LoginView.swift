@@ -63,7 +63,7 @@ struct LoginView: View {
             }
             VStack(spacing: 8) {
                 Text("Battery")
-                    .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                    .font(BatteryFont.heading(34, relativeTo: .largeTitle))
                 Text("Your Claude Code usage —\nwidgets, Lock Screen, and all.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

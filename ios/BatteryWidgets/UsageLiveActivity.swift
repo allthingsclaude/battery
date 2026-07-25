@@ -26,8 +26,7 @@ struct UsageLiveActivity: Widget {
                         VStack(alignment: .leading, spacing: 0) {
                             Text("Session").font(.caption2).foregroundStyle(.secondary)
                             Text("\(Int(state.sessionUtilization.rounded()))%")
-                                .font(.system(.title3, design: .rounded).weight(.bold))
-                                .monospacedDigit()
+                                .font(BatteryFont.numeric(20, weight: .strong, relativeTo: .title3))
                                 .foregroundStyle(level.color)
                         }
                     }
@@ -39,7 +38,7 @@ struct UsageLiveActivity: Widget {
                             // System-updating text: a Live Activity only re-renders
                             // when the app pushes, so a static string would freeze.
                             Text(reset, style: .relative)
-                                .font(.system(.headline, design: .rounded)).monospacedDigit()
+                                .font(BatteryFont.numeric(17, weight: .strong, relativeTo: .headline))
                                 .lineLimit(1).minimumScaleFactor(0.7)
                                 .multilineTextAlignment(.trailing)
                         } else {
@@ -55,8 +54,7 @@ struct UsageLiveActivity: Widget {
                           showsLabel: false, gradientStroke: true, glow: false)
             } compactTrailing: {
                 Text("\(Int(state.sessionUtilization.rounded()))%")
-                    .font(.system(.body, design: .rounded).weight(.semibold))
-                    .monospacedDigit()
+                    .font(BatteryFont.numeric(17, weight: .strong, relativeTo: .body))
                     .foregroundStyle(level.color)
             } minimal: {
                 UsageRing(utilization: state.sessionUtilization, size: 20, lineWidth: 3,
@@ -113,7 +111,7 @@ struct LockScreenActivityView: View {
                     // System-updating so the Lock Screen countdown keeps ticking
                     // between app pushes (a static string would sit frozen).
                     Text(reset, style: .relative)
-                        .font(.system(.title3, design: .rounded).weight(.bold)).monospacedDigit()
+                        .font(BatteryFont.numeric(20, weight: .strong, relativeTo: .title3))
                         .foregroundStyle(.white)
                         .lineLimit(1).minimumScaleFactor(0.6)
                         .multilineTextAlignment(.trailing)

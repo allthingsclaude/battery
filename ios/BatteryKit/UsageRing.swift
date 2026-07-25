@@ -37,8 +37,7 @@ struct UsageRing: View {
 
             if showsLabel {
                 Text("\(Int(utilization.rounded()))")
-                    .font(.system(size: size * 0.28, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
+                    .font(BatteryFont.numeric(size * 0.28, weight: .strong))
                     .foregroundStyle(tinted ? AnyShapeStyle(.primary) : AnyShapeStyle(level.color))
             }
         }

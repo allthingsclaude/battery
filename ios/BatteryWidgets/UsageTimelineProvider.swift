@@ -126,7 +126,7 @@ struct WidgetCountdown: View {
                     .lineLimit(1).minimumScaleFactor(0.75)
             } else {
                 (Text(prefix + " ") + Text(reset, style: .relative))
-                    .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                    .font(BatteryFont.numeric(11, relativeTo: .caption2)).foregroundStyle(.secondary)
             }
         } else {
             Text("No active window").font(.caption2).foregroundStyle(.tertiary)

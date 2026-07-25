@@ -99,7 +99,7 @@ struct DashboardView: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Battery")
-                    .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                    .font(BatteryFont.heading(34, relativeTo: .largeTitle))
                 HStack(spacing: 6) {
                     if let tier = service.payload?.planTier, !tier.isEmpty {
                         Text(tier)
@@ -225,8 +225,7 @@ struct DashboardView: View {
                 Spacer()
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     Text("\(Int(utilization.rounded()))")
-                        .font(.system(.body, design: .rounded).weight(.semibold))
-                        .monospacedDigit()
+                        .font(BatteryFont.numeric(17, weight: .strong, relativeTo: .body))
                         .foregroundStyle(UsageLevel.from(utilization: utilization).color)
                     Text("%").font(.caption2).foregroundStyle(.tertiary)
                 }

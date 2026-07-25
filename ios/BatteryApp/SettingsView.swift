@@ -123,8 +123,7 @@ struct SettingsView: View {
     private func pairingCode(_ pairing: PushRelayClient.PairingCode) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(pairing.formatted)
-                .font(.system(size: 40, weight: .semibold, design: .rounded))
-                .monospacedDigit()
+                .font(BatteryFont.numeric(40, weight: .strong))
                 .tracking(2)
                 .foregroundStyle(BatteryPalette.brand)
                 .frame(maxWidth: .infinity)

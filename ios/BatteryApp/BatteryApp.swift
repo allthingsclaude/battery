@@ -9,6 +9,7 @@ struct BatteryApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        BatteryFont.registerIfNeeded()
         BackgroundRefresher.register()
     }
 

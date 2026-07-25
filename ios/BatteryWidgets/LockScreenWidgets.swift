@@ -43,6 +43,9 @@ struct LockScreenWidgetView: View {
         Gauge(value: min(100, payload.sessionUtilization), in: 0...100) {
             Text("Claude")
         } currentValueLabel: {
+            // Left as a system font on purpose: accessory gauges are rendered
+            // by the system at sizes it chooses, and a custom face here fights
+            // the Lock Screen's own metrics rather than matching them.
             Text("\(Int(payload.sessionUtilization.rounded()))")
                 .monospacedDigit()
         }
@@ -55,7 +58,7 @@ struct LockScreenWidgetView: View {
             HStack(spacing: 4) {
                 Image(systemName: "bolt.fill").font(.caption2)
                 Text("Session \(Int(payload.sessionUtilization.rounded()))%")
-                    .font(.caption.weight(.semibold)).monospacedDigit()
+                    .font(BatteryFont.numeric(12, weight: .strong, relativeTo: .caption))
                 if payload.isSessionActive {
                     Image(systemName: "circle.fill").font(.system(size: 5))
                 }
