@@ -1,0 +1,172 @@
+name: iOS Release
+
+# Deliberately a separate tag namespace from the Mac app's `v*`. The two ship
+# on their own cadences, and a macOS patch release should not push a build to
+# TestFlight reviewers.
+#
+#   git tag ios-v0.1.0 && git push origin ios-v0.1.0
+#
+# `workflow_dispatch` is for a build you want on TestFlight without minting a
+# version tag — it takes the marketing version as an input.
+on:
+  push:
+    tags: ["ios-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Marketing version, X.Y.Z"
+        required: true
+
+jobs:
+  testflight:
+    # Same runner as the Mac release: Xcode 26 / iOS 26 SDK.
+    runs-on: macos-26
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      # ── Version ───────────────────────────────────────────────────────
+      # Build number is the commit count, matching the Mac release. It only
+      # has to increase, and App Store Connect rejects a re-used one.
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/ios-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/ios-v}"
+          else
+            VERSION="$INPUT_VERSION"
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version '$VERSION'. Expected X.Y.Z"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Building $VERSION ($(git rev-list --count HEAD))"
+
+      # ── Generate the Xcode project ────────────────────────────────────
+      # Battery.xcodeproj is gitignored; project.yml is the source of truth.
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      # ── Signing identity ──────────────────────────────────────────────
+      # An *Apple Distribution* certificate — not the Developer ID one the Mac
+      # release uses. Developer ID signs software shipped outside the App
+      # Store and cannot sign an iOS app at all.
+      - name: Set up keychain
+        env:
+          IOS_DIST_CERTIFICATE: ${{ secrets.IOS_DIST_CERTIFICATE }}
+          IOS_DIST_CERTIFICATE_PWD: ${{ secrets.IOS_DIST_CERTIFICATE_PWD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/ios-dist.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/ios-signing.keychain-db"
+
+          echo "$IOS_DIST_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$IOS_DIST_CERTIFICATE_PWD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          # Keep the login keychain in the search list so xcodebuild can still
+          # read Apple's intermediate certificates.
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          rm -f "$CERT_PATH"
+
+      # ── App Store Connect API key ─────────────────────────────────────
+      # Does double duty: lets xcodebuild create/renew the App Store
+      # provisioning profiles for both bundle IDs, and authenticates the
+      # upload. altool discovers the key by filename in this exact directory,
+      # so the name is not arbitrary.
+      - name: Write App Store Connect key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          # Fail loudly here rather than with an opaque signing error later.
+          if ! grep -q "BEGIN PRIVATE KEY" "$KEY_PATH"; then
+            echo "::error::ASC_PRIVATE_KEY does not look like a PEM .p8 — paste the file's full contents, BEGIN/END lines included."
+            exit 1
+          fi
+
+      # ── Archive ───────────────────────────────────────────────────────
+      - name: Archive
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          xcodebuild archive \
+            -project ios/Battery.xcodeproj \
+            -scheme Battery \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Battery.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/ios-signing.keychain-db"
+
+      # ── Export .ipa ───────────────────────────────────────────────────
+      - name: Export IPA
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Battery.xcarchive" \
+            -exportOptionsPlist ios/config/ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          ls -la "$RUNNER_TEMP/export"
+
+      # ── Upload to TestFlight ──────────────────────────────────────────
+      # Validate first: it catches the same problems as the upload but without
+      # burning a build number, so a rejection is cheap to retry.
+      - name: Upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          IPA="$RUNNER_TEMP/export/Battery.ipa"
+          xcrun altool --validate-app -f "$IPA" -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+          xcrun altool --upload-app -f "$IPA" -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+
+      # Keep the build addressable even if the upload half fails.
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Battery-ios-${{ steps.version.outputs.version }}
+          path: |
+            ${{ runner.temp }}/export/*.ipa
+            ${{ runner.temp }}/export/*.plist
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Cleanup
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/ios-signing.keychain-db" 2>/dev/null || true
+          rm -rf ~/.appstoreconnect/private_keys

@@ -14,12 +14,14 @@ options:
 
 settings:
   base:
+    # CI overrides both on the xcodebuild command line, driven by the release
+    # tag; these are only the defaults for a local build. The Info.plists below
+    # must reference them via $(...) for an override to reach the bundle.
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     CODE_SIGN_STYLE: Automatic
     GENERATE_INFOPLIST_FILE: "NO"      # XcodeGen writes the Info.plists below
-    TARGETED_DEVICE_FAMILY: "1"        # iPhone (Live Activities are iPhone-only)
     DEVELOPMENT_TEAM: "746889X99S"     # applied to both targets; survives regeneration
 
 targets:
@@ -41,10 +43,25 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.allthingsclaude.battery.ios
         CODE_SIGN_ENTITLEMENTS: config/BatteryApp.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # iPhone only — Live Activities and the Dynamic Island don't exist on
+        # iPad, so shipping there would mean an App Store reviewer testing the
+        # product's whole premise on a device that can't show it. This has to
+        # live on the target: XcodeGen writes its own "1,2" default at target
+        # level, which outranks anything set in the project-wide block above.
+        TARGETED_DEVICE_FAMILY: "1"
     info:
       path: Generated/Battery-Info.plist
       properties:
         CFBundleDisplayName: Battery
+        # XcodeGen otherwise hardcodes 1.0 / 1 here, which silently ignores the
+        # version CI passes on the command line — every TestFlight upload would
+        # claim to be 1.0 (1) and the second one would bounce as a duplicate.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # We use no non-exempt encryption (HTTPS only). Without this key every
+        # upload parks in "Missing Compliance" until answered by hand, which
+        # would block an automated TestFlight release.
+        ITSAppUsesNonExemptEncryption: false
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
         # remote-notification lets the relay's silent push wake us long enough to
@@ -74,10 +91,15 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.allthingsclaude.battery.ios.widgets
         CODE_SIGN_ENTITLEMENTS: config/BatteryWidgets.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
     info:
       path: Generated/BatteryWidgets-Info.plist
       properties:
         CFBundleDisplayName: Battery
+        # Must track the host app exactly — App Store Connect rejects a bundle
+        # whose embedded extension carries a different version.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UIAppFonts:
           - Inter-Regular.ttf
           - Inter-SemiBold.ttf

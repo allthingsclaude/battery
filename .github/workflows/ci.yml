@@ -33,3 +33,28 @@ jobs:
 
       - name: Test
         run: swift test
+
+  # The iOS app and widget extension aren't part of the SwiftPM package, so the
+  # job above never touches them. Build them unsigned — no certificate or
+  # provisioning profile needed — purely to catch compile breaks on a PR rather
+  # than when cutting a release.
+  ios-build:
+    runs-on: macos-26
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild build \
+            -project ios/Battery.xcodeproj \
+            -scheme Battery \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            -quiet

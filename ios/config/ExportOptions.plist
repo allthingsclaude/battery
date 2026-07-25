@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  How `xcodebuild -exportArchive` turns the .xcarchive into the .ipa that goes
+  to TestFlight. Used by .github/workflows/ios-release.yml.
+
+  Signing is `automatic`: the workflow passes an App Store Connect API key, so
+  Xcode fetches (and renews) the App Store provisioning profiles for both the
+  app and the widget extension itself. The alternative is exporting the two
+  profiles by hand, storing them as secrets, and re-doing it every twelve
+  months when they expire.
+-->
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>app-store-connect</string>
+
+    <key>teamID</key>
+    <string>746889X99S</string>
+
+    <key>signingStyle</key>
+    <string>automatic</string>
+
+    <key>destination</key>
+    <string>export</string>
+
+    <!-- Ship dSYMs so App Store Connect can symbolicate crash reports. -->
+    <key>uploadSymbols</key>
+    <true/>
+
+    <!-- Bitcode has been dead since Xcode 14; being explicit avoids a warning. -->
+    <key>stripSwiftSymbols</key>
+    <true/>
+</dict>
+</plist>

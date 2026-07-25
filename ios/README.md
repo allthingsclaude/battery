@@ -297,6 +297,90 @@ no paid account — App Groups just work there. If you have no iOS runtime yet:
 
 ---
 
+## Shipping to TestFlight
+
+`.github/workflows/ios-release.yml` builds, signs, and uploads. Cutting a
+release is one tag:
+
+```bash
+git tag ios-v0.1.0 && git push origin ios-v0.1.0
+```
+
+The `ios-v*` namespace is separate from the Mac app's `v*` on purpose — the two
+ship on their own cadences, and a menu-bar patch shouldn't push a build to
+TestFlight reviewers. There's also a `workflow_dispatch` trigger that takes the
+version as an input, for a build you want without minting a tag.
+
+The marketing version comes from the tag; the build number is the commit count,
+which only has to increase. Both are passed to `xcodebuild` and reach the bundle
+because the `info:` blocks in `project.yml` reference `$(MARKETING_VERSION)` and
+`$(CURRENT_PROJECT_VERSION)` — XcodeGen otherwise hardcodes `1.0` / `1`, and the
+override would be silently dropped.
+
+### Secrets
+
+The Mac release's signing secrets **do not carry over.** `MACOS_CERTIFICATE` is
+a *Developer ID Application* certificate, which signs software distributed
+outside the App Store and cannot sign an iOS app at all. Reused as-is:
+`APPLE_TEAM_ID`, and `KEYCHAIN_PASSWORD` (just a passphrase for the throwaway
+keychain the job creates).
+
+| Secret | What it is |
+|---|---|
+| `IOS_DIST_CERTIFICATE` | Base64 of a `.p12` holding your **Apple Distribution** certificate *and its private key* |
+| `IOS_DIST_CERTIFICATE_PWD` | The password set when exporting that `.p12` |
+| `ASC_KEY_ID` | App Store Connect API key ID (the 10-char string in the filename) |
+| `ASC_ISSUER_ID` | The issuer UUID, shown above the key list |
+| `ASC_PRIVATE_KEY` | Full contents of `AuthKey_XXXXXXXXXX.p8`, `BEGIN`/`END` lines included |
+
+Export the certificate from Keychain Access ▸ *My Certificates* — pick the
+**parent** entry with the disclosure triangle, not the bare certificate, or the
+private key won't be included and signing fails with a key-not-found error. Then:
+
+```bash
+base64 -i Certificates.p12 | gh secret set IOS_DIST_CERTIFICATE
+gh secret set IOS_DIST_CERTIFICATE_PWD
+```
+
+The App Store Connect key is created under *Users and Access ▸ Integrations ▸
+App Store Connect API*. It needs the **App Manager** role: the workflow relies on
+`-allowProvisioningUpdates`, so Xcode creates and renews the App Store
+provisioning profiles for both bundle IDs itself rather than us storing two more
+secrets that expire every twelve months. Apple lets you download the `.p8`
+exactly once — pipe it straight in so it never lands in shell history:
+
+```bash
+gh secret set ASC_PRIVATE_KEY < AuthKey_XXXXXXXXXX.p8
+gh secret set ASC_KEY_ID
+gh secret set ASC_ISSUER_ID
+```
+
+### One-time setup in Apple's portals
+
+Automatic provisioning can create profiles, but not the records they point at:
+
+1. **App IDs** for `com.allthingsclaude.battery.ios` (App Groups + Push
+   Notifications) and `…​.ios.widgets` (App Groups). Building to a device
+   already creates these, so they're likely done.
+2. **App Group** `group.com.allthingsclaude.battery`, assigned to both.
+3. An **App Store Connect app record** for the app's bundle ID. Without it the
+   upload fails at the last step with a bundle-not-found error.
+
+### Notes
+
+- Builds are **iPhone-only** (`TARGETED_DEVICE_FAMILY = 1`), because Live
+  Activities and the Dynamic Island don't exist on iPad. This is set per-target:
+  XcodeGen writes its own `1,2` default at target level, which outranks the
+  project-wide block.
+- `ITSAppUsesNonExemptEncryption: false` is in the app's Info.plist so uploads
+  don't park in "Missing Compliance" waiting on a manual answer.
+- `aps-environment` is `development` in the entitlements; the App Store profile
+  supplies `production`. `PushRelayClient` reads the value out of the embedded
+  profile at runtime rather than inferring it, so TestFlight builds — which ship
+  a profile but use production APNs — talk to the right host.
+
+---
+
 ## Auth caveats
 
 The iOS login reuses the desktop app's mechanism: a **loopback HTTP listener** on
