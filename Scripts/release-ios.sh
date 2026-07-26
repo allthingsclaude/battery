@@ -28,6 +28,7 @@ cd "$REPO_ROOT"
 SPEC="ios/project.yml"
 ASSUME_YES=false
 INPUT=""
+DID_COMMIT=false
 
 for arg in "$@"; do
   case "$arg" in
@@ -127,15 +128,12 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "Bumping version to $VERSION..."
-echo ""
 
 # ── Bump ────────────────────────────────────────────────────────────────
 # CI passes the version from the tag on the xcodebuild command line, so this
 # is what a *local* build reports. Keeping it in step means Xcode and
 # TestFlight never disagree about what you're looking at.
 sed -i '' "s/^\( *MARKETING_VERSION: \)\"[^\"]*\"/\1\"$VERSION\"/" "$SPEC"
-echo "  Updated $SPEC"
 
 NEW_VERSION=$(grep -m1 '^ *MARKETING_VERSION:' "$SPEC" | sed 's/.*"\(.*\)".*/\1/')
 if [ "$NEW_VERSION" != "$VERSION" ]; then
@@ -144,11 +142,23 @@ if [ "$NEW_VERSION" != "$VERSION" ]; then
   exit 1
 fi
 
-echo ""
-
-git add "$SPEC"
-git commit -m "chore(ios): bump version to $VERSION"
-echo "  Committed version bump"
+# The spec can already name this version — most obviously on the very first
+# release, where the default in project.yml *is* the version being cut. That's
+# not an error, there's simply nothing to commit; committing anyway would fail
+# and take the whole script down before it ever reaches the tag.
+if git diff --quiet -- "$SPEC"; then
+  echo "  $SPEC already reads $VERSION — nothing to bump"
+else
+  echo "  Updated $SPEC to $VERSION"
+  git add "$SPEC"
+  if ! git commit -q -m "chore(ios): bump version to $VERSION"; then
+    echo "Error: Could not commit the version bump."
+    git checkout -- "$SPEC"
+    exit 1
+  fi
+  echo "  Committed version bump"
+  DID_COMMIT=true
+fi
 
 git tag "$TAG"
 echo "  Created tag $TAG"
@@ -162,9 +172,15 @@ if [ "$ASSUME_YES" != true ]; then
   read -r -p "Push? [y/N] " REPLY
   if [[ ! "$REPLY" =~ ^[Yy]$ ]]; then
     echo ""
-    echo "Stopped. The bump is committed and $TAG exists locally but nothing"
-    echo "was pushed. To undo:"
-    echo "    git tag -d $TAG && git reset --hard HEAD~1"
+    echo "Stopped. $TAG exists locally but nothing was pushed. To undo:"
+    # Only offer to rewind HEAD if we actually put a commit there. Suggesting
+    # `reset --hard HEAD~1` after a no-op bump would delete somebody's real
+    # work — the destructive half of the advice has to be conditional.
+    if [ "$DID_COMMIT" = true ]; then
+      echo "    git tag -d $TAG && git reset --hard HEAD~1"
+    else
+      echo "    git tag -d $TAG"
+    fi
     exit 0
   fi
 fi
