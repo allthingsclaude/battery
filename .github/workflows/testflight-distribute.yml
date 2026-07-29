@@ -14,8 +14,8 @@ on:
   workflow_dispatch:
     inputs:
       build:
-        description: "Build number to distribute (e.g. 204)"
-        required: true
+        description: "Build number to distribute (e.g. 204). Leave empty to only report status."
+        required: false
       group:
         description: "TestFlight group"
         required: false
@@ -30,7 +30,19 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
+      # Always report first. Distribution problems are almost never visible in
+      # the App Store Connect UI — a build with no group looks identical to one
+      # that simply hasn't reached anyone — so the run should say what Apple
+      # actually thinks before it changes anything.
+      - name: TestFlight status
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          ASC_KEY: ${{ secrets.ASC_API_KEY }}
+        run: ./Scripts/testflight.sh status
+
       - name: Distribute to testers
+        if: inputs.build != ''
         env:
           # Passed through the environment rather than interpolated into the
           # command line: a `${{ }}` expression lands in the shell verbatim.

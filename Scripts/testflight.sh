@@ -280,14 +280,6 @@ case "$CMD" in
       exit 1
     fi
 
-    # A group set to receive every build owns its own membership — App Store
-    # Connect rejects an explicit add, and there's nothing to do anyway.
-    if [ "$(printf '%s' "$GROUP_JSON" | jq -r --arg n "$GROUP_NAME" \
-         '.data[] | select(.attributes.name == $n) | .attributes.hasAccessToAllBuilds')" = "true" ]; then
-      echo "'$GROUP_NAME' automatically receives every build — nothing to assign."
-      exit 0
-    fi
-
     if check "$(api GET "/v1/builds/$BUILD_ID/betaGroups?fields\[betaGroups\]=name")" \
          "groups for build $BUILD_NUMBER" | jq -e --arg n "$GROUP_NAME" \
          '.data[] | select(.attributes.name == $n)' >/dev/null; then
@@ -295,9 +287,27 @@ case "$CMD" in
       exit 0
     fi
 
+    # A group with automatic distribution ("has access to all builds") owns its
+    # own membership, and App Store Connect may reject an explicit add as
+    # redundant. Attempt it anyway rather than assuming: the flag being set is
+    # not proof the build actually reached anyone, and a rejection tells us more
+    # than a skip does. Only that specific case is downgraded to a warning.
+    AUTO=$(printf '%s' "$GROUP_JSON" | jq -r --arg n "$GROUP_NAME" \
+      '.data[] | select(.attributes.name == $n) | .attributes.hasAccessToAllBuilds')
+
     BODY=$(jq -nc --arg id "$BUILD_ID" '{data: [{type: "builds", id: $id}]}')
-    check "$(api POST "/v1/betaGroups/$GROUP_ID/relationships/builds" "$BODY")" \
-      "adding build $BUILD_NUMBER to '$GROUP_NAME'" >/dev/null
+    if ! check "$(api POST "/v1/betaGroups/$GROUP_ID/relationships/builds" "$BODY")" \
+           "adding build $BUILD_NUMBER to '$GROUP_NAME'" >/dev/null; then
+      if [ "$AUTO" = "true" ]; then
+        echo "Note: '$GROUP_NAME' has automatic distribution enabled, so App Store"
+        echo "      Connect manages its builds and refused the explicit add above."
+        echo "      Treating that as success — but if testers still can't see build"
+        echo "      $BUILD_NUMBER, automatic distribution is not reaching them and the"
+        echo "      switch should be turned off so builds can be assigned directly."
+        exit 0
+      fi
+      exit 1
+    fi
 
     echo "Build $BUILD_NUMBER is now distributed to '$GROUP_NAME'."
     echo "It appears in the TestFlight app within a minute or two."
