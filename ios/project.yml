@@ -17,7 +17,7 @@ settings:
     # CI overrides both on the xcodebuild command line, driven by the release
     # tag; these are only the defaults for a local build. The Info.plists below
     # must reference them via $(...) for an override to reach the bundle.
-    MARKETING_VERSION: "0.1.1"
+    MARKETING_VERSION: "0.1.2"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     CODE_SIGN_STYLE: Automatic
