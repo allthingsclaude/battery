@@ -4,7 +4,7 @@ A standalone iOS companion to the macOS menu-bar app. It signs in with the **sam
 Claude OAuth flow**, polls the same `/api/oauth/usage` endpoint, and surfaces your
 5-hour session and 7-day weekly limits as:
 
-- **Home Screen widgets** — small (focus ring) and medium (session + weekly + Opus, with burn-rate footer)
+- **Home Screen widgets** — small (session ring, weekly ring), medium (session + weekly + Opus), and large (all of that plus the forecast: where the window lands at reset, your pace, and the headroom left)
 - **Lock Screen / StandBy accessories** — circular gauge, rectangular, and inline
 - **A Lock Screen Live Activity** that appears *only while a session is worth watching*, escalates as you approach the limit, and dismisses itself when the window resets or goes idle
 
@@ -206,6 +206,11 @@ widgets, and Live Activity can never drift:
   (continuous 22pt corners, hairline border, soft shadow), `BatteryProgressBar`
   (ports `ProgressBarView`), `LiveCountdown` (ports the desktop's 1-second
   `CountdownLabel`), a pulsing `ActiveDot`, and `SectionLabel`.
+- **`UsageForecast.swift`** — one projection, one vocabulary. Every surface that
+  says where a session is heading (the dashboard's Forecast card, the large
+  widget, the Live Activity) derives its outlook, numbers *and* wording here, so
+  they can't disagree — plus the `ForecastBar` that draws the projected landing
+  point as a translucent extension of what's already been spent.
 
 Deliberate on-brand choices:
 
@@ -234,6 +239,7 @@ Deliberate on-brand choices:
 | `BatteryKit/UsageSnapshot.swift` | ✓ | – |
 | `BatteryKit/BurnRateCalculator.swift` | ✓ | – |
 | `BatteryKit/UsagePayload.swift` | ✓ | ✓ |
+| `BatteryKit/UsageForecast.swift` (projection numbers + wording) | ✓ | ✓ |
 | `BatteryKit/SharedStore.swift` | ✓ | ✓ |
 | `BatteryKit/UsageActivityAttributes.swift` (iOS-only, `#if os(iOS)`) | ✓ | ✓ |
 | `BatteryApp/*` (app UI + services) | ✓ | – |

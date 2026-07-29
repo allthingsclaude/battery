@@ -72,6 +72,7 @@ struct LockScreenActivityView: View {
 
     private var state: UsageActivityAttributes.ContentState { context.state }
     private var level: UsageLevel { state.level }
+    private var forecast: UsageForecast { .init(state: state) }
 
     var body: some View {
         if state.didReset { resetCard } else { liveCard }
@@ -93,8 +94,12 @@ struct LockScreenActivityView: View {
                         .background(level.color.opacity(0.28), in: Capsule())
                         .foregroundStyle(level.color)
                 }
-                Label(footerText, systemImage: state.burnRatePerHour > 0.05 ? "flame.fill" : "checkmark.circle")
-                    .font(.caption).foregroundStyle(.white.opacity(0.75)).lineLimit(1)
+                // The forecast, not a mood. "Holding steady" used to sit here and
+                // told the reader nothing the ring hadn't already; every branch of
+                // `headline` now carries a number they can act on.
+                Label(forecast.headline, systemImage: forecast.symbol)
+                    .font(.caption).foregroundStyle(.white.opacity(0.75))
+                    .lineLimit(1).minimumScaleFactor(0.8)
                 Text(weeklyLine)
                     .font(.caption2).foregroundStyle(.white.opacity(0.5))
             }
@@ -151,16 +156,6 @@ struct LockScreenActivityView: View {
         .padding(16)
     }
 
-    private var footerText: String {
-        if state.burnRatePerHour > 0.05, let limit = state.projectedLimitAt, limit > Date() {
-            return "Hits limit in " + TimeFormatting.shortDuration(limit.timeIntervalSinceNow) + " at this pace"
-        }
-        if state.burnRatePerHour > 0.05 {
-            return String(format: "Burning %.1f%%/hr", state.burnRatePerHour)
-        }
-        return "Holding steady"
-    }
-
     /// "Weekly 8%" — plus " · Max 5x" only when the plan is actually known.
     private var weeklyLine: String {
         let weekly = "Weekly \(Int(state.weeklyUtilization.rounded()))%"
@@ -175,25 +170,38 @@ struct LockScreenActivityView: View {
 struct ExpandedFooter: View {
     let state: UsageActivityAttributes.ContentState
 
+    private var forecast: UsageForecast { .init(state: state) }
+
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: state.burnRatePerHour > 0.05 ? "flame.fill" : "checkmark.circle")
+            Image(systemName: forecast.symbol)
                 .font(.caption2).foregroundStyle(BatteryPalette.brand)
-            Text(text).font(.caption).foregroundStyle(.secondary)
-            Spacer()
+            Text(forecast.headline)
+                .font(.caption).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.75)
+            Spacer(minLength: 6)
             Text("Weekly \(Int(state.weeklyUtilization.rounded()))%")
-                .font(.caption2).foregroundStyle(.tertiary)
+                .font(.caption2).foregroundStyle(.tertiary).fixedSize()
         }
     }
+}
 
-    private var text: String {
-        if state.burnRatePerHour > 0.05, let limit = state.projectedLimitAt, limit > Date() {
-            return "≈100% in " + TimeFormatting.shortDuration(limit.timeIntervalSinceNow)
-        }
-        if state.burnRatePerHour > 0.05 {
-            return String(format: "Burning %.1f%%/hr", state.burnRatePerHour)
-        }
-        return "Comfortably within limit"
+// MARK: - Forecast from activity state
+
+@available(iOS 16.2, *)
+extension UsageForecast {
+    /// The Live Activity carries the same precomputed projection fields as the
+    /// payload — including when the push relay builds the state on a Mac — so the
+    /// card can speak in exactly the same terms as the app.
+    init(state: UsageActivityAttributes.ContentState, now: Date = Date()) {
+        self.init(
+            utilization: state.sessionUtilization,
+            resetsAt: state.sessionResetsAt,
+            burnRatePerHour: state.burnRatePerHour,
+            projectedLimitAt: state.projectedLimitAt,
+            isSessionActive: state.isSessionActive,
+            now: now
+        )
     }
 }
 #endif

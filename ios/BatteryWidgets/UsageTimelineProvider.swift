@@ -65,6 +65,23 @@ struct UsageProvider: TimelineProvider {
     }
 }
 
+/// Shared wrapper for every Home Screen widget: honest empty state when there's
+/// no data, plus the surface background.
+@ViewBuilder
+func widgetBody<Content: View>(
+    _ entry: UsageEntry,
+    @ViewBuilder content: (UsagePayload) -> Content
+) -> some View {
+    Group {
+        if let payload = entry.payload {
+            content(payload)
+        } else {
+            WidgetEmptyView()
+        }
+    }
+    .widgetBackground(BatteryPalette.surface)
+}
+
 /// Shown when the widget has no synced data (open the app / enable the App Group).
 struct WidgetEmptyView: View {
     @Environment(\.widgetFamily) private var family

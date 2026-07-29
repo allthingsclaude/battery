@@ -1,11 +1,13 @@
 import WidgetKit
 import SwiftUI
 
-// Three Home Screen widgets, all styled to match the desktop panel (terracotta
-// ring, SF Rounded numerals, branded bars):
+// Home Screen widgets, all styled to match the desktop panel (terracotta ring,
+// branded numerals and bars):
 //   • Session  — small square, the 5-hour window
 //   • Weekly   — small square, the 7-day window
 //   • Overview — medium, both windows + Opus together
+//   • Forecast — large, everything plus where the session is heading
+//                (see ForecastWidget.swift)
 
 /// Small square — 5-hour session.
 /// NOTE: a fresh `kind` (not the old "BatterySessionWidget", which iOS still
@@ -43,22 +45,6 @@ struct OverviewWidget: Widget {
         .description("Your 5-hour session and 7-day weekly limits together.")
         .supportedFamilies([.systemMedium])
     }
-}
-
-/// Shared wrapper: honest empty state when there's no data + the surface background.
-@ViewBuilder
-private func widgetBody<Content: View>(
-    _ entry: UsageEntry,
-    @ViewBuilder content: (UsagePayload) -> Content
-) -> some View {
-    Group {
-        if let payload = entry.payload {
-            content(payload)
-        } else {
-            WidgetEmptyView()
-        }
-    }
-    .widgetBackground(BatteryPalette.surface)
 }
 
 // MARK: - Small square (Session or Weekly)

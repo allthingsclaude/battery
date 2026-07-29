@@ -17,6 +17,7 @@ struct BatteryWidgetBundle: WidgetBundle {
         SessionWidget()     // small square — 5-hour session
         WeeklyWidget()      // small square — 7-day weekly
         OverviewWidget()    // medium — both windows + Opus
+        ForecastWidget()    // large — session, projection, both 7-day windows
         LockScreenWidget()
         liveActivity
     }

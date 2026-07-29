@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// Signed-in home screen. A premium, on-brand reading of the desktop panel:
-/// a hero session ring, a weekly/Opus card with branded bars, a projection card
-/// mirroring the desktop's, and a subtle note on when the Live Activity appears.
+/// a hero session ring, a weekly/Opus card with branded bars, an always-present
+/// forecast card (where this window is heading, and how fast you can spend), and
+/// a subtle note on when the Live Activity appears.
 struct DashboardView: View {
     @ObservedObject var service: UsageService
     @State private var showSettings = false
@@ -19,8 +20,8 @@ struct DashboardView: View {
                 header
                 if service.payload != nil {
                     sessionCard
+                    forecastCard
                     weeklyCard
-                    if showsProjection { projectionCard }
                 } else {
                     waitingCard
                 }
@@ -181,27 +182,9 @@ struct DashboardView: View {
                 Label("No active session", systemImage: "moon.zzz")
                     .font(.caption).foregroundStyle(.secondary)
             }
-
-            if payload.burnRatePerHour > 0.05 {
-                Divider().overlay(BatteryPalette.hairline)
-                burnLine
-            }
         }
         .frame(maxWidth: .infinity)
         .batteryCard(padding: 20)
-    }
-
-    private var burnLine: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "flame.fill").font(.caption).foregroundStyle(BatteryPalette.brand)
-            Text(String(format: "Burning %.1f%%/hr", payload.burnRatePerHour))
-                .font(.caption.weight(.medium)).foregroundStyle(.primary)
-            if let limit = payload.liveProjectedLimitAt {
-                Text("· hits 100% \(Text(limit, style: .relative))")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer()
-        }
     }
 
     // MARK: - Weekly + Opus
@@ -235,58 +218,81 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - Projection (mirrors the desktop ProjectionView)
+    // MARK: - Forecast (mirrors the desktop ProjectionView)
 
-    private var showsProjection: Bool {
-        payload.burnRatePerHour > 0.05 && payload.sessionResetsAt != nil
+    /// Always on screen, in every state. When there's no measured pace it says so
+    /// and falls back to what *is* known — headroom, and how fast that headroom
+    /// can be spent — rather than disappearing and leaving the screen quieter the
+    /// moment the question "am I going to run out?" gets interesting.
+    private var forecastCard: some View {
+        // Rebuilt on the same 1-second clock as `LiveCountdown`, so "hits 100% in
+        // 49m" ages with the countdown above it instead of freezing until the
+        // next poll lands.
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            forecastBody(UsageForecast(payload: payload, now: context.date))
+        }
     }
 
-    private var projectionCard: some View {
-        let reset = payload.sessionResetsAt ?? Date()
-        let hoursToReset = max(0, reset.timeIntervalSinceNow / 3600)
-        let atReset = min(100, payload.sessionUtilization + payload.burnRatePerHour * hoursToReset)
-        let increasing = payload.burnRatePerHour > 1.0
-
-        return VStack(alignment: .leading, spacing: 11) {
+    private func forecastBody(_ forecast: UsageForecast) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
-                SectionLabel(title: "Projection", systemImage: "chart.line.uptrend.xyaxis")
+                SectionLabel(title: "Forecast", systemImage: "chart.line.uptrend.xyaxis")
                 Spacer()
-                trendBadge(increasing: increasing)
+                outlookBadge(forecast)
             }
-            if let limit = payload.liveProjectedLimitAt, limit < reset {
-                projectionRow(icon: "exclamationmark.triangle.fill",
-                              tint: BatteryPalette.brandDeep,
-                              text: "Hits limit in \(TimeFormatting.shortDuration(limit.timeIntervalSinceNow))")
-            } else {
-                projectionRow(icon: "checkmark.circle.fill",
-                              tint: BatteryPalette.brand,
-                              text: "Stays within the window")
+
+            VStack(spacing: 7) {
+                ForecastBar(current: forecast.utilization, projected: forecast.projectedAtReset)
+                ForecastBarCaptions(current: forecast.utilization,
+                                    projected: forecast.projectedAtReset,
+                                    showsProjection: forecast.outlook != .noWindow)
             }
-            projectionRow(icon: "arrow.right.circle", tint: .secondary,
-                          text: "Projected \(Int(atReset))% at reset")
-            projectionRow(icon: "speedometer", tint: .secondary,
-                          text: String(format: "Burn rate %.1f%%/hr", payload.burnRatePerHour))
+
+            HStack(alignment: .top, spacing: 10) {
+                ForecastStat(label: "Pace", value: forecast.rateText,
+                             tint: forecast.burnRatePerHour > UsageForecast.minimumRate
+                                 ? BatteryPalette.brandDark : .secondary)
+                ForecastStat(label: "Headroom", value: "\(UsageForecast.percent(forecast.headroom))%",
+                             tint: .primary)
+                ForecastStat(label: "To limit", value: forecast.timeToLimitText,
+                             tint: forecast.outlook == .reachesLimit
+                                 ? BatteryPalette.brandDeep : .secondary)
+            }
+
+            Divider().overlay(BatteryPalette.hairline)
+
+            VStack(alignment: .leading, spacing: 7) {
+                forecastRow(icon: forecast.symbol, tint: forecast.tint,
+                            text: forecast.headline, emphasised: true)
+                if let detail = forecast.detail {
+                    forecastRow(icon: "speedometer", tint: .secondary, text: detail)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .batteryCard()
     }
 
-    private func projectionRow(icon: String, tint: Color, text: String) -> some View {
+    private func forecastRow(icon: String, tint: Color, text: String,
+                             emphasised: Bool = false) -> some View {
         HStack(spacing: 7) {
             Image(systemName: icon).font(.caption2).foregroundStyle(tint)
-            Text(text).font(.caption).foregroundStyle(.secondary)
-            Spacer()
+            Text(text)
+                .font(emphasised ? .caption.weight(.semibold) : .caption)
+                .foregroundStyle(emphasised ? .primary : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
     }
 
-    private func trendBadge(increasing: Bool) -> some View {
+    private func outlookBadge(_ forecast: UsageForecast) -> some View {
         HStack(spacing: 3) {
-            Image(systemName: increasing ? "arrow.up.right" : "arrow.right").font(.system(size: 8))
-            Text(increasing ? "Increasing" : "Stable").font(.system(size: 9, weight: .medium))
+            Image(systemName: forecast.symbol).font(.system(size: 8))
+            Text(forecast.badgeLabel).font(.system(size: 9, weight: .medium))
         }
         .padding(.horizontal, 7).padding(.vertical, 3)
-        .background((increasing ? BatteryPalette.brandDark : BatteryPalette.brand).opacity(0.15), in: Capsule())
-        .foregroundStyle(increasing ? BatteryPalette.brandDark : BatteryPalette.brand)
+        .background(forecast.tint.opacity(0.15), in: Capsule())
+        .foregroundStyle(forecast.tint)
     }
 
     // MARK: - Bits
