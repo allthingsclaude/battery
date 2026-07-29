@@ -332,6 +332,31 @@ because the `info:` blocks in `project.yml` reference `$(MARKETING_VERSION)` and
 override would be silently dropped. `BatteryVersion` reads it back out of the
 bundle for the `User-Agent`, so there's no second place to remember to bump.
 
+### Distribution — the step after the upload
+
+Uploading is not shipping. `altool --upload-app` hands the binary to App Store
+Connect and stops; the build stays invisible to testers until it belongs to a
+**TestFlight group**, and a green release run tells you nothing about that. Build
+204 (0.1.2) sat unassigned for exactly this reason.
+
+The release workflow now closes the loop itself: after the upload it runs
+`Scripts/testflight.sh distribute <build>`, which waits out processing and adds
+the build to the `Battery` group. Two manual levers exist for the cases it can't
+cover:
+
+```bash
+./Scripts/testflight.sh status              # every group + every recent build's state
+./Scripts/testflight.sh distribute 204      # assign one by hand
+```
+
+and the **TestFlight Distribute** workflow, a `workflow_dispatch` that runs the
+same command from the Actions tab using the repository secrets — for an orphaned
+build, or a re-run when processing outlasted the release job.
+
+Locally the script needs the API key: `ASC_KEY_ID`, `ASC_ISSUER_ID`, and either
+`ASC_KEY_PATH` (a `.p8`) or `ASC_KEY` (its contents). It must be an **App
+Manager** key — a Developer-role key reads fine but the assignment returns 403.
+
 ### Secrets
 
 The Mac release's signing secrets **do not carry over.** `MACOS_CERTIFICATE` is

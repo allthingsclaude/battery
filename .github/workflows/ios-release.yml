@@ -172,6 +172,19 @@ jobs:
           xcrun altool --upload-app -f "$IPA" -t ios \
             --apiKey "$ASC_API_KEY_ID" --apiIssuer "$ASC_API_ISSUER_ID"
 
+      # ── Distribute to testers ─────────────────────────────────────────
+      # The upload alone ships nothing: App Store Connect holds the build until
+      # it belongs to a testing group, so without this a green release run still
+      # leaves testers with nothing to install. Waits out processing, which is
+      # why it can take several minutes longer than the upload itself.
+      - name: Distribute to TestFlight group
+        env:
+          BUILD_NUMBER: ${{ steps.version.outputs.build }}
+          ASC_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          ASC_KEY: ${{ secrets.ASC_API_KEY }}
+        run: ./Scripts/testflight.sh distribute "$BUILD_NUMBER"
+
       # Keep the build addressable even if the upload half fails.
       - name: Upload artifacts
         if: always()

@@ -1,0 +1,42 @@
+name: TestFlight Distribute
+
+# Assign an already-uploaded build to a TestFlight group.
+#
+# `altool --upload-app` stops at the upload; a build is only installable once it
+# belongs to a testing group. iOS Release now does this automatically for every
+# build it ships — this workflow is the manual lever for the ones it didn't:
+# an orphaned build from before that step existed, or a re-run after processing
+# ran long.
+#
+# Runs on ubuntu: it's a handful of REST calls, no Xcode involved.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build:
+        description: "Build number to distribute (e.g. 204)"
+        required: true
+      group:
+        description: "TestFlight group"
+        required: false
+        default: "Battery"
+
+jobs:
+  distribute:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Distribute to testers
+        env:
+          # Passed through the environment rather than interpolated into the
+          # command line: a `${{ }}` expression lands in the shell verbatim.
+          BUILD_NUMBER: ${{ inputs.build }}
+          GROUP_NAME: ${{ inputs.group }}
+          ASC_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          ASC_KEY: ${{ secrets.ASC_API_KEY }}
+        run: ./Scripts/testflight.sh distribute "$BUILD_NUMBER" "$GROUP_NAME"
