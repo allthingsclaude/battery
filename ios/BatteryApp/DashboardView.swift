@@ -248,15 +248,19 @@ struct DashboardView: View {
                                     showsProjection: forecast.outlook != .noWindow)
             }
 
+            // The third cell adapts: a time-to-limit only exists when 100%
+            // actually arrives inside this window, and hard-coding that label
+            // meant the app's most-visible number was usually an em dash. When
+            // the limit isn't coming, the landing point is the answer.
+            let landing = forecast.landingStat
             HStack(alignment: .top, spacing: 10) {
                 ForecastStat(label: "Pace", value: forecast.rateText,
                              tint: forecast.burnRatePerHour > UsageForecast.minimumRate
                                  ? BatteryPalette.brandDark : .secondary)
                 ForecastStat(label: "Headroom", value: "\(UsageForecast.percent(forecast.headroom))%",
                              tint: .primary)
-                ForecastStat(label: "To limit", value: forecast.timeToLimitText,
-                             tint: forecast.outlook == .reachesLimit
-                                 ? BatteryPalette.brandDeep : .secondary)
+                ForecastStat(label: landing.label, value: landing.value,
+                             tint: landingTint(forecast, isUrgent: landing.isUrgent))
             }
 
             Divider().overlay(BatteryPalette.hairline)
@@ -271,6 +275,15 @@ struct DashboardView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .batteryCard()
+    }
+
+    /// Time-to-limit is a warning, so it keeps the alarm colour; a landing point
+    /// is coloured by the level it lands on, which is the same ramp the ring and
+    /// the forecast bar use.
+    private func landingTint(_ forecast: UsageForecast, isUrgent: Bool) -> Color {
+        if isUrgent { return BatteryPalette.brandDeep }
+        guard forecast.outlook != .noWindow else { return .secondary }
+        return UsageLevel.from(utilization: forecast.projectedAtReset).color
     }
 
     private func forecastRow(icon: String, tint: Color, text: String,

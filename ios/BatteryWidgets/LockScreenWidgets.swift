@@ -83,13 +83,27 @@ struct LockScreenWidgetView: View {
         return pct + Text(" used")
     }
 
+    /// The projection when there is one, the reset countdown when there isn't.
+    /// "Nearing limit" used to sit here and needed a measured burn rate the
+    /// phone almost never had, so in practice this line was always the reset
+    /// time — which the inline widget above already shows.
     private var secondaryLine: Text {
-        if payload.hasLiveProjection {
-            return Text("Nearing limit · wk \(Int(payload.weeklyUtilization.rounded()))%")
+        let forecast = UsageForecast(payload: payload)
+        switch forecast.outlook {
+        case .reachesLimit:
+            return (Text("100% in ") + (forecast.timeToLimitLive ?? Text("—")))
+        case .atLimit:
+            if let reset = payload.sessionResetsAt {
+                return Text("At limit · ") + Text(reset, style: .relative)
+            }
+            return Text("Limit reached")
+        case .onPace:
+            return Text("→ \(UsageForecast.percent(forecast.projectedAtReset))% at reset")
+        case .idle, .noWindow:
+            if let reset = payload.sessionResetsAt, reset > Date() {
+                return Text("Resets in ") + Text(reset, style: .relative)
+            }
+            return Text("Weekly \(Int(payload.weeklyUtilization.rounded()))%")
         }
-        if let reset = payload.sessionResetsAt {
-            return Text("Resets in ") + Text(reset, style: .relative)
-        }
-        return Text("Weekly \(Int(payload.weeklyUtilization.rounded()))%")
     }
 }

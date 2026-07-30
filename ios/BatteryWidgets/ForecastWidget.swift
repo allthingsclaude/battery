@@ -65,7 +65,8 @@ struct LargeForecastView: View {
             }
 
             // Two stats, not three: time-to-limit already ticks in the headline
-            // above, and no figure should appear twice on one surface.
+            // above and the landing point is already captioned under the bar,
+            // so no figure appears twice on one surface.
             HStack(alignment: .top, spacing: 8) {
                 ForecastStat(label: "Pace", value: forecast.rateText,
                              tint: forecast.burnRatePerHour > UsageForecast.minimumRate

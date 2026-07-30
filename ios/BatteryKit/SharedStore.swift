@@ -21,6 +21,7 @@ enum SharedStore {
 
     private static let payloadKey = "latest_usage_payload"
     private static let tokenKey = "selected_account_token"
+    private static let snapshotsKey = "session_snapshots"
 
     private static var defaults: UserDefaults? {
         UserDefaults(suiteName: appGroupID)
@@ -42,6 +43,31 @@ enum SharedStore {
               let payload = try? JSONDecoder().decode(UsagePayload.self, from: data)
         else { return nil }
         return payload
+    }
+
+    // MARK: - Burn-rate history
+    //
+    // Lives beside the payload rather than in the app's memory so the regression
+    // survives a relaunch and — more importantly — so the *widget's* own fetch
+    // contributes to it and reads from it. Previously each process kept its own
+    // (or no) history, which is why a measured burn rate was so rarely available
+    // that every surface fell back to an em dash.
+
+    static func saveSnapshots(_ snapshots: [UsageSnapshot]) {
+        guard let defaults else { return }
+        guard let data = try? JSONEncoder().encode(snapshots) else { return }
+        defaults.set(data, forKey: snapshotsKey)
+    }
+
+    static func loadSnapshots() -> [UsageSnapshot] {
+        guard let defaults, let data = defaults.data(forKey: snapshotsKey),
+              let snapshots = try? JSONDecoder().decode([UsageSnapshot].self, from: data)
+        else { return [] }
+        return snapshots
+    }
+
+    static func clearSnapshots() {
+        defaults?.removeObject(forKey: snapshotsKey)
     }
 
     // MARK: - Mirrored token (for widget self-refresh)
@@ -75,6 +101,7 @@ enum SharedStore {
     static func clear() {
         defaults?.removeObject(forKey: payloadKey)
         defaults?.removeObject(forKey: tokenKey)
+        defaults?.removeObject(forKey: snapshotsKey)
         reloadWidgets()
     }
 

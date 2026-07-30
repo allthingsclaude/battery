@@ -94,12 +94,24 @@ struct LockScreenActivityView: View {
                         .background(level.color.opacity(0.28), in: Capsule())
                         .foregroundStyle(level.color)
                 }
-                // The forecast, not a mood. "Holding steady" used to sit here and
-                // told the reader nothing the ring hadn't already; every branch of
-                // `headline` now carries a number they can act on.
-                Label(forecast.headline, systemImage: forecast.symbol)
-                    .font(.caption).foregroundStyle(.white.opacity(0.75))
-                    .lineLimit(1).minimumScaleFactor(0.8)
+                // The projection, not a mood and not the ring's own number
+                // restated. This line reached the reader as "58% left in this
+                // window" for most of a session's life, because the phone so
+                // rarely had a measured burn rate to project from; it now falls
+                // back to the window's average pace (see `UsageForecast`) so
+                // there is a projection here whenever one can be made at all.
+                //
+                // `liveHeadline` rather than `headline`: when 100% is actually
+                // coming, the countdown ticks between pushes instead of sitting
+                // frozen at whatever it said when the card was last updated.
+                Label {
+                    forecast.liveHeadline
+                        .font(.caption).foregroundStyle(.white.opacity(0.75))
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                } icon: {
+                    Image(systemName: forecast.symbol)
+                        .font(.caption).foregroundStyle(.white.opacity(0.75))
+                }
                 Text(weeklyLine)
                     .font(.caption2).foregroundStyle(.white.opacity(0.5))
             }
@@ -176,7 +188,7 @@ struct ExpandedFooter: View {
         HStack(spacing: 6) {
             Image(systemName: forecast.symbol)
                 .font(.caption2).foregroundStyle(BatteryPalette.brand)
-            Text(forecast.headline)
+            forecast.liveHeadline
                 .font(.caption).foregroundStyle(.secondary)
                 .lineLimit(1).minimumScaleFactor(0.75)
             Spacer(minLength: 6)

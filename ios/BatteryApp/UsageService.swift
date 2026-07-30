@@ -24,8 +24,9 @@ final class UsageService: ObservableObject {
     private let api = UsageAPI()
     private var pollTask: Task<Void, Never>?
 
-    // Burn-rate + activity inference (reset when the selected account changes).
-    private var snapshots: [UsageSnapshot] = []
+    // Activity inference (reset when the selected account changes). The burn-rate
+    // history itself lives in the App Group — see `SessionHistory` — so the
+    // background task and the widget's self-fetch contribute to the same buffer.
     private var lastRiseAt: Date?
     private var lastUtilization: Double?
     private let activeWindow: TimeInterval = 10 * 60
@@ -160,7 +161,7 @@ final class UsageService: ObservableObject {
     }
 
     private func resetInferenceState() {
-        snapshots.removeAll()
+        SessionHistory.reset()
         lastRiseAt = nil
         lastUtilization = nil
     }
@@ -239,29 +240,9 @@ final class UsageService: ObservableObject {
         let sessionUtil = session?.utilization ?? 0
         let sessionReset = session?.resetsAtDate
 
-        // Ring buffer, scoped to the current session window for the regression.
-        if let reset = sessionReset {
-            snapshots.append(UsageSnapshot(sessionUtilization: sessionUtil, sessionResetsAt: reset))
-            snapshots = snapshots
-                .filter { abs($0.sessionResetsAt.timeIntervalSince(reset)) < 1.0 }
-                .suffix(30)
-                .map { $0 }
-        } else {
-            snapshots.removeAll()
-        }
-
-        // Burn-rate projection.
-        var burnRate = 0.0
-        var projectedLimit: Date?
-        if let reset = sessionReset {
-            let proj = BurnRateCalculator.calculate(
-                snapshots: snapshots,
-                currentUtilization: sessionUtil,
-                resetsAt: reset
-            )
-            burnRate = proj.currentRate
-            if let limit = proj.projectedLimitTime, limit < reset { projectedLimit = limit }
-        }
+        // Burn-rate projection, from the buffer shared with the widget and the
+        // background task.
+        let projection = SessionHistory.record(utilization: sessionUtil, resetsAt: sessionReset)
 
         // Activity inference: a session is "active" if utilization climbed recently.
         if let last = lastUtilization, sessionUtil > last + 0.01 { lastRiseAt = Date() }
@@ -275,8 +256,8 @@ final class UsageService: ObservableObject {
             weeklyUtilization: usage.sevenDay.utilization,
             weeklyResetsAt: usage.sevenDay.resetsAtDate,
             opusUtilization: usage.sevenDayOpus?.utilization,
-            burnRatePerHour: burnRate,
-            projectedLimitAt: projectedLimit,
+            burnRatePerHour: projection.ratePerHour,
+            projectedLimitAt: projection.limitAt,
             isSessionActive: isActive,
             planTier: usage.planDisplayName,
             accountName: accountName,

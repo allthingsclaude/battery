@@ -115,28 +115,39 @@ enum UsageFetcher {
 // MARK: - Stateless payload builder
 
 extension UsagePayload {
-    /// Build a payload from a usage response without an in-memory regression
-    /// buffer — carries burn rate forward from `previous`. Used by the widget's
-    /// self-fetch and the background-refresh task.
+    /// Build a payload from a usage response outside the app's poll loop — used
+    /// by the widget's self-fetch and the background-refresh task.
+    ///
+    /// This used to only *carry* a burn rate forward from `previous`, which
+    /// meant neither of those two paths could ever originate one: a phone whose
+    /// widgets refreshed on WidgetKit's schedule saw a permanent em dash. Both
+    /// now record into the shared `SessionHistory`, so every poll — whoever
+    /// makes it — builds the regression up.
     static func from(usage: UsageResponse, previous: UsagePayload?, accountName: String) -> UsagePayload {
         let session = usage.fiveHour
         let sessionUtil = session?.utilization ?? 0
+        let sessionReset = session?.resetsAtDate
 
-        // Carry the projection forward only while it's still in the future, and
-        // only while the sample it came from is recent enough to mean anything —
-        // otherwise a hours-old "Burning 9.2%/hr" gets presented as current.
+        let projection = SessionHistory.record(utilization: sessionUtil, resetsAt: sessionReset)
+
+        // Until the shared buffer holds enough samples to regress, fall back to
+        // the last payload's rate — but only while the sample it came from is
+        // recent enough to mean anything, otherwise an hours-old "9.2%/hr" gets
+        // presented as current.
         let carriedIsFresh = previous.map { Date().timeIntervalSince($0.updatedAt) < 3600 } ?? false
         let carriedLimit = carriedIsFresh ? previous?.liveProjectedLimitAt : nil
         let carriedRate = carriedLimit != nil ? (previous?.burnRatePerHour ?? 0) : 0
 
+        let hasFreshProjection = projection.ratePerHour > 0
+
         return UsagePayload(
             sessionUtilization: sessionUtil,
-            sessionResetsAt: session?.resetsAtDate,
+            sessionResetsAt: sessionReset,
             weeklyUtilization: usage.sevenDay.utilization,
             weeklyResetsAt: usage.sevenDay.resetsAtDate,
             opusUtilization: usage.sevenDayOpus?.utilization,
-            burnRatePerHour: carriedRate,
-            projectedLimitAt: carriedLimit,
+            burnRatePerHour: hasFreshProjection ? projection.ratePerHour : carriedRate,
+            projectedLimitAt: hasFreshProjection ? projection.limitAt : carriedLimit,
             isSessionActive: session != nil && sessionUtil > (previous?.sessionUtilization ?? 0),
             planTier: usage.planDisplayName,
             accountName: accountName,
