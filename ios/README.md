@@ -244,12 +244,15 @@ files — iOS won't read an alternate icon out of an asset catalog — registere
 `project.yml` under `CFBundleIcons ▸ CFBundleAlternateIcons`, where `actool`
 merges `CFBundlePrimaryIcon` alongside at build time. The `AppIcon-Light@2x|@3x`
 files next to them are never installed as an icon; they're the Settings
-thumbnails, loaded by `UIImage(named:)`. The dark artwork is the light 1024
-master with **only the paper swapped** to `#191814` — same mark, same black
-outlines, same cream faces, matching how Balcony's icon pair works. (The cream
-is both background *and* layer tops, so the swap is a flood fill inward from the
-border: it runs through the antialiased rim and stops at the outline.) Its master
-lives at `ios/AppStore/AppIcon-Dark-1024.png`.
+thumbnails, loaded by `UIImage(named:)`.
+
+The dark artwork is the light 1024 master with the same mark — same geometry,
+same black outlines, same terracotta sides — and two inks changed: the paper
+becomes `#191814`, and the layer tops become `#FFE8D5`, the warm face ink Balcony
+uses for the same job (the original near-white cream reads as stark white against
+a dark ground). Cream is both paper *and* layer top in the source, so the two are
+told apart by flood-filling inward from the border: the fill runs through the
+antialiased rim and stops at the outline. Master: `ios/AppStore/AppIcon-Dark-1024.png`.
 
 ---
 
