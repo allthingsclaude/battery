@@ -224,6 +224,31 @@ Deliberate on-brand choices:
 - **Live, not polled-looking** — countdowns tick every second (app) or via
   WidgetKit self-updating text (widgets / Live Activity), never a stale timestamp.
 
+### Appearance & app icon
+
+*Settings ▸ Appearance* holds two independent choices (`AppearanceMode` and
+`AppIconChoice` in `BatteryApp/Settings.swift`):
+
+- **Theme** — System / Light / Dark, applied once at the scene root with
+  `preferredColorScheme`. Nothing else was needed: every surface already paints
+  from `BatteryPalette`'s adaptive colors. The override is the app's alone —
+  widgets and the Live Activity are drawn by iOS and always follow the system.
+- **App Icon** — Light / Dark artwork, deliberately *not* tied to the theme; iOS
+  never tells an app which wallpaper it sits on. The light artwork is the
+  target's primary icon in `Assets.xcassets`, so choosing it **clears** the
+  alternate rather than setting one, which keeps anyone who never opens this
+  setting from seeing the system's "You have changed the icon" alert.
+
+The dark icon ships as loose `BatteryApp/AlternateIcons/AppIcon-Dark@2x|@3x.png`
+files — iOS won't read an alternate icon out of an asset catalog — registered in
+`project.yml` under `CFBundleIcons ▸ CFBundleAlternateIcons`, where `actool`
+merges `CFBundlePrimaryIcon` alongside at build time. The `AppIcon-Light@2x|@3x`
+files next to them are never installed as an icon; they're the Settings
+thumbnails, loaded by `UIImage(named:)`. The dark artwork is the 1024 light
+master remapped ink-for-ink (cream paper → `#191814`, black line → cream,
+terracotta untouched), so the two are the same drawing; its master lives at
+`ios/AppStore/AppIcon-Dark-1024.png`.
+
 ---
 
 ## File map & target membership

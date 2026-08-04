@@ -12,8 +12,11 @@ struct SettingsView: View {
     @State private var confirmingCloudOff = false
     @Environment(\.dismiss) private var dismiss
     @AppStorage(LiveActivityMode.storageKey) private var modeRaw = LiveActivityMode.smart.rawValue
+    @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.system.rawValue
+    @AppStorage(AppIconChoice.storageKey) private var appIconRaw = AppIconChoice.light.rawValue
 
     private var mode: LiveActivityMode { LiveActivityMode(rawValue: modeRaw) ?? .smart }
+    private var appIcon: AppIconChoice { AppIconChoice(rawValue: appIconRaw) ?? .light }
 
     var body: some View {
         NavigationStack {
@@ -47,6 +50,8 @@ struct SettingsView: View {
                     macRelaySection
                     cloudSyncSection
                 }
+
+                appearanceSection
             }
             .navigationTitle("Settings")
             .toolbar {
@@ -229,6 +234,78 @@ struct SettingsView: View {
                 )
             }
         }
+    }
+
+    // MARK: - Appearance
+    //
+    // Theme and icon are separate choices on purpose: the theme is about the app
+    // you're looking at, the icon about the Home Screen you're not.
+
+    @ViewBuilder
+    private var appearanceSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 9) {
+                Text("Theme").font(.subheadline.weight(.medium))
+                Picker("Theme", selection: $appearanceRaw) {
+                    ForEach(AppearanceMode.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+            .padding(.vertical, 4)
+
+            VStack(alignment: .leading, spacing: 11) {
+                Text("App Icon").font(.subheadline.weight(.medium))
+                HStack(spacing: 16) {
+                    ForEach(AppIconChoice.allCases) { choice in
+                        iconOption(choice)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(.vertical, 4)
+        } header: {
+            Text("Appearance")
+        } footer: {
+            Text("Theme applies to this app only — widgets and the Live Activity are drawn by iOS and always follow the system.")
+        }
+    }
+
+    private func iconOption(_ choice: AppIconChoice) -> some View {
+        let isSelected = appIcon == choice
+        return Button {
+            appIconRaw = choice.rawValue
+            choice.apply()
+        } label: {
+            VStack(spacing: 7) {
+                Group {
+                    if let image = UIImage(named: choice.previewAssetName) {
+                        Image(uiImage: image).resizable()
+                    } else {
+                        // Only reachable if the loose PNGs fall out of the bundle.
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(BatteryPalette.elevated)
+                    }
+                }
+                .frame(width: 60, height: 60)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(isSelected ? BatteryPalette.brand : BatteryPalette.hairline,
+                                      lineWidth: isSelected ? 2 : 1)
+                )
+
+                Text(choice.title)
+                    .font(.caption)
+                    .foregroundStyle(isSelected ? BatteryPalette.brand : .secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(choice.title) app icon")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
     private func select(_ option: LiveActivityMode) {

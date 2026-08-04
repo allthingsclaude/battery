@@ -62,6 +62,18 @@ targets:
         # upload parks in "Missing Compliance" until answered by hand, which
         # would block an automated TestFlight release.
         ITSAppUsesNonExemptEncryption: false
+        # Alternate Home Screen icons (Settings ▸ Appearance ▸ App Icon). Only
+        # the dark artwork is registered: the light one is the target's primary
+        # icon from the asset catalog, so selecting it clears the alternate.
+        # These have to be loose PNGs in the bundle root — iOS won't read an
+        # alternate icon out of an asset catalog — hence BatteryApp/
+        # AlternateIcons/, which XcodeGen picks up as flat resources. actool
+        # merges CFBundlePrimaryIcon into this same dict at build time.
+        CFBundleIcons:
+          CFBundleAlternateIcons:
+            AppIcon-Dark:
+              CFBundleIconFiles: [AppIcon-Dark]
+              UIPrerenderedIcon: false
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
         # remote-notification lets the relay's silent push wake us long enough to
