@@ -1,0 +1,160 @@
+{
+  "spec": "BurnRateCalculator.calculate — linear regression over recent snapshots, plus its guards",
+  "source": "Tests/BatteryTests/BurnRateCalculatorTests.swift",
+  "$schema": {
+    "resetsAtOffsetSeconds": "the case's session reset, relative to now",
+    "snapshots[].minutesAgo": "sample timestamp, relative to now",
+    "snapshots[].resetsAtOffsetSeconds": "optional; defaults to the case's value. Present only where the Swift test deliberately used a different window.",
+    "expect.*": "either {equals, accuracy?} or {greaterThan?, lessThan?} or {isNull}"
+  },
+
+  "cases": [
+    {
+      "name": "insufficientData",
+      "from": "testInsufficientData",
+      "why": "Fewer than MINIMUM_SNAPSHOTS (3) must not produce a slope.",
+      "resetsAtOffsetSeconds": 7200,
+      "currentUtilization": 25,
+      "snapshots": [
+        { "minutesAgo": 10, "utilization": 20 },
+        { "minutesAgo": 5,  "utilization": 25 }
+      ],
+      "expect": {
+        "currentRate": { "equals": 0 },
+        "projectedLimitTime": { "isNull": true },
+        "projectedAtReset": { "equals": 25 },
+        "trend": "STABLE",
+        "hasEnoughData": false
+      }
+    },
+    {
+      "name": "zeroBurnRate",
+      "from": "testZeroBurnRate",
+      "why": "A flat window is a real measurement, not missing data — hasEnoughData stays true.",
+      "resetsAtOffsetSeconds": 7200,
+      "currentUtilization": 40,
+      "snapshots": [
+        { "minutesAgo": 30, "utilization": 40 },
+        { "minutesAgo": 20, "utilization": 40 },
+        { "minutesAgo": 10, "utilization": 40 },
+        { "minutesAgo": 5,  "utilization": 40 }
+      ],
+      "expect": {
+        "currentRate": { "equals": 0, "accuracy": 0.1 },
+        "projectedLimitTime": { "isNull": true },
+        "projectedAtReset": { "equals": 40, "accuracy": 1.0 },
+        "trend": "STABLE",
+        "hasEnoughData": true
+      }
+    },
+    {
+      "name": "linearIncreasingRate",
+      "from": "testLinearIncreasingRate",
+      "why": "10 points per 10 minutes is 60%/hr; from 40% that reaches 100% in about an hour.",
+      "resetsAtOffsetSeconds": 7200,
+      "currentUtilization": 40,
+      "snapshots": [
+        { "minutesAgo": 30, "utilization": 10 },
+        { "minutesAgo": 20, "utilization": 20 },
+        { "minutesAgo": 10, "utilization": 30 },
+        { "minutesAgo": 0,  "utilization": 40 }
+      ],
+      "expect": {
+        "currentRate": { "greaterThan": 50, "lessThan": 70 },
+        "projectedLimitTime": { "isNull": false },
+        "minutesToLimit": { "greaterThan": 45, "lessThan": 75 },
+        "trend": "INCREASING"
+      }
+    },
+    {
+      "name": "decreasingDataClampedToZero",
+      "from": "testDecreasingDataClampedToZero",
+      "why": "Usage cannot fall inside one window, so a negative slope is noise (or a mis-filtered reset). Clamped to zero rather than reported.",
+      "resetsAtOffsetSeconds": 7200,
+      "currentUtilization": 20,
+      "snapshots": [
+        { "minutesAgo": 30, "utilization": 80 },
+        { "minutesAgo": 20, "utilization": 60 },
+        { "minutesAgo": 10, "utilization": 40 },
+        { "minutesAgo": 0,  "utilization": 20 }
+      ],
+      "expect": {
+        "currentRate": { "equals": 0, "accuracy": 0.001 },
+        "projectedLimitTime": { "isNull": true },
+        "trend": "STABLE"
+      }
+    },
+    {
+      "name": "crossSessionSnapshotsFiltered",
+      "from": "testCrossSessionSnapshotsFiltered",
+      "why": "Samples from a closed window must be discarded entirely. Here that drops the count below the minimum, so the result is insufficient data rather than a regression across the reset discontinuity.",
+      "resetsAtOffsetSeconds": 7200,
+      "currentUtilization": 8,
+      "snapshots": [
+        { "minutesAgo": 60, "utilization": 70, "resetsAtOffsetSeconds": -1800 },
+        { "minutesAgo": 50, "utilization": 80, "resetsAtOffsetSeconds": -1800 },
+        { "minutesAgo": 40, "utilization": 90, "resetsAtOffsetSeconds": -1800 },
+        { "minutesAgo": 5,  "utilization": 5 },
+        { "minutesAgo": 0,  "utilization": 8 }
+      ],
+      "expect": {
+        "currentRate": { "equals": 0 },
+        "projectedAtReset": { "equals": 8 },
+        "trend": "STABLE",
+        "hasEnoughData": false
+      }
+    },
+    {
+      "name": "highBurnRate",
+      "from": "testHighBurnRate",
+      "why": "20 points per 5 minutes is 240%/hr; from 80% the limit arrives in minutes.",
+      "resetsAtOffsetSeconds": 7200,
+      "currentUtilization": 80,
+      "snapshots": [
+        { "minutesAgo": 15, "utilization": 20 },
+        { "minutesAgo": 10, "utilization": 40 },
+        { "minutesAgo": 5,  "utilization": 60 },
+        { "minutesAgo": 0,  "utilization": 80 }
+      ],
+      "expect": {
+        "currentRate": { "greaterThan": 200 },
+        "projectedLimitTime": { "isNull": false },
+        "minutesToLimit": { "greaterThan": 0, "lessThan": 10 },
+        "trend": "INCREASING"
+      }
+    },
+    {
+      "name": "projectedAtResetClamped",
+      "from": "testProjectedAtResetClamped",
+      "why": "A pace that would carry past 100 before the reset must still report at most 100.",
+      "resetsAtOffsetSeconds": 7200,
+      "currentUtilization": 80,
+      "snapshots": [
+        { "minutesAgo": 15, "utilization": 20 },
+        { "minutesAgo": 10, "utilization": 40 },
+        { "minutesAgo": 5,  "utilization": 60 },
+        { "minutesAgo": 0,  "utilization": 80 }
+      ],
+      "expect": {
+        "projectedAtReset": { "lessThanOrEqual": 100 }
+      }
+    },
+    {
+      "name": "snapshotsTooCloseInTime",
+      "from": "testSnapshotsTooCloseInTime",
+      "why": "Three samples inside two minutes span less than MINIMUM_TIME_SPAN. Enough points, not enough time — a slope from them is sampling noise amplified by a tiny denominator.",
+      "resetsAtOffsetSeconds": 7200,
+      "currentUtilization": 34,
+      "snapshots": [
+        { "minutesAgo": 1.5, "utilization": 30 },
+        { "minutesAgo": 1.0, "utilization": 32 },
+        { "minutesAgo": 0.5, "utilization": 34 }
+      ],
+      "expect": {
+        "currentRate": { "equals": 0 },
+        "trend": "STABLE",
+        "hasEnoughData": false
+      }
+    }
+  ]
+}

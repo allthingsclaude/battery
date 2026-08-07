@@ -9,6 +9,7 @@ composeBom = "2026.06.01"
 activityCompose = "1.13.0"
 lifecycle = "2.11.0"
 glance = "1.1.1"                 # 1.2.0 is still rc — widgets are Phase 5, revisit then.
+kotlinxSerialization = "1.11.0"  # test-only, for reading the shared golden fixtures
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "androidxCore" }
@@ -21,6 +22,8 @@ compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
 compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

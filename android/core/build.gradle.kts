@@ -25,8 +25,24 @@ java {
 
 dependencies {
     testImplementation(kotlin("test"))
+    // Test-only, and only for reading the shared fixtures. No @Serializable types
+    // and therefore no compiler plugin: Json.parseToJsonElement is a pure runtime
+    // API. Keeping it out of `implementation` is deliberate — `core` shipping a
+    // serialization framework to read three JSON files would be backwards.
+    testImplementation(libs.kotlinx.serialization.json)
 }
 
 tasks.test {
     useJUnitPlatform()
+    // The golden fixtures are shared with the Swift suite, so they live at the
+    // repository root rather than inside this module's resources. `rootProject`
+    // here is `android/`, so its parent is the repo root.
+    systemProperty(
+        "battery.fixtures",
+        rootProject.projectDir.parentFile.resolve("fixtures").absolutePath,
+    )
+    testLogging {
+        events("failed")
+        showStandardStreams = false
+    }
 }
