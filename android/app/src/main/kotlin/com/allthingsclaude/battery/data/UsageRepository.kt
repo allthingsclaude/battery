@@ -9,8 +9,7 @@ import com.allthingsclaude.battery.core.UsageApi
 import com.allthingsclaude.battery.core.UsageApiError
 import com.allthingsclaude.battery.core.UsagePayload
 import com.allthingsclaude.battery.core.UsageResponse
-import com.allthingsclaude.battery.widget.BatteryWidget
-import androidx.glance.appwidget.updateAll
+import com.allthingsclaude.battery.widget.refreshAllWidgets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Instant
@@ -188,7 +187,7 @@ class UsageRepository(context: Context) {
 
     private suspend fun refreshWidgets() {
         runCatching {
-            BatteryWidget().updateAll(appContext)
+            refreshAllWidgets(appContext)
         }.onFailure {
             // A widget that isn't on any home screen throws here. That's the
             // common case, not an error worth surfacing.

@@ -95,8 +95,13 @@ object UsageRingRenderer {
     }
 
     /** A ring sized for a widget cell, given dp and display density. */
-    fun renderForDp(utilization: Double, sizeDp: Int, density: Float, dark: Boolean): Bitmap =
-        render(utilization, (sizeDp * density).roundToInt(), dark)
+    fun renderForDp(
+        utilization: Double,
+        sizeDp: Int,
+        density: Float,
+        dark: Boolean,
+        showLabel: Boolean = true,
+    ): Bitmap = render(utilization, (sizeDp * density).roundToInt(), dark, showLabel)
 
     private const val START_ANGLE = -90f
     private const val STROKE_RATIO = 0.11f

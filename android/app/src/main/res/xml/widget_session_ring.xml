@@ -1,17 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  targetCellWidth/Height are the Android 12+ sizing signal; minWidth/minHeight
-  remain for older launchers, which One UI's still consults. resizeMode allows
-  both axes because the layout is responsive across the two size buckets in
-  BatteryWidget.
--->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:minWidth="110dp"
-    android:minHeight="110dp"
+    android:minWidth="100dp"
+    android:minHeight="100dp"
     android:targetCellWidth="2"
     android:targetCellHeight="2"
     android:resizeMode="horizontal|vertical"
     android:updatePeriodMillis="0"
     android:widgetCategory="home_screen"
-    android:description="@string/widget_description"
+    android:description="@string/widget_desc_session_ring"
     android:initialLayout="@layout/glance_default_loading_layout" />

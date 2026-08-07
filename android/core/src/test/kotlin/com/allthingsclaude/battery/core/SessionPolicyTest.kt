@@ -216,4 +216,70 @@ class SessionPolicyTest {
         assertEquals(AppConfig.IDLE_POLL_SECONDS, slow)
         assert(fast < slow)
     }
+
+    // ── WHENEVER_OPEN ───────────────────────────────────────────────────────
+
+    @Test
+    fun `WHENEVER_OPEN shows at any percentage while a window is open`() {
+        // The gap this mode exists to close: SMART derives isSessionActive by
+        // comparing consecutive polls, so it cannot be true until the second
+        // one — up to six minutes of coding before the card appears.
+        for (utilization in listOf(0.0, 1.0, 6.0, 39.0)) {
+            val outcome = SessionPolicy.evaluate(
+                SessionPolicy.State(),
+                payload(utilization, active = false),
+                mode = SessionPolicy.Mode.WHENEVER_OPEN,
+                now = now,
+            )
+            assertIs<SessionPolicy.Decision.Show>(outcome.decision, "at $utilization%")
+        }
+    }
+
+    @Test
+    fun `WHENEVER_OPEN still hides when no window is open`() {
+        // "Whenever open", not "always". No window means no bounded activity,
+        // which is what would make the card the anti-pattern the guidelines
+        // actually warn about.
+        val outcome = SessionPolicy.evaluate(
+            SessionPolicy.State(),
+            payload(0.0, active = false, resetsAt = null),
+            mode = SessionPolicy.Mode.WHENEVER_OPEN,
+            now = now,
+        )
+        assertIs<SessionPolicy.Decision.Hide>(outcome.decision)
+    }
+
+    @Test
+    fun `WHENEVER_OPEN ignores the idle grace period`() {
+        // Ten minutes of not typing is not a reason to lose the card in this
+        // mode — SMART is the one that dismisses on idle.
+        val state = SessionPolicy.State(
+            previousUtilization = 20.0,
+            idleSince = now.minusSeconds(SessionPolicy.END_GRACE_SECONDS + 60),
+        )
+        assertIs<SessionPolicy.Decision.Show>(
+            SessionPolicy.evaluate(
+                state, payload(20.0, active = false),
+                mode = SessionPolicy.Mode.WHENEVER_OPEN, now = now,
+            ).decision
+        )
+        // …but SMART still does.
+        assertIs<SessionPolicy.Decision.Hide>(
+            SessionPolicy.evaluate(
+                state, payload(20.0, active = false),
+                mode = SessionPolicy.Mode.SMART, now = now,
+            ).decision
+        )
+    }
+
+    @Test
+    fun `WHENEVER_OPEN still hides once the window has expired`() {
+        val outcome = SessionPolicy.evaluate(
+            SessionPolicy.State(previousUtilization = 50.0),
+            payload(50.0, active = true, resetsAt = now.minusSeconds(1)),
+            mode = SessionPolicy.Mode.WHENEVER_OPEN,
+            now = now,
+        )
+        assertIs<SessionPolicy.Decision.Hide>(outcome.decision)
+    }
 }

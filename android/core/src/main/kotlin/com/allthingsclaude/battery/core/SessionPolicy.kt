@@ -66,22 +66,34 @@ object SessionPolicy {
 
     data class Outcome(val decision: Decision, val state: State)
 
-    /** User preference. "Always on" is deliberately absent — see below. */
+    /** User preference for when the card should exist. */
     enum class Mode {
         /** Never show a card. */
         OFF,
 
         /**
-         * Only while a session is worth watching. This is the only mode that
-         * ships.
-         *
-         * iOS also offers "Always On", and it is **deliberately not ported**: a
-         * permanently-promoted ongoing notification is the exact anti-pattern in
-         * Google's Live Update guidelines, and losing promotion is
-         * unrecoverable except via a settings deep link. Smart *is* the
-         * compliant behaviour.
+         * Only while a session is worth watching: actively burning, or already
+         * past [START_THRESHOLD]. Quietest, and the default.
          */
         SMART,
+
+        /**
+         * Any time a 5-hour window is open, at any percentage.
+         *
+         * An earlier revision omitted this on the grounds that a
+         * permanently-promoted notification is the anti-pattern in Google's Live
+         * Update guidelines. That was over-applying the rule. The guideline is
+         * about *unbounded* cards; an open session window has a start and a hard
+         * end, which is exactly the "ongoing, user-initiated, time-bounded
+         * activity" the API is for. The card still disappears when the window
+         * closes — this is not "always on", it is "for the whole activity".
+         *
+         * It also fixes a real gap in SMART: `isSessionActive` is derived by
+         * comparing consecutive polls, so it cannot be true until the second one.
+         * At a three-minute cadence that is up to six minutes of coding before
+         * the card appears.
+         */
+        WHENEVER_OPEN,
     }
 
     /**
@@ -122,11 +134,18 @@ object SessionPolicy {
             ?.let { now.epochSecond - it.epochSecond >= END_GRACE_SECONDS }
             ?: false
 
-        if (pastReset || idledLongEnough) {
+        // The idle grace period belongs to SMART only. In WHENEVER_OPEN the
+        // window is the card's lifetime, so going quiet for ten minutes is not a
+        // reason to disappear — that is the entire point of the mode.
+        if (pastReset || (idledLongEnough && mode == Mode.SMART)) {
             return Outcome(Decision.Hide, State(previousUtilization = utilization))
         }
 
-        val shouldShow = payload.isSessionActive || utilization >= START_THRESHOLD
+        val shouldShow = when (mode) {
+            Mode.OFF -> false   // unreachable; handled above
+            Mode.WHENEVER_OPEN -> payload.sessionResetsAt != null
+            Mode.SMART -> payload.isSessionActive || utilization >= START_THRESHOLD
+        }
         if (!shouldShow) {
             return Outcome(
                 Decision.Hide,

@@ -42,6 +42,7 @@ class SessionService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob())
     private val dismissal by lazy { CardDismissal(this) }
+    private val settings by lazy { com.allthingsclaude.battery.data.Settings(this) }
     private var loop: Job? = null
     private var policyState = SessionPolicy.State()
 
@@ -110,7 +111,9 @@ class SessionService : Service() {
                 }
             }
 
-            val outcome = SessionPolicy.evaluate(policyState, payload)
+            // Re-read every poll rather than caching: changing the mode in
+            // settings has to take effect on the next tick, not on a restart.
+            val outcome = SessionPolicy.evaluate(policyState, payload, settings.cardMode)
             policyState = outcome.state
 
             // The user swiped this window's card away. Reposting it is precisely

@@ -9,6 +9,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,11 +37,15 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.allthingsclaude.battery.auth.AuthService
 import com.allthingsclaude.battery.core.UsagePayload
+import com.allthingsclaude.battery.data.Settings
 import com.allthingsclaude.battery.data.UsageRepository
 import com.allthingsclaude.battery.live.SessionService
 import com.allthingsclaude.battery.ui.AppearanceMode
 import com.allthingsclaude.battery.ui.BatteryTheme
+import com.allthingsclaude.battery.core.SessionPolicy
 import com.allthingsclaude.battery.ui.DashboardScreen
+import com.allthingsclaude.battery.ui.SettingsSheet
+import com.allthingsclaude.battery.widget.refreshAllWidgets
 import kotlinx.coroutines.launch
 
 /**
@@ -63,7 +70,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             BatteryTheme(AppearanceMode.SYSTEM) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    Root()
+                    // Without this the header draws under the system clock and
+                    // the status pill is hidden behind the status bar entirely.
+                    // Compose does not inset by default.
+                    Box(Modifier.windowInsetsPadding(WindowInsets.systemBars)) { Root() }
                 }
             }
         }
@@ -80,6 +90,8 @@ private fun Root() {
     var payload by remember { mutableStateOf(repository.lastKnownPayload) }
     var signedIn by remember { mutableStateOf(repository.isSignedIn()) }
     var message by remember { mutableStateOf<String?>(null) }
+    var showSettings by remember { mutableStateOf(false) }
+    var cardMode by remember { mutableStateOf(Settings(context).cardMode) }
 
     // One refresh per resume. Enough to make reopening the app feel current
     // without competing with the service for the poll budget.
@@ -123,10 +135,26 @@ private fun Root() {
     }
 
     Column(Modifier.fillMaxSize()) {
-        payload?.let {
-            Box(Modifier.weight(1f)) { DashboardScreen(it) }
-        } ?: Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            Text("Fetching your usage…", style = MaterialTheme.typography.bodyLarge)
+        Box(Modifier.weight(1f)) {
+            when {
+                showSettings -> SettingsSheet(
+                    onCardModeChanged = {
+                        cardMode = it
+                        // Restart so the new mode takes effect now rather than
+                        // on the next poll — the whole point of choosing
+                        // "Whole session" is seeing the card immediately.
+                        SessionService.stop(context)
+                        if (it != SessionPolicy.Mode.OFF) SessionService.start(context)
+                    },
+                    onWidgetBackgroundChanged = {
+                        scope.launch { refreshAllWidgets(context) }
+                    },
+                )
+                payload != null -> DashboardScreen(payload!!, cardMode)
+                else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Fetching your usage…", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
         }
 
         message?.let {
@@ -148,6 +176,10 @@ private fun Root() {
                 payload = null
                 SessionService.stop(context)
             }) { Text("Sign out") }
+
+            TextButton(onClick = { showSettings = !showSettings }) {
+                Text(if (showSettings) "Done" else "Settings")
+            }
 
             TextButton(onClick = {
                 context.startActivity(Intent(context, SpikeActivity::class.java))

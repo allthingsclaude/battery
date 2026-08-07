@@ -2,6 +2,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Runtime permission on API 33+; without it nothing posts at all. -->
+    <!--
+      Everything this app does needs it: the usage API, the token refresh, the
+      GitHub release check, and — less obviously — binding the loopback
+      ServerSocket that catches the OAuth redirect. Without it that bind throws
+      and sign-in fails with "Couldn't start the local sign-in listener", which
+      names the symptom and not the cause.
+
+      Nothing in the JVM test suite could catch this: every test drives a fake
+      HttpTransport, and the manifest isn't involved. It took a real device.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
@@ -62,14 +75,51 @@
             android:exported="false" />
 
         <receiver
-            android:name=".widget.BatteryWidgetReceiver"
-            android:exported="true">
+            android:name=".widget.SessionRowWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_name_session_row">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/battery_widget_info" />
+                android:resource="@xml/widget_session_row" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.SessionRingWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_name_session_ring">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_session_ring" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.OverviewWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_name_overview">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_overview" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.ForecastWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_name_forecast">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_forecast" />
         </receiver>
 
         <activity
