@@ -41,13 +41,20 @@ object UsageRingRenderer {
         sizePx: Int,
         dark: Boolean,
         showLabel: Boolean = true,
+        strokeRatio: Float = STROKE_RATIO,
+        textRatio: Float = TEXT_RATIO,
+        /**
+         * Track colour, or null to derive one from [dark]. Passed explicitly by
+         * callers whose background they cannot know — see [renderBadge].
+         */
+        trackColor: Int? = null,
     ): Bitmap {
         val size = sizePx.coerceAtLeast(MIN_SIZE_PX)
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
 
         val level = UsageLevel.from(utilization)
-        val stroke = size * STROKE_RATIO
+        val stroke = size * strokeRatio
         val inset = stroke / 2f
         val bounds = RectF(inset, inset, size - inset, size - inset)
 
@@ -58,7 +65,8 @@ object UsageRingRenderer {
             // The desktop and iOS rings use `.quaternary`, which is the label
             // colour at low alpha rather than a grey — it keeps the track
             // readable on both backgrounds without a second palette entry.
-            color = if (dark) Color.argb(46, 255, 255, 255) else Color.argb(38, 0, 0, 0)
+            color = trackColor
+                ?: if (dark) Color.argb(46, 255, 255, 255) else Color.argb(38, 0, 0, 0)
         }
         canvas.drawArc(bounds, 0f, 360f, false, track)
 
@@ -83,7 +91,7 @@ object UsageRingRenderer {
                 // Monospaced so the numeral doesn't jitter as it ticks — the
                 // same reason every figure in the iOS app is monospacedDigit().
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-                textSize = size * TEXT_RATIO
+                textSize = size * textRatio
             }
             // drawText places the baseline, not the centre; without this the
             // numeral sits visibly low inside the ring.
@@ -93,6 +101,38 @@ object UsageRingRenderer {
 
         return bitmap
     }
+
+    /**
+     * A ring for the notification's large-icon badge — the circle at the top
+     * right of the expanded lock-screen card and the shade entry.
+     *
+     * **The slot is the system's, not ours.** Its size and its position in the
+     * header row are fixed by the notification template; there is no API to
+     * enlarge it or move it, and the platform rescaled a 192px bitmap to 113px
+     * on an S24 Ultra regardless of what was supplied. What this can control is
+     * how much of that circle the drawing actually uses, and at badge size the
+     * widget proportions read as a thin hairline with a small numeral floating
+     * inside it. Half again the stroke and a numeral nearly half the diameter
+     * survive the downscale; the widget ratios do not.
+     *
+     * The track colour is passed rather than derived because this one bitmap is
+     * composited onto two different backgrounds — a light shade in light mode
+     * and a dark lock-screen card — and there is no signal saying which. The
+     * level colour at low alpha is legible on both, where a black-on-light or
+     * white-on-dark track vanishes on one of them.
+     */
+    fun renderBadge(utilization: Double, sizePx: Int = BADGE_SIZE_PX): Bitmap =
+        render(
+            utilization = utilization,
+            sizePx = sizePx,
+            // Unused: trackColor is supplied, and the arc and numeral take the
+            // level colour, which is the same on either background.
+            dark = false,
+            showLabel = true,
+            strokeRatio = BADGE_STROKE_RATIO,
+            textRatio = BADGE_TEXT_RATIO,
+            trackColor = (UsageLevel.from(utilization).color and 0x00FFFFFF) or (56 shl 24),
+        )
 
     /** A ring sized for a widget cell, given dp and display density. */
     fun renderForDp(
@@ -106,6 +146,15 @@ object UsageRingRenderer {
     private const val START_ANGLE = -90f
     private const val STROKE_RATIO = 0.11f
     private const val TEXT_RATIO = 0.30f
+
+    /**
+     * Badge proportions. Deliberately heavier than the widget's — see
+     * [renderBadge]. Rendered at 2× the slot's measured 113px so the downscale
+     * has something to work with.
+     */
+    private const val BADGE_STROKE_RATIO = 0.16f
+    private const val BADGE_TEXT_RATIO = 0.44f
+    private const val BADGE_SIZE_PX = 224
 
     /**
      * Below this the arc's round caps overlap into a blob and the numeral is

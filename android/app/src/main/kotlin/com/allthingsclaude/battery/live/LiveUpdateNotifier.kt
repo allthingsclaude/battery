@@ -15,7 +15,9 @@ import com.allthingsclaude.battery.R
 import com.allthingsclaude.battery.core.USAGE_RAMP_SEGMENTS
 import com.allthingsclaude.battery.core.UsageForecast
 import com.allthingsclaude.battery.core.UsageLevel
+import com.allthingsclaude.battery.core.TimeFormatting
 import com.allthingsclaude.battery.core.UsagePayload
+import com.allthingsclaude.battery.ui.UsageRingRenderer
 import kotlin.math.roundToInt
 
 /**
@@ -98,7 +100,12 @@ object LiveUpdateNotifier {
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_battery)
-            .setContentTitle(if (didReset) "Session reset" else "Claude · $percent%")
+            .setContentTitle(if (didReset) "Session reset" else title(payload))
+            // Renders as a circular badge at the top right of the expanded card
+            // and the shade entry. Ignored by the collapsed Now Bar pill, which
+            // draws the small icon on a coloured disc instead — so this is the
+            // only place the ring reaches a lock screen.
+            .setLargeIcon(UsageRingRenderer.renderBadge(payload.sessionUtilization))
             .setContentText(
                 if (didReset) "A fresh 5-hour window just opened." else headline(payload)
             )
@@ -279,13 +286,45 @@ object LiveUpdateNotifier {
      * Budget is ~7 characters — the chip is capped at 96dp and drops to
      * icon-only if the text doesn't fit whole. "wk 28%" is six.
      */
+    /**
+     * The pill's first line, and the shade title.
+     *
+     * Carries **both** windows, which the measurement says it can afford: the
+     * collapsed pill ellipsises at roughly 23 characters and this is nineteen at
+     * its longest. Leading with the time is not decoration — `setWhen` plus
+     * `setChronometerCountDown` gives a free ticking countdown in the *shade*
+     * header, and it does not render on the lock screen at all, so without it
+     * here the one number the pill can't otherwise show is missing from the
+     * surface it matters most on.
+     *
+     * The cost of spelling it out is that it only moves when we repost, so it
+     * steps in three-minute jumps and is stale in between, where the shade's
+     * chronometer ticks every second for free. Minutes-scale staleness on a
+     * five-hour window reads as fine; seconds-scale would not.
+     */
+    private fun title(payload: UsagePayload): String {
+        val session = payload.sessionUtilization.roundToInt()
+        val weekly = payload.weeklyUtilization.roundToInt()
+        val remaining = payload.sessionResetsAt
+            ?.let { (it.toEpochMilli() - System.currentTimeMillis()) / 1000.0 }
+            ?.takeIf { it > 0 }
+            ?.let { TimeFormatting.shortDuration(it).replace(" ", "") }
+        return listOfNotNull(remaining, "$session%", "wk $weekly%").joinToString(" · ")
+    }
+
+    /**
+     * The status-bar chip, and the pill's second line — one string, two
+     * surfaces, and they do not have the same room. At 22 characters the pill
+     * rendered all of it while the chip marqueed, scrolling text beside the
+     * clock. So this is sized for the chip, and the pill's second line is left
+     * short rather than the chip left moving.
+     *
+     * Session only, not [UsagePayload.focusWindow]. Both windows already appear
+     * in [title]; what the chip wants is the fast-moving one a reader can still
+     * act on.
+     */
     private fun criticalText(payload: UsagePayload): String =
-        when (payload.focusWindow) {
-            UsagePayload.FocusWindow.WEEKLY ->
-                "wk ${payload.weeklyUtilization.roundToInt()}%"
-            UsagePayload.FocusWindow.SESSION ->
-                "${payload.sessionUtilization.roundToInt()}%"
-        }
+        "${payload.sessionUtilization.roundToInt()}%"
 
     // ── Forecast ────────────────────────────────────────────────────────────
     //

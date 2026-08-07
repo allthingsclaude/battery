@@ -126,13 +126,30 @@ what made an earlier version of this table wrong:
 | `setContentTitle` | **line 1**, ellipsised at ~23 chars | wraps to 2 lines, no truncation | — |
 | `setShortCriticalText` | **line 2**, ~22 chars rendered in full | — | **the chip text**, ~9 chars then it marquees |
 | `setContentText` | — | yes, wraps to 2 lines | — |
-| `setSubText` | — | header, beside the app name | — |
+| `setSubText` | — | header — **and it displaces the chronometer**, see below | — |
+| `setWhen` + `setChronometerCountDown` | — | header, ticking every second with zero updates from us | — |
 | `setLargeIcon` | **ignored** | **yes** — circular badge, top right | — |
 | `addAction` | — | **yes** — full-width buttons | — |
 | `ProgressStyle` | — | **yes** — segments, tracker icon and point all render | — |
 | `setSmallIcon` | filled circle, tinted by `setColor` | filled square, tinted by `setColor` | inside the chip |
 | `setColor` | tints pill and chip. Samsung's Clock uses `0xff5f57d9` and its chip is that purple, which is how this was identified | | |
-| `setWhen` + `setChronometerCountDown` | the live countdown, ticking with zero updates | | |
+
+**`setSubText` and the chronometer compete for one slot on the lock screen.**
+The probe set a subText and the expanded card's header read `Battery 3SUB` with
+no countdown, which looked like the chronometer simply not reaching the lock
+screen. Removing the subText brought `1:20:50` straight back. The shade has room
+for both and shows `Battery 3SUB 1:31:13`; the lock-screen header does not, and
+subText wins.
+
+That matters here because `setSubText` carries the plan tier, which is empty for
+some accounts and not others — so whether the lock screen shows a live countdown
+depends on a field nobody would connect to it.
+
+**The badge slot is the system's.** Size and position in the header row are
+fixed; a 192px bitmap came back rescaled to 113px. The only thing an app
+controls is how much of that circle its drawing uses, and widget proportions —
+a 0.11 stroke with a 0.30 numeral — read as a hairline at that scale. See
+`UsageRingRenderer.renderBadge`.
 
 Two of these overturn what this file previously asserted. `setContentText` and
 `ProgressStyle` were recorded as "shade only"; both render in the expanded card.
