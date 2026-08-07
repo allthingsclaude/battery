@@ -19,6 +19,22 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Battery">
 
+        <!--
+          Samsung's private ongoing-activity pipeline, which is what actually
+          drives the Now Bar and the status-bar pill on One UI. Decompilation of
+          Samsung Clock / Health / Voice Recorder shows they declare this and use
+          `android.ongoingActivityNoti.*` extras — and use none of the AOSP
+          promoted-notification APIs at all. So One UI has two pipelines, and the
+          AOSP one we satisfy reaches only the lock-screen card.
+
+          Undocumented and quite possibly package-whitelisted, so this is a cheap
+          experiment rather than a load-bearing dependency: an unrecognised
+          meta-data key is inert. See tasks/plans/PLAN_01 → Now Bar findings.
+        -->
+        <meta-data
+            android:name="com.samsung.android.support.ongoing_activity"
+            android:value="true" />
+
         <activity
             android:name=".SpikeActivity"
             android:exported="true"

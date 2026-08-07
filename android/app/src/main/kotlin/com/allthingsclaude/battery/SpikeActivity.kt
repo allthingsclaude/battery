@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,11 +19,13 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -70,6 +73,7 @@ private fun SpikeScreen() {
     val base = remember { UsagePayload.PLACEHOLDER }
     var utilization by remember { androidx.compose.runtime.mutableDoubleStateOf(base.sessionUtilization) }
     var diagnostics by remember { mutableStateOf("Post the card, then refresh.") }
+    var samsungExtras by remember { mutableStateOf(LiveUpdateNotifier.samsungExtrasEnabled) }
 
     fun payload() = base.copy(sessionUtilization = utilization)
 
@@ -100,14 +104,49 @@ private fun SpikeScreen() {
 
         Button(
             onClick = { LiveUpdateNotifier.post(context, payload()) },
-            modifier = Modifier.fillMaxSize(fraction = 1f),
+            modifier = Modifier.fillMaxWidth(),
         ) { Text("Post Live Update") }
 
         OutlinedButton(onClick = { LiveUpdateNotifier.cancel(context) }) { Text("Cancel") }
 
+        // The A/B for the two-pipeline theory. One UI's Now Bar is driven by
+        // Samsung's private ongoing-activity extras, not by the AOSP promoted
+        // APIs we already satisfy — so post once with this off, once with it on,
+        // and compare. Toggling it here avoids a rebuild between the two.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(
+                checked = samsungExtras,
+                onCheckedChange = {
+                    samsungExtras = it
+                    LiveUpdateNotifier.samsungExtrasEnabled = it
+                    LiveUpdateNotifier.post(context, payload())
+                },
+            )
+            Text(
+                "  Samsung ongoing-activity extras (experiment)",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
         OutlinedButton(onClick = {
             diagnostics = LiveUpdateNotifier.diagnose(context, payload())
         }) { Text("Refresh diagnostics") }
+
+        // Which screen this lands on is itself the finding — see the KDoc on
+        // LiveUpdateNotifier.promotedNotificationSettingsIntent.
+        OutlinedButton(onClick = {
+            val intent = LiveUpdateNotifier.promotedNotificationSettingsIntent(context)
+            diagnostics = if (intent == null) {
+                "ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS resolves to nothing on this\n" +
+                    "device — One UI has not wired AOSP's promoted-notification\n" +
+                    "settings surface. That corroborates the two-pipeline theory."
+            } else {
+                context.startActivity(intent)
+                "Opened promoted-notification settings. Note WHICH screen appeared:\n" +
+                    "a per-app Live-notifications toggle means AOSP's surface is the\n" +
+                    "gate; the generic app-notification screen means it isn't."
+            }
+        }) { Text("Open promoted-notification settings") }
 
         Card {
             Text(
