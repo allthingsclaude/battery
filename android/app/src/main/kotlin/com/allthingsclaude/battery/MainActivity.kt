@@ -18,6 +18,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -133,17 +138,88 @@ private fun Root() {
         return
     }
 
+    val accounts = remember(signedIn, showSettings) { repository.listAccounts() }
+
     Column(Modifier.fillMaxSize()) {
+        // A gear in the header rather than a bottom bar. The bottom bar held
+        // Sign out and Diagnostics — an irreversible action and a dev tool —
+        // which is not what a navigation bar is for. Both live in Settings now.
+        Row(
+            Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (showSettings) "Settings" else "",
+                style = MaterialTheme.typography.titleLarge,
+            )
+            IconButton(onClick = { showSettings = !showSettings }) {
+                Icon(
+                    if (showSettings) Icons.Filled.Close else Icons.Filled.Settings,
+                    contentDescription = if (showSettings) "Close settings" else "Settings",
+                )
+            }
+        }
+
         Box(Modifier.weight(1f)) {
             when {
                 showSettings -> SettingsSheet(
+                    accounts = accounts,
+                    selectedAccountId = repository.selectedAccountId,
                     onCardModeChanged = {
                         cardMode = it
-                        // Restart so the new mode takes effect now rather than
-                        // on the next poll — the whole point of choosing
-                        // "Whole session" is seeing the card immediately.
+                        // Restart so the new mode takes effect now rather than on
+                        // the next poll — the point of choosing "Whole session"
+                        // is seeing the card immediately.
                         SessionService.stop(context)
                         if (it != SessionPolicy.Mode.OFF) SessionService.start(context)
+                    },
+                    onSelectAccount = {
+                        repository.selectAccount(it)
+                        scope.launch {
+                            refresh(context, repository) { p, m -> payload = p; message = m }
+                        }
+                    },
+                    onRenameAccount = { id, name ->
+                        repository.renameAccount(id, name)
+                        scope.launch {
+                            refresh(context, repository) { p, m -> payload = p; message = m }
+                        }
+                    },
+                    onRemoveAccount = {
+                        repository.removeAccount(it)
+                        scope.launch {
+                            refresh(context, repository) { p, m -> payload = p; message = m }
+                        }
+                    },
+                    onAddAccount = {
+                        auth.start { result ->
+                            scope.launch {
+                                when (result) {
+                                    is AuthService.Result.Success ->
+                                        if (repository.addAccount(result.tokens)) {
+                                            showSettings = false
+                                            refresh(context, repository) { p, m ->
+                                                payload = p; message = m
+                                            }
+                                        } else {
+                                            message = "Couldn't store the credential."
+                                        }
+                                    is AuthService.Result.Failure -> message = result.message
+                                    AuthService.Result.Cancelled -> Unit
+                                }
+                            }
+                        }
+                    },
+                    onSignOut = {
+                        repository.signOutAll()
+                        signedIn = false
+                        payload = null
+                        showSettings = false
+                        SessionService.stop(context)
+                    },
+                    onOpenDiagnostics = {
+                        context.startActivity(Intent(context, SpikeActivity::class.java))
                     },
                 )
                 payload != null -> DashboardScreen(payload!!, cardMode)
@@ -156,30 +232,10 @@ private fun Root() {
         message?.let {
             Text(
                 it,
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
-        }
-
-        Row(
-            Modifier.fillMaxWidth().padding(20.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            OutlinedButton(onClick = {
-                repository.signOutAll()
-                signedIn = false
-                payload = null
-                SessionService.stop(context)
-            }) { Text("Sign out") }
-
-            TextButton(onClick = { showSettings = !showSettings }) {
-                Text(if (showSettings) "Done" else "Settings")
-            }
-
-            TextButton(onClick = {
-                context.startActivity(Intent(context, SpikeActivity::class.java))
-            }) { Text("Diagnostics") }
         }
     }
 }

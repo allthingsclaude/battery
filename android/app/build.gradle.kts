@@ -62,6 +62,9 @@ android {
 
     buildFeatures {
         compose = true
+        // BuildConfig.DEBUG gates the diagnostics harness. AGP 9 no longer
+        // generates BuildConfig unless asked.
+        buildConfig = true
     }
 
     compileOptions {
@@ -82,6 +85,7 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.graphics)
     implementation(libs.compose.material3)
+    implementation("androidx.compose.material:material-icons-core")
     implementation(libs.compose.ui.tooling.preview)
 
     implementation(libs.glance.appwidget)

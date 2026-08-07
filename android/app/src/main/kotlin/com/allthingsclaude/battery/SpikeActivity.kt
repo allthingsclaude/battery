@@ -281,7 +281,7 @@ private fun SpikeScreen() {
  * hide the one distinction that matters to a user — a dead grant needs a new
  * sign-in, everything else just needs waiting.
  */
-private suspend fun refresh(
+internal suspend fun refresh(
     context: android.content.Context,
     repository: UsageRepository,
     onResult: (UsagePayload?, String) -> Unit,

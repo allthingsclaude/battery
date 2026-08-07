@@ -12,6 +12,14 @@ package com.allthingsclaude.battery.core
 object AppConfig {
     const val API_BASE_URL = "https://api.anthropic.com"
     const val USAGE_PATH = "/api/oauth/usage"
+
+    /**
+     * Account identity. Confirmed to exist by an unauthenticated probe (401,
+     * where /api/oauth/me and /v1/me answer 404) and covered by the
+     * `user:profile` scope both apps already request. Response shape is
+     * undocumented — see [ProfileApi].
+     */
+    const val PROFILE_PATH = "/api/oauth/profile"
     const val BETA_HEADER = "oauth-2025-04-20"
 
     // OAuth PKCE — the same public client as macOS and iOS.

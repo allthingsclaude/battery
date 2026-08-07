@@ -3,6 +3,7 @@ package com.allthingsclaude.battery.data
 import android.content.Context
 import android.util.Log
 import com.allthingsclaude.battery.core.AppConfig
+import com.allthingsclaude.battery.core.ProfileApi
 import com.allthingsclaude.battery.core.SessionHistory
 import com.allthingsclaude.battery.core.StoredTokens
 import com.allthingsclaude.battery.core.UsageApi
@@ -31,12 +32,14 @@ class UsageRepository(context: Context) {
     private val payloads = PayloadStore(appContext)
     private val history = SessionHistory(payloads.snapshots)
 
-    private val api by lazy {
+    private val userAgent: String by lazy {
         val version = runCatching {
             appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
         }.getOrNull() ?: "0"
-        UsageApi(AppConfig.userAgent(version))
+        AppConfig.userAgent(version)
     }
+
+    private val api by lazy { UsageApi(userAgent) }
 
     /**
      * Activity inference, mirroring iOS: a session is "active" if utilization
@@ -145,18 +148,38 @@ class UsageRepository(context: Context) {
 
     // ── Account management ──────────────────────────────────────────────────
 
-    /** Adds a freshly-authenticated account and selects it. */
-    fun addAccount(newTokens: StoredTokens): Boolean {
+    /**
+     * Adds a freshly-authenticated account and selects it.
+     *
+     * Labelled with the account's own email when `/api/oauth/profile` yields
+     * one, falling back to "Account N". The fallback is not a formality — the
+     * response shape is undocumented, and a sign-in must not fail because a
+     * cosmetic label could not be resolved.
+     */
+    suspend fun addAccount(newTokens: StoredTokens): Boolean = withContext(Dispatchers.IO) {
         val existing = accounts.load()
-        val account = Account.new(accounts.nextAccountName(existing))
+        val label = runCatching {
+            ProfileApi(userAgent).fetch(newTokens.accessToken)?.label
+        }.getOrNull()
+        val account = Account.new(label ?: accounts.nextAccountName(existing))
         // If the credential can't be stored, don't pretend the account exists —
         // it would look signed in while every poll returned SignedOut.
-        if (!tokens.save(account.id, newTokens)) return false
+        if (!tokens.save(account.id, newTokens)) return@withContext false
         accounts.save(existing + account)
         accounts.selectedId = account.id
         resetInference()
-        return true
+        true
     }
+
+    /** Rename an account by hand, for when the profile lookup came back empty. */
+    fun renameAccount(id: String, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        accounts.save(accounts.load().map { if (it.id == id) it.copy(name = trimmed) else it })
+    }
+
+    val selectedAccountId: String?
+        get() = accounts.selectedId ?: accounts.load().firstOrNull()?.id
 
     fun removeAccount(id: String) {
         tokens.delete(id)
