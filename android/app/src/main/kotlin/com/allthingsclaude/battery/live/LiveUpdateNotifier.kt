@@ -13,6 +13,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import com.allthingsclaude.battery.R
 import com.allthingsclaude.battery.core.USAGE_RAMP_SEGMENTS
+import com.allthingsclaude.battery.core.UsageForecast
 import com.allthingsclaude.battery.core.UsageLevel
 import com.allthingsclaude.battery.core.UsagePayload
 import kotlin.math.roundToInt
@@ -233,23 +234,27 @@ object LiveUpdateNotifier {
         return intent.takeIf { it.resolveActivity(context.packageManager) != null }
     }
 
-    // ── Placeholders until Phase 1 lands ────────────────────────────────────
-    // Both of these belong to UsageForecast (ios/BatteryKit/UsageForecast.swift),
-    // which is the Phase 1 port. They are inlined here only so the spike can post
-    // a truthful-looking card; the moment core/ has UsageForecast, both go away
-    // and this file calls it instead. Deliberately kept crude so nobody mistakes
-    // them for the real thing.
+    // ── Forecast ────────────────────────────────────────────────────────────
+    //
+    // Both of these come from UsageForecast, which exists so that every surface
+    // talking about a projection agrees on the numbers, the outlook AND the
+    // wording. An earlier revision inlined its own approximations here, and the
+    // in-app card and the lock-screen card promptly disagreed for the same
+    // payload — "Hits 100% in 125m" against "Hits 100% in 2h 5m", and a bare
+    // "58% left in this window" where the forecast knew the window was idle.
+    // That contradiction is the exact failure the type was designed to prevent.
 
-    private fun headline(payload: UsagePayload): String {
-        val limit = payload.liveProjectedLimitAt() ?: return "${(100 - payload.sessionUtilization).roundToInt()}% left in this window"
-        val minutes = ((limit.epochSecond - java.time.Instant.now().epochSecond) / 60).coerceAtLeast(0)
-        return "Hits 100% in ${minutes}m"
-    }
+    private fun headline(payload: UsagePayload): String = UsageForecast(payload).headline
 
+    /**
+     * The projected landing point, as a mark on the bar — but only when it means
+     * something. A projection that clamps to 100 puts the Point on the bar's end
+     * cap, where it is invisible and indistinguishable from decoration.
+     */
     private fun projectedAtReset(payload: UsagePayload): Int? {
-        if (payload.burnRatePerHour <= 0.05) return null
-        val hoursLeft = payload.sessionSecondsRemaining() / 3600.0
-        return (payload.sessionUtilization + payload.burnRatePerHour * hoursLeft)
-            .coerceIn(0.0, 100.0).roundToInt()
+        val forecast = UsageForecast(payload)
+        if (forecast.pace == UsageForecast.Pace.NONE) return null
+        val projected = forecast.projectedAtReset.roundToInt()
+        return projected.takeIf { it < 100 }
     }
 }

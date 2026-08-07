@@ -110,7 +110,10 @@ class UsageApi(
      * The caller must store them: a rotated refresh token that isn't saved
      * invalidates the grant on the next call.
      */
-    fun fetchUsage(tokens: StoredTokens): Pair<UsageResponse, StoredTokens?> {
+    fun fetchUsage(
+        tokens: StoredTokens,
+        onTokensRefreshed: (StoredTokens) -> Unit = {},
+    ): Pair<UsageResponse, StoredTokens?> {
         var updated: StoredTokens? = null
         var accessToken = tokens.accessToken
 
@@ -119,6 +122,13 @@ class UsageApi(
             val refreshed = refreshTokens(refresh, tokens)
             accessToken = refreshed.accessToken
             updated = refreshed
+            // Persist NOW, not after the GET. The server may have rotated the
+            // refresh token, in which case the old one is already dead — so if
+            // the usage request then fails (a 500, or a dropped connection on a
+            // flaky phone) and we only saved on the success path, storage would
+            // keep a token the server has invalidated. The next poll would fail
+            // with 400 → Unauthorized → signed out, with no visible cause.
+            onTokensRefreshed(refreshed)
         }
 
         return requestUsage(accessToken) to updated

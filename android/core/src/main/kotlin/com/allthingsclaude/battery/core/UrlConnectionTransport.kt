@@ -23,6 +23,11 @@ class UrlConnectionTransport : UsageApi.HttpTransport {
         val connection = URI(url).toURL().openConnection() as HttpURLConnection
         return try {
             connection.requestMethod = method
+            // HttpURLConnection forwards request headers across a same-scheme
+            // redirect, which would carry the Bearer token to whatever host the
+            // redirect names. Nothing we call redirects; make that explicit
+            // rather than trusting it.
+            connection.instanceFollowRedirects = false
             connection.connectTimeout = AppConfig.REQUEST_TIMEOUT_SECONDS * 1000
             connection.readTimeout = AppConfig.REQUEST_TIMEOUT_SECONDS * 1000
             headers.forEach { (k, v) -> connection.setRequestProperty(k, v) }
@@ -42,12 +47,23 @@ class UrlConnectionTransport : UsageApi.HttpTransport {
             UsageApi.HttpTransport.Response(
                 code = code,
                 body = text,
-                headers = connection.headerFields
-                    .filterKeys { it != null }
-                    .mapValues { it.value.firstOrNull().orEmpty() },
+                // Case-INSENSITIVE. HTTP/2 mandates lowercase field names on
+                // the wire and api.anthropic.com serves h2, so the header
+                // arrives as `retry-after`; a plain LinkedHashMap lookup for
+                // "Retry-After" silently returns null and the server's requested
+                // backoff is ignored entirely.
+                headers = java.util.TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER).apply {
+                    connection.headerFields.forEach { (name, values) ->
+                        if (name != null) put(name, values.firstOrNull().orEmpty())
+                    }
+                },
             )
         } finally {
-            connection.disconnect()
+            // Deliberately NOT disconnect(): that tears down the pooled
+            // connection and makes every poll pay a fresh TLS handshake.
+            // Closing the streams is enough to return it to the pool.
+            runCatching { connection.inputStream?.close() }
+            runCatching { connection.errorStream?.close() }
         }
     }
 }

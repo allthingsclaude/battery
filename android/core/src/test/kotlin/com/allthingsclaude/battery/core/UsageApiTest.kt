@@ -155,6 +155,33 @@ class UsageApiTest {
     }
 
     @Test
+    fun `a rotated token is persisted even when the usage request then fails`() {
+        // The bug this pins: refresh succeeds and the server ROTATES the refresh
+        // token, then the usage GET fails. If persistence only happened on the
+        // success path, storage would keep a token the server has already
+        // invalidated — and the next poll would 400 into a silent sign-out with
+        // no visible cause. A flaky phone connection makes this routine.
+        val expiring = StoredTokens("stale", "old-refresh", System.currentTimeMillis())
+        val transport = FakeTransport { url, _, _ ->
+            if (url == AppConfig.OAUTH_TOKEN_URL) {
+                ok("""{ "access_token": "fresh", "refresh_token": "ROTATED", "expires_in": 3600 }""")
+            } else {
+                UsageApi.HttpTransport.Response(500, "")
+            }
+        }
+
+        var persisted: StoredTokens? = null
+        assertFailsWith<UsageApiError.Server> {
+            UsageApi("Battery/test", transport).fetchUsage(expiring) { persisted = it }
+        }
+
+        assertEquals(
+            "ROTATED",
+            assertNotNull(persisted, "rotated token must be handed over before the GET").refreshToken,
+        )
+    }
+
+    @Test
     fun `a valid token skips the refresh entirely`() {
         val valid = StoredTokens("good", "r", System.currentTimeMillis() + 3_600_000)
         val transport = FakeTransport { _, _, _ -> ok(fullUsage) }

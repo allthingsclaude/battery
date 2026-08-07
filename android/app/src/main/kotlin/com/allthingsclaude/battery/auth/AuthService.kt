@@ -40,8 +40,12 @@ class AuthService(private val context: Context) {
         object Cancelled : Result()
     }
 
+    // Written from the UI thread (start/cancel) and read from the loopback
+    // daemon thread. Volatile for the happens-before edge; the attempt's own
+    // state is captured rather than read back off the field, so a re-tap during
+    // an in-flight exchange can't make attempt 1 send attempt 2's value.
+    @Volatile
     private var listener: LoopbackListener? = null
-    private var state: String? = null
 
     /**
      * Start sign-in. Opens a Custom Tab and returns immediately; [onResult] fires
@@ -62,17 +66,24 @@ class AuthService(private val context: Context) {
         val codeVerifier = randomUrlSafe()
         val challenge = codeChallenge(codeVerifier)
         val oauthState = randomUrlSafe()
-        state = oauthState
 
         val server = LoopbackListener(
             onCode = { code, returnedState, port ->
-                if (returnedState != null && returnedState != oauthState) {
-                    // CSRF guard. iOS sends `state` but never checks the value
-                    // that comes back; there's no reason to inherit that.
+                // Note the absence of a null check. An earlier version read
+                // `returnedState != null && returnedState != oauthState`, which
+                // fired only on a WRONG state and never on a MISSING one — so
+                // omitting the parameter skipped the guard completely. That is
+                // an authorization-code injection: any local app can probe
+                // loopback ports, POST its own `?code=` with no `state`, and
+                // bind this install to an account the user does not control.
+                // PKCE does not cover it — PKCE binds the code to *our*
+                // verifier, which is precisely what makes an attacker's code
+                // exchangeable by us.
+                if (returnedState != oauthState) {
                     onResult(Result.Failure("Sign-in failed: state mismatch."))
                     return@LoopbackListener
                 }
-                onResult(exchange(code, codeVerifier, port))
+                onResult(exchange(code, codeVerifier, port, oauthState))
             },
             onTimeout = { onResult(Result.Cancelled) },
         )
@@ -106,14 +117,19 @@ class AuthService(private val context: Context) {
         listener = null
     }
 
-    private fun exchange(code: String, codeVerifier: String, port: Int): Result {
+    private fun exchange(
+        code: String,
+        codeVerifier: String,
+        port: Int,
+        oauthState: String,
+    ): Result {
         val body = JsonBody()
             .put("grant_type", "authorization_code")
             .put("code", code)
             .put("client_id", AppConfig.OAUTH_CLIENT_ID)
             .put("code_verifier", codeVerifier)
             .put("redirect_uri", redirectUri(port))
-            .apply { state?.let { put("state", it) } }
+            .put("state", oauthState)
             .toString()
 
         return try {
@@ -132,9 +148,12 @@ class AuthService(private val context: Context) {
             Result.Success(UsageApi.parseTokens(response.body, previous = null))
         } catch (e: Exception) {
             Result.Failure("Sign-in failed: ${e.message}")
-        } finally {
-            cancel()
         }
+        // Deliberately no `finally { cancel() }`. The listener has already closed
+        // itself on the success path, and cancelling here would tear down a
+        // *newer* attempt's listener if the user re-tapped sign-in while this
+        // exchange was in flight — leaving that attempt's redirect to hit a
+        // closed port.
     }
 
     private fun redirectUri(port: Int) = "http://localhost:$port${AppConfig.OAUTH_REDIRECT_PATH}"
@@ -183,14 +202,19 @@ private class LoopbackListener(
     private val onTimeout: () -> Unit,
 ) : Closeable {
 
+    @Volatile
     private var server: ServerSocket? = null
     private val finished = AtomicBoolean(false)
+    private var deadline: Long = 0L
 
     fun start(): Int? = try {
         val socket = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
-        // Bounds the whole attempt. Without it an abandoned sign-in leaks the
-        // socket and its thread for the life of the process — the iOS original
-        // needs a 5-minute timer for exactly this.
+        // An ABSOLUTE deadline, not a per-accept timeout. soTimeout applies to
+        // each accept() call individually, so any stray request — a favicon
+        // probe, or a hostile local app connecting once a minute — completes an
+        // iteration and restarts the clock, keeping the listener alive
+        // indefinitely.
+        deadline = System.nanoTime() + TIMEOUT_MS * 1_000_000L
         socket.soTimeout = TIMEOUT_MS
         server = socket
         thread(isDaemon = true, name = "oauth-loopback") { accept(socket) }
@@ -202,13 +226,27 @@ private class LoopbackListener(
     private fun accept(socket: ServerSocket) {
         try {
             while (!finished.get() && !socket.isClosed) {
+                val remainingMs = (deadline - System.nanoTime()) / 1_000_000L
+                if (remainingMs <= 0) throw java.net.SocketTimeoutException("attempt expired")
+                socket.soTimeout = remainingMs.coerceAtMost(TIMEOUT_MS.toLong()).toInt()
+
                 val client = socket.accept()
                 client.use {
+                    // accept() has a timeout; the accepted socket does not. Any
+                    // local app could connect and send nothing, blocking
+                    // readLine() forever — the loop would never return to
+                    // accept(), so the attempt would neither complete nor time
+                    // out, leaking both sockets and the thread.
+                    it.soTimeout = CLIENT_READ_TIMEOUT_MS
                     val reader = it.getInputStream().bufferedReader()
                     val requestLine = reader.readLine().orEmpty()
                     val target = requestLine.split(" ").getOrNull(1).orEmpty()
 
-                    if (!target.startsWith(AppConfig.OAUTH_REDIRECT_PATH)) {
+                    // Exact path, not a prefix: `startsWith` also matches
+                    // `/callbackXYZ`, and there is no reason to accept a code on
+                    // a path we never advertised.
+                    val path = target.substringBefore('?')
+                    if (path != AppConfig.OAUTH_REDIRECT_PATH) {
                         it.getOutputStream().write(response("Waiting for sign-in…").toByteArray())
                         return@use
                     }
@@ -266,6 +304,7 @@ private class LoopbackListener(
 
     private companion object {
         const val TIMEOUT_MS = 5 * 60 * 1000
+        const val CLIENT_READ_TIMEOUT_MS = 10 * 1000
 
         /** Same copy and palette as the iOS listener's success page. */
         val SUCCESS_HTML = """

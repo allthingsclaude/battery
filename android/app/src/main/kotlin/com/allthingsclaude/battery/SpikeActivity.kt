@@ -295,6 +295,8 @@ private suspend fun refresh(
             onResult(null, "Session expired — sign in again.")
         UsageRepository.PollResult.NoAccount ->
             onResult(null, "No account. Sign in first.")
+        UsageRepository.PollResult.Stale ->
+            onResult(null, "Account changed mid-poll; discarded.")
         is UsageRepository.PollResult.Failed -> onResult(
             null,
             result.retryAfterSeconds

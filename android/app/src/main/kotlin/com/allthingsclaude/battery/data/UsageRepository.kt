@@ -1,6 +1,7 @@
 package com.allthingsclaude.battery.data
 
 import android.content.Context
+import android.util.Log
 import com.allthingsclaude.battery.core.AppConfig
 import com.allthingsclaude.battery.core.SessionHistory
 import com.allthingsclaude.battery.core.StoredTokens
@@ -55,6 +56,13 @@ class UsageRepository(context: Context) {
         object SignedOut : PollResult()
         data class Failed(val message: String, val retryAfterSeconds: Long?) : PollResult()
         object NoAccount : PollResult()
+
+        /**
+         * The account was switched while this poll was in flight, so its result
+         * belongs to an account nobody is looking at. Discarded rather than
+         * rendered.
+         */
+        object Stale : PollResult()
     }
 
     suspend fun poll(): PollResult = withContext(Dispatchers.IO) {
@@ -64,11 +72,24 @@ class UsageRepository(context: Context) {
         val stored = tokens.load(account.id) ?: return@withContext PollResult.SignedOut
 
         try {
-            val (usage, refreshed) = api.fetchUsage(stored)
+            // Persisted from inside fetchUsage, the instant the refresh returns —
+            // see the comment there. Saving after the GET loses a rotated token
+            // whenever the GET fails.
+            val (usage, _) = api.fetchUsage(stored) { refreshed ->
+                if (!tokens.save(account.id, refreshed)) {
+                    // Same consequence as not saving at all, so it must not be
+                    // swallowed: the old refresh token is already dead server-side.
+                    Log.e(TAG, "failed to persist refreshed tokens for ${account.id}")
+                }
+            }
 
-            // A rotated refresh token that isn't persisted invalidates the grant
-            // on the next call, so this must happen before anything else.
-            if (refreshed != null) tokens.save(account.id, refreshed)
+            // The selected account can change while a request is in flight. iOS
+            // guards this twice, deliberately — a late response must never
+            // overwrite the newly-selected account's data, poison its regression
+            // buffer, or relabel its card.
+            if (accounts.selectedId != null && accounts.selectedId != account.id) {
+                return@withContext PollResult.Stale
+            }
 
             val payload = buildPayload(usage, account.name)
             payloads.save(payload)
@@ -164,6 +185,7 @@ class UsageRepository(context: Context) {
     }
 
     private companion object {
+        const val TAG = "UsageRepository"
         const val ACTIVE_WINDOW_SECONDS = 10 * 60
     }
 }

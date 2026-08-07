@@ -265,7 +265,10 @@ class UsageForecast(
             Outlook.AT_LIMIT, Outlook.REACHES_LIMIT -> BatteryPalette.BRAND_DEEP
             Outlook.ON_PACE -> BatteryPalette.BRAND_DARK
             Outlook.IDLE -> BatteryPalette.BRAND
-            Outlook.NO_WINDOW -> BatteryPalette.BRAND
+            // Swift returns `.secondary` here, a system grey, deliberately
+            // distinct from IDLE's brand tint — "no window open" is not a calm
+            // reading of the meter, it's the absence of one.
+            Outlook.NO_WINDOW -> BatteryPalette.SECONDARY
         }
 
     /** The pace being projected from, or an em dash when there isn't one. */
@@ -319,6 +322,3 @@ class UsageForecast(
             (a.toEpochMilli() - b.toEpochMilli()) / 1000.0
     }
 }
-
-private fun secondsBetween(a: Instant, b: Instant): Double =
-    (a.toEpochMilli() - b.toEpochMilli()) / 1000.0

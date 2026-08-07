@@ -50,6 +50,12 @@ object BatteryPalette {
     const val BRAND_DARK = 0xFFB85A3A.toInt()
     const val BRAND_DEEP = 0xFF9A4A2C.toInt()
 
+    /**
+     * The system-grey equivalent of SwiftUI's `.secondary`, for the one place
+     * the forecast deliberately leaves the brand: no open window at all.
+     */
+    const val SECONDARY = 0xFF8A8A8E.toInt()
+
     /** Desktop's `#FAF8F4` / `#191814` surfaces. */
     const val SURFACE_LIGHT = 0xFFFAF8F4.toInt()
     const val SURFACE_DARK = 0xFF191814.toInt()

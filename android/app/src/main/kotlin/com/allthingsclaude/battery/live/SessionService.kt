@@ -42,7 +42,6 @@ class SessionService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob())
     private var loop: Job? = null
-    private var repository: UsageRepository? = null
     private var policyState = SessionPolicy.State()
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -50,7 +49,14 @@ class SessionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (loop?.isActive == true) return START_STICKY
 
-        val repo = UsageRepository(this).also { repository = it }
+        // MUST precede startForeground. build() does not create the channel —
+        // only post() did — so a fresh install that starts the service without
+        // ever posting a card hit `IllegalArgumentException: No Channel found`,
+        // which the system converts into "Bad notification for startForeground"
+        // and kills the process. Same crash on every START_STICKY restart.
+        LiveUpdateNotifier.ensureChannel(this)
+
+        val repo = UsageRepository(this)
 
         // startForeground must happen within a few seconds of the start request
         // or the system kills us with a ForegroundServiceDidNotStartInTimeException.
@@ -76,6 +82,12 @@ class SessionService : Service() {
                     // the card up would freeze it at a number that is now a lie.
                     stopWithoutCard()
                     return
+                }
+                UsageRepository.PollResult.Stale -> {
+                    // The account changed mid-poll; this result belongs to
+                    // nobody. Skip it and let the next tick fetch the new one.
+                    delay(SessionPolicy.pollIntervalSeconds(SessionPolicy.Decision.Hide) * 1000)
+                    continue
                 }
                 is UsageRepository.PollResult.Failed -> {
                     // Keep the card at its last known value rather than dropping
@@ -144,7 +156,6 @@ class SessionService : Service() {
     override fun onDestroy() {
         loop?.cancel()
         scope.cancel()
-        repository = null
         super.onDestroy()
     }
 

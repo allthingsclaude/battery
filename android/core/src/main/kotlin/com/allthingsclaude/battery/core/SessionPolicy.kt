@@ -41,6 +41,17 @@ object SessionPolicy {
         val previousUtilization: Double? = null,
         val alertedLevel: UsageLevel? = null,
         val idleSince: Instant? = null,
+        /**
+         * Whether a card is already on screen. Needed because *appearing* and
+         * *escalating* are different events: iOS seeds `alertedLevel` silently
+         * when it starts an activity and only alerts on subsequent updates
+         * (`LiveActivityController.swift`, the `else` branch of the start/update
+         * split). Without this, opening the app at 80% makes a noise on Android
+         * and stays silent on iOS — and worse, since `Hide` stops the service
+         * and discards this state, a session oscillating around the 40% start
+         * threshold would re-alert on every restart.
+         */
+        val isShowing: Boolean = false,
     )
 
     /** What the service should do with this payload. */
@@ -119,7 +130,12 @@ object SessionPolicy {
         if (!shouldShow) {
             return Outcome(
                 Decision.Hide,
-                State(previousUtilization = utilization, idleSince = idleSince),
+                State(
+                    previousUtilization = utilization,
+                    alertedLevel = state.alertedLevel,
+                    idleSince = idleSince,
+                    isShowing = false,
+                ),
             )
         }
 
@@ -127,9 +143,12 @@ object SessionPolicy {
         // on every poll at 91% would train the user to swipe the card away, and a
         // dismissed Live Update must never be reposted.
         val level = UsageLevel.from(utilization)
-        val shouldAlert = level.isAlarming && level != state.alertedLevel
+        // Only ever alert on an *escalation*, never on first appearance.
+        val shouldAlert = state.isShowing && level.isAlarming && level != state.alertedLevel
         val alertedLevel = when {
-            shouldAlert -> level
+            // Seeded on first appearance too, so the card that shows up at 91%
+            // doesn't then alert on its second poll.
+            shouldAlert || (!state.isShowing && level.isAlarming) -> level
             // Dropping out of alarming territory rearms the alert, so a session
             // that recovers and climbs again warns a second time.
             !level.isAlarming -> null
@@ -142,6 +161,7 @@ object SessionPolicy {
                 previousUtilization = utilization,
                 alertedLevel = alertedLevel,
                 idleSince = idleSince,
+                isShowing = true,
             ),
         )
     }

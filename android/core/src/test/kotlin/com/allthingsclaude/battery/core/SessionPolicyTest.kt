@@ -69,28 +69,52 @@ class SessionPolicyTest {
     // ── Escalation ──────────────────────────────────────────────────────────
 
     @Test
-    fun `crossing into HIGH alerts exactly once`() {
+    fun `a card appearing already in HIGH does not alert`() {
+        // Appearing and escalating are different events. iOS seeds alertedLevel
+        // silently when it starts an activity and only alerts on updates, so
+        // opening the app at 80% is quiet there. Alerting here would also mean
+        // re-alerting every time the service restarts, since Hide discards this
+        // state and a session oscillating around the 40% start threshold
+        // restarts often.
+        val first = SessionPolicy.evaluate(
+            SessionPolicy.State(),
+            payload(76.0, active = true),
+            now = now,
+        )
+        assertNull((first.decision as SessionPolicy.Decision.Show).alertLevel)
+        assertEquals(UsageLevel.HIGH, first.state.alertedLevel, "seeded, so it won't fire later")
+    }
+
+    @Test
+    fun `crossing into a new level while showing alerts exactly once`() {
         var state = SessionPolicy.State()
 
-        val first = SessionPolicy.evaluate(state, payload(76.0, active = true), now = now)
-        assertEquals(UsageLevel.HIGH, (first.decision as SessionPolicy.Decision.Show).alertLevel)
-        state = first.state
+        // Climb from MODERATE, so the card is already up when HIGH is crossed.
+        state = SessionPolicy.evaluate(state, payload(60.0, active = true), now = now).state
+
+        val crossing = SessionPolicy.evaluate(state, payload(76.0, active = true), now = now)
+        assertEquals(UsageLevel.HIGH, (crossing.decision as SessionPolicy.Decision.Show).alertLevel)
+        state = crossing.state
 
         // Same level again — no second banner. Re-alerting every poll at 76% is
         // how you train someone to swipe the card away, and a dismissed Live
         // Update must never be reposted.
-        val second = SessionPolicy.evaluate(state, payload(80.0, active = true), now = now)
-        assertNull((second.decision as SessionPolicy.Decision.Show).alertLevel)
-        state = second.state
+        val same = SessionPolicy.evaluate(state, payload(80.0, active = true), now = now)
+        assertNull((same.decision as SessionPolicy.Decision.Show).alertLevel)
+        state = same.state
 
         // Escalating to CRITICAL is a new level, so it alerts again.
-        val third = SessionPolicy.evaluate(state, payload(91.0, active = true), now = now)
-        assertEquals(UsageLevel.CRITICAL, (third.decision as SessionPolicy.Decision.Show).alertLevel)
+        val escalated = SessionPolicy.evaluate(state, payload(91.0, active = true), now = now)
+        assertEquals(
+            UsageLevel.CRITICAL,
+            (escalated.decision as SessionPolicy.Decision.Show).alertLevel,
+        )
     }
 
     @Test
     fun `dropping out of alarming territory rearms the alert`() {
         var state = SessionPolicy.State()
+        state = SessionPolicy.evaluate(state, payload(50.0, active = true), now = now).state
         state = SessionPolicy.evaluate(state, payload(80.0, active = true), now = now).state
 
         // Back down to MODERATE — a new window, or a correction.

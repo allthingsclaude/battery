@@ -44,8 +44,17 @@ class SecureStore(context: Context) {
     fun read(name: String): String? {
         val file = File(dir, name)
         if (!file.exists()) return null
+
+        // Read outside the deleting catch. An IOException here is transient and
+        // must never cost the user their credential.
+        val raw = try {
+            file.readText()
+        } catch (_: Exception) {
+            return null
+        }
+
         return try {
-            val blob = Base64.decode(file.readText(), Base64.NO_WRAP)
+            val blob = Base64.decode(raw, Base64.NO_WRAP)
             if (blob.size <= IV_LENGTH) return null
             val cipher = Cipher.getInstance(TRANSFORMATION).apply {
                 init(
@@ -55,14 +64,23 @@ class SecureStore(context: Context) {
                 )
             }
             String(cipher.doFinal(blob, IV_LENGTH, blob.size - IV_LENGTH), Charsets.UTF_8)
-        } catch (_: Exception) {
-            // Unreadable rather than absent: the Keystore key is gone (app data
-            // cleared, device restored from backup, or the key was invalidated).
-            // Deleting is the honest response — the ciphertext is permanently
-            // undecryptable, and leaving it means retrying forever.
-            file.delete()
+        } catch (e: Exception) {
+            // Delete ONLY when the ciphertext is provably unrecoverable: the key
+            // is gone or was invalidated (data cleared, device restored), or the
+            // GCM tag fails. Anything else — Keymaster out of operation slots
+            // under memory pressure, for instance — is transient, and deleting
+            // on it would silently sign the user out with no way back.
+            if (isPermanentlyUndecryptable(e)) file.delete()
             null
         }
+    }
+
+    private fun isPermanentlyUndecryptable(e: Throwable): Boolean = when (e) {
+        is javax.crypto.AEADBadTagException,
+        is java.security.InvalidKeyException,
+        is IllegalArgumentException, // malformed Base64
+        -> true
+        else -> e is android.security.keystore.KeyPermanentlyInvalidatedException
     }
 
     fun delete(name: String) {
@@ -73,6 +91,7 @@ class SecureStore(context: Context) {
         dir.listFiles()?.forEach { it.delete() }
     }
 
+    @Synchronized
     private fun key(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         (keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
