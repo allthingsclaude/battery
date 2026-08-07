@@ -48,6 +48,8 @@ import com.allthingsclaude.battery.live.SessionService
 import com.allthingsclaude.battery.ui.AppearanceMode
 import com.allthingsclaude.battery.ui.BatteryTheme
 import com.allthingsclaude.battery.core.SessionPolicy
+import androidx.activity.compose.BackHandler
+import com.allthingsclaude.battery.ui.AppHeader
 import com.allthingsclaude.battery.ui.DashboardScreen
 import com.allthingsclaude.battery.ui.SettingsSheet
 import kotlinx.coroutines.launch
@@ -141,18 +143,17 @@ private fun Root() {
     val accounts = remember(signedIn, showSettings) { repository.listAccounts() }
 
     Column(Modifier.fillMaxSize()) {
-        // A gear in the header rather than a bottom bar. The bottom bar held
-        // Sign out and Diagnostics — an irreversible action and a dev tool —
-        // which is not what a navigation bar is for. Both live in Settings now.
-        Row(
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        // Back closes settings rather than leaving the app. Without this the
+        // system back gesture exits from a modal-feeling screen, which is the
+        // one place users reliably expect it to go up a level instead.
+        BackHandler(enabled = showSettings) { showSettings = false }
+
+        // One header for both screens — see AppHeader. The status pill and the
+        // account line only belong to the dashboard, so settings passes null.
+        AppHeader(
+            title = if (showSettings) "Settings" else "Battery",
+            payload = if (showSettings) null else payload,
         ) {
-            Text(
-                if (showSettings) "Settings" else "",
-                style = MaterialTheme.typography.titleLarge,
-            )
             IconButton(onClick = { showSettings = !showSettings }) {
                 Icon(
                     if (showSettings) Icons.Filled.Close else Icons.Filled.Settings,

@@ -66,7 +66,6 @@ fun DashboardScreen(
             .padding(top = 8.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Header(payload)
         SessionCard(payload, now)
         ForecastCard(UsageForecast(payload, now = now))
         WeeklyCard(payload, now)
@@ -106,44 +105,68 @@ private fun SectionLabel(text: String) {
     )
 }
 
+/**
+ * The one top bar, shared by the dashboard and settings.
+ *
+ * Owned by the host rather than drawn by each screen. When the dashboard drew
+ * its own header there were two stacked rows — a bare gear above, the title
+ * below — so the two screens could only be aligned by keeping two sets of
+ * paddings in step. One bar makes them aligned by construction.
+ *
+ * [trailing] is the screen's own action (gear, or close).
+ */
 @Composable
-private fun Header(payload: UsagePayload) {
+fun AppHeader(
+    title: String,
+    payload: UsagePayload?,
+    modifier: Modifier = Modifier,
+    trailing: @Composable () -> Unit,
+) {
     Row(
-        Modifier.fillMaxWidth().padding(bottom = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column {
-            Text("Battery", style = MaterialTheme.typography.headlineMedium)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                if (payload.planTier.isNotEmpty()) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.headlineMedium)
+            payload?.let {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (it.planTier.isNotEmpty()) {
+                        Text(
+                            it.planTier,
+                            Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = BatteryColors.brandDark,
+                        )
+                    }
                     Text(
-                        payload.planTier,
-                        Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = BatteryColors.brandDark,
+                        it.accountName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     )
                 }
-                Text(
-                    payload.accountName,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                )
             }
         }
-        StatusPill(payload)
+        payload?.let { StatusPill(it) }
+        trailing()
     }
 }
 
 @Composable
 private fun StatusPill(payload: UsagePayload) {
-    Column(horizontalAlignment = Alignment.End) {
+    Column(
+        horizontalAlignment = Alignment.End,
+        modifier = Modifier.padding(end = 4.dp),
+    ) {
         Row(
             Modifier
                 .clip(RoundedCornerShape(50))
