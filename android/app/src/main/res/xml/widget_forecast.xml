@@ -8,4 +8,6 @@
     android:updatePeriodMillis="0"
     android:widgetCategory="home_screen"
     android:description="@string/widget_desc_forecast"
-    android:initialLayout="@layout/glance_default_loading_layout" />
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:configure="com.allthingsclaude.battery.widget.WidgetConfigActivity"
+    android:widgetFeatures="reconfigurable|configuration_optional" />

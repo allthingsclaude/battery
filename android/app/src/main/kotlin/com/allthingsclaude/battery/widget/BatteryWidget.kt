@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.glance.GlanceId
 import androidx.glance.GlanceTheme
 import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.provideContent
@@ -28,21 +29,28 @@ import com.allthingsclaude.battery.data.PayloadStore
 abstract class BasePayloadWidget : GlanceAppWidget() {
 
     @Composable
-    protected abstract fun Content(payload: UsagePayload?)
+    protected abstract fun Content(payload: UsagePayload?, config: WidgetConfig)
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        // Read before provideContent so the first composition already has data.
-        // Loading inside would flash the empty state on every update.
+        // Both resolved before provideContent: the payload so the first
+        // composition already has data rather than flashing the empty state, and
+        // the config because mapping a GlanceId to the numeric appWidgetId the
+        // settings are keyed by is a suspend call that cannot happen inside
+        // composition.
         val payload = PayloadStore(context).load()
-        provideContent { GlanceTheme { Content(payload) } }
+        val appWidgetId = runCatching {
+            GlanceAppWidgetManager(context).getAppWidgetId(id)
+        }.getOrDefault(WidgetConfig.INVALID_ID)
+        val config = WidgetConfig.load(context, appWidgetId)
+        provideContent { GlanceTheme { Content(payload, config) } }
     }
 }
 
 /** 4x1 — the default, the same short-and-wide shape as the media player. */
 class SessionRowWidget : BasePayloadWidget() {
     @Composable
-    override fun Content(payload: UsagePayload?) {
-        val palette = rememberPalette()
+    override fun Content(payload: UsagePayload?, config: WidgetConfig) {
+        val palette = paletteFor(config)
         if (payload == null) return EmptyState(palette, compact = true)
         RowLayout(payload, palette)
     }
@@ -51,8 +59,8 @@ class SessionRowWidget : BasePayloadWidget() {
 /** 2x2 — the session ring, a port of iOS's SmallGaugeView. */
 class SessionRingWidget : BasePayloadWidget() {
     @Composable
-    override fun Content(payload: UsagePayload?) {
-        val palette = rememberPalette()
+    override fun Content(payload: UsagePayload?, config: WidgetConfig) {
+        val palette = paletteFor(config)
         if (payload == null) return EmptyState(palette, compact = false)
         RingLayout(
             palette = palette,
@@ -73,8 +81,8 @@ class OverviewWidget : BasePayloadWidget() {
     override val sizeMode = SizeMode.Responsive(setOf(SHORT, TALL))
 
     @Composable
-    override fun Content(payload: UsagePayload?) {
-        val palette = rememberPalette()
+    override fun Content(payload: UsagePayload?, config: WidgetConfig) {
+        val palette = paletteFor(config)
         if (payload == null) return EmptyState(palette, compact = true)
         OverviewLayout(payload, palette, short = LocalSize.current.height < TALL.height)
     }
@@ -88,26 +96,39 @@ class OverviewWidget : BasePayloadWidget() {
 /** 4x2 — where the window is heading, in UsageForecast's own words. */
 class ForecastWidget : BasePayloadWidget() {
     @Composable
-    override fun Content(payload: UsagePayload?) {
-        val palette = rememberPalette()
+    override fun Content(payload: UsagePayload?, config: WidgetConfig) {
+        val palette = paletteFor(config)
         if (payload == null) return EmptyState(palette, compact = false)
         ForecastLayout(payload, palette)
     }
 }
 
-class SessionRowWidgetReceiver : GlanceAppWidgetReceiver() {
+/**
+ * Forgets a removed widget's settings.
+ *
+ * Android reuses appWidgetIds, so without this a newly placed widget would
+ * silently inherit the opacity and colours of a deleted one.
+ */
+abstract class ConfigCleaningReceiver : GlanceAppWidgetReceiver() {
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        appWidgetIds.forEach { WidgetConfig.delete(context, it) }
+        super.onDeleted(context, appWidgetIds)
+    }
+}
+
+class SessionRowWidgetReceiver : ConfigCleaningReceiver() {
     override val glanceAppWidget: GlanceAppWidget = SessionRowWidget()
 }
 
-class SessionRingWidgetReceiver : GlanceAppWidgetReceiver() {
+class SessionRingWidgetReceiver : ConfigCleaningReceiver() {
     override val glanceAppWidget: GlanceAppWidget = SessionRingWidget()
 }
 
-class OverviewWidgetReceiver : GlanceAppWidgetReceiver() {
+class OverviewWidgetReceiver : ConfigCleaningReceiver() {
     override val glanceAppWidget: GlanceAppWidget = OverviewWidget()
 }
 
-class ForecastWidgetReceiver : GlanceAppWidgetReceiver() {
+class ForecastWidgetReceiver : ConfigCleaningReceiver() {
     override val glanceAppWidget: GlanceAppWidget = ForecastWidget()
 }
 

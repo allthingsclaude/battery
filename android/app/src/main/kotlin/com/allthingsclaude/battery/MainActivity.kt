@@ -45,7 +45,6 @@ import com.allthingsclaude.battery.ui.BatteryTheme
 import com.allthingsclaude.battery.core.SessionPolicy
 import com.allthingsclaude.battery.ui.DashboardScreen
 import com.allthingsclaude.battery.ui.SettingsSheet
-import com.allthingsclaude.battery.widget.refreshAllWidgets
 import kotlinx.coroutines.launch
 
 /**
@@ -145,9 +144,6 @@ private fun Root() {
                         // "Whole session" is seeing the card immediately.
                         SessionService.stop(context)
                         if (it != SessionPolicy.Mode.OFF) SessionService.start(context)
-                    },
-                    onWidgetBackgroundChanged = {
-                        scope.launch { refreshAllWidgets(context) }
                     },
                 )
                 payload != null -> DashboardScreen(payload!!, cardMode)

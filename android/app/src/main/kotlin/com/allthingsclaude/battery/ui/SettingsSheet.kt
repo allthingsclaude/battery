@@ -27,7 +27,6 @@ import com.allthingsclaude.battery.core.SessionPolicy
 import com.allthingsclaude.battery.data.Settings
 import com.allthingsclaude.battery.data.subtitle
 import com.allthingsclaude.battery.data.title
-import com.allthingsclaude.battery.widget.WidgetBackground
 
 /**
  * Settings. Two choices that actually change behaviour, and nothing else —
@@ -35,14 +34,10 @@ import com.allthingsclaude.battery.widget.WidgetBackground
  * picker) or was cut on purpose (Material You).
  */
 @Composable
-fun SettingsSheet(
-    onCardModeChanged: (SessionPolicy.Mode) -> Unit,
-    onWidgetBackgroundChanged: () -> Unit,
-) {
+fun SettingsSheet(onCardModeChanged: (SessionPolicy.Mode) -> Unit) {
     val context = LocalContext.current
     val settings = remember { Settings(context) }
     var cardMode by remember { mutableStateOf(settings.cardMode) }
-    var widgetBackground by remember { mutableStateOf(WidgetBackground.current(context)) }
 
     Column(
         Modifier
@@ -65,22 +60,16 @@ fun SettingsSheet(
             )
         }
 
-        SectionHeader("Widget background")
-        // The launcher's light/dark setting is not the wallpaper. A black
-        // wallpaper in light mode is exactly where "follow the system" gives you
-        // dark text on black, so the ink is chosen here rather than inferred.
-        WidgetBackground.entries.forEach { option ->
-            ChoiceRow(
-                title = option.title,
-                subtitle = option.subtitle,
-                selected = option == widgetBackground,
-                onClick = {
-                    widgetBackground = option
-                    WidgetBackground.set(context, option)
-                    onWidgetBackgroundChanged()
-                },
-            )
-        }
+        SectionHeader("Widgets")
+        Text(
+            "Opacity and colours live on each widget: long-press it on the home " +
+                "screen and tap the gear. Per-widget rather than app-wide, because " +
+                "the same setting rarely suits a widget on a dark home screen and " +
+                "one on a light one.",
+            Modifier.padding(horizontal = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+        )
     }
 }
 

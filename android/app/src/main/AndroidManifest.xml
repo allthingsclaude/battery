@@ -122,6 +122,21 @@
                 android:resource="@xml/widget_forecast" />
         </receiver>
 
+        <!--
+          Named by android:configure in every widget_*.xml. exported=true is
+          required: the launcher starts it, not us.
+        -->
+        <activity
+            android:name=".widget.WidgetConfigActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:label="Widget settings"
+            android:theme="@style/Theme.Battery">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

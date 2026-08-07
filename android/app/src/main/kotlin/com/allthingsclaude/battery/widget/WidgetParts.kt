@@ -47,34 +47,38 @@ import kotlin.math.roundToInt
  * reset. The first Android cut used three rings and looked mostly empty.
  */
 
-/** Colours for one widget, resolved from the system *and* the user's background choice. */
-class WidgetPalette(private val night: Boolean, val background: WidgetBackground) {
+/** Colours for one widget, from the system theme and that widget's own config. */
+class WidgetPalette(systemIsDark: Boolean, val config: WidgetConfig) {
 
-    /** Which ink to draw with. Transparent modes are told explicitly — see [WidgetBackground]. */
-    val lightInk: Boolean = when (background) {
-        WidgetBackground.SURFACE -> night
-        WidgetBackground.TRANSPARENT_LIGHT_TEXT -> true
-        WidgetBackground.TRANSPARENT_DARK_TEXT -> false
-    }
+    val lightInk: Boolean = config.lightInk(systemIsDark)
 
+    /**
+     * The surface at the configured opacity. At 0 this is fully transparent, and
+     * the ink still has to be legible against whatever wallpaper is behind it —
+     * which is why the ink is a user choice rather than derived from this.
+     */
     val surface: ColorProvider = ColorProvider(
-        if (background.isTransparent) Color.Transparent
-        else Color(if (night) BatteryPalette.SURFACE_DARK else BatteryPalette.SURFACE_LIGHT)
+        Color(if (lightInk) BatteryPalette.SURFACE_DARK else BatteryPalette.SURFACE_LIGHT)
+            .copy(alpha = config.opacity)
     )
 
     val onSurface = ColorProvider(Color(if (lightInk) 0xFFF2EFE9.toInt() else 0xFF1C1B18.toInt()))
     val muted = ColorProvider(Color(if (lightInk) 0xFFB9B4AB.toInt() else 0xFF6E6A62.toInt()))
-    val track = ColorProvider(
-        if (lightInk) Color(0x33FFFFFF) else Color(0x1F000000)
-    )
+    val track = ColorProvider(if (lightInk) Color(0x33FFFFFF) else Color(0x1F000000))
 }
 
+/**
+ * The palette for the widget currently being composed.
+ *
+ * `LocalGlanceId` identifies it, but the numeric `appWidgetId` the config is
+ * keyed by is only reachable through `GlanceAppWidgetManager`, which is a
+ * suspend call — so the id is resolved in `provideGlance` and handed down.
+ */
 @Composable
-fun rememberPalette(): WidgetPalette {
-    val context = LocalContext.current
-    val night = context.resources.configuration.uiMode and
+fun paletteFor(config: WidgetConfig): WidgetPalette {
+    val night = LocalContext.current.resources.configuration.uiMode and
         Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-    return WidgetPalette(night, WidgetBackground.current(context))
+    return WidgetPalette(night, config)
 }
 
 fun Int.sp(): TextUnit = TextUnit(this.toFloat(), TextUnitType.Sp)
