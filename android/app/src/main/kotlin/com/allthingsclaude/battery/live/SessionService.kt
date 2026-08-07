@@ -41,6 +41,7 @@ import kotlinx.coroutines.launch
 class SessionService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob())
+    private val dismissal by lazy { CardDismissal(this) }
     private var loop: Job? = null
     private var policyState = SessionPolicy.State()
 
@@ -64,7 +65,16 @@ class SessionService : Service() {
         // is in flight; the placeholder would be an invented number on a lock
         // screen.
         val initial = repo.lastKnownPayload ?: UsagePayload.PLACEHOLDER
+
+        // startForeground is unavoidable — a service started with
+        // startForegroundService MUST promote or the system kills it — so an
+        // already-dismissed window is handled by promoting and immediately
+        // standing down rather than by skipping the call.
         promote(LiveUpdateNotifier.build(this, initial))
+        if (dismissal.isDismissed(initial.sessionResetsAt)) {
+            stopWithoutCard()
+            return START_NOT_STICKY
+        }
 
         loop = scope.launch { pollLoop(repo) }
         return START_STICKY
@@ -102,6 +112,14 @@ class SessionService : Service() {
 
             val outcome = SessionPolicy.evaluate(policyState, payload)
             policyState = outcome.state
+
+            // The user swiped this window's card away. Reposting it is precisely
+            // what costs an app its promotion permission, so stop instead. The
+            // dismissal is scoped to the window, so the next one starts clean.
+            if (dismissal.isDismissed(payload.sessionResetsAt)) {
+                stopWithoutCard()
+                return
+            }
 
             when (val decision = outcome.decision) {
                 is SessionPolicy.Decision.Show -> {

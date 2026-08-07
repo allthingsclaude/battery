@@ -111,8 +111,8 @@ object LiveUpdateNotifier {
             // An alerting update makes a sound and shows a banner. Only ever set
             // on a level crossing — SessionPolicy guarantees at most one per
             // level, because re-alerting on every poll at 91% is how a user
-            // learns to swipe the card away, and a dismissed Live Update must
-            // never be reposted.
+            // learns to swipe the card away. (And if they do, CardDismissal
+            // stops it coming back.)
             .setOnlyAlertOnce(alertLevel == null)
             .setStyle(style)
             // ── The four clauses that make this a Live Update ───────────────
@@ -135,6 +135,13 @@ object LiveUpdateNotifier {
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
 
         if (payload.planTier.isNotEmpty()) builder.setSubText(payload.planTier)
+
+        // Dismissal detection. Reposting a card the user swiped away is what
+        // drives people to revoke an app's promotion permission, and that
+        // revocation is effectively permanent — so the service has to be able to
+        // find out. On Android 14+ a foreground service's notification can be
+        // dismissed even while the service runs, so this genuinely fires.
+        builder.setDeleteIntent(dismissIntent(context, payload))
 
         if (samsungExtrasEnabled) builder.addExtras(buildSamsungExtras(percent, level))
 
@@ -163,6 +170,29 @@ object LiveUpdateNotifier {
 
     fun cancel(context: Context) {
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+    }
+
+    /**
+     * Carries the window that was on screen, so the dismissal can be scoped to
+     * it rather than suppressing the card forever.
+     *
+     * FLAG_UPDATE_CURRENT because the window changes across posts and a cached
+     * PendingIntent would keep delivering the first window we ever showed.
+     */
+    private fun dismissIntent(context: Context, payload: UsagePayload): android.app.PendingIntent {
+        val intent = Intent(context, CardDismissedReceiver::class.java)
+            .setAction(CardDismissedReceiver.ACTION)
+            .putExtra(
+                CardDismissedReceiver.EXTRA_WINDOW,
+                payload.sessionResetsAt?.toEpochMilli() ?: -1L,
+            )
+        return android.app.PendingIntent.getBroadcast(
+            context,
+            0,
+            intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     /**

@@ -140,8 +140,10 @@ object SessionPolicy {
         }
 
         // Escalation: alert once per level, and only on the way up. Re-alerting
-        // on every poll at 91% would train the user to swipe the card away, and a
-        // dismissed Live Update must never be reposted.
+        // on every poll at 91% would train the user to swipe the card away —
+        // which the Android layer then honours permanently for that window (see
+        // CardDismissal), so the cost of being noisy here is losing the surface
+        // entirely.
         val level = UsageLevel.from(utilization)
         // Only ever alert on an *escalation*, never on first appearance.
         val shouldAlert = state.isShowing && level.isAlarming && level != state.alertedLevel

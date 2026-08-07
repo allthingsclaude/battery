@@ -1,0 +1,224 @@
+{
+  "spec": "UsageForecast — the outlook/pace state machine and every user-visible string",
+  "source": "ios/BatteryKit/UsageForecast.swift",
+  "$provenance": "The Swift suite has no UsageForecast tests, so unlike the other fixtures these cases were not transcribed from XCTest. Every expected value was derived BY HAND from the Swift implementation — the init clauses for outlook/pace/limit, and the headline/detail/badgeLabel/landingStat switches — never by running the Kotlin. Where a number appears (a rate, a duration) the arithmetic is written out in `why` so a reader can check it without re-deriving it. This is the most drift-prone surface in the port and had no coverage on either platform.",
+
+  "$schema": {
+    "utilization": "0–100",
+    "resetsAtOffsetSeconds": "session reset relative to now; omit for no open window",
+    "burnRatePerHour": "the precomputed measured rate; 0 means none",
+    "projectedLimitAtOffsetSeconds": "precomputed limit time relative to now; omit for none",
+    "isSessionActive": "drives two IDLE phrasings",
+    "expect": "any subset of outlook / pace / headline / detail / badgeLabel / landingStat / projectedAtReset / limitIsAnchored"
+  },
+
+  "cases": [
+    {
+      "name": "noWindow",
+      "why": "resetsAt absent → hasWindow false → NO_WINDOW regardless of everything else. sustainableRatePerHour is null because hoursLeft is 0, so `detail` takes the noWindow branch of its guard.",
+      "utilization": 42,
+      "burnRatePerHour": 0,
+      "isSessionActive": false,
+      "expect": {
+        "outlook": "NO_WINDOW",
+        "pace": "NONE",
+        "headline": "No session window open",
+        "detail": "A new window opens with your next session",
+        "badgeLabel": "No window",
+        "landingStat": { "label": "At reset", "value": "—", "isUrgent": false }
+      }
+    },
+    {
+      "name": "atLimit",
+      "why": "headroom 0 short-circuits before any pace consideration. secondsToReset 3600 → shortDuration → '1h 0m' (the minutes component is kept even at zero).",
+      "utilization": 100,
+      "resetsAtOffsetSeconds": 3600,
+      "burnRatePerHour": 12,
+      "isSessionActive": true,
+      "expect": {
+        "outlook": "AT_LIMIT",
+        "headline": "Limit reached · resets in 1h 0m",
+        "detail": "Nothing left until this window resets",
+        "badgeLabel": "At limit",
+        "landingStat": { "label": "To reset", "value": "1h 0m", "isUrgent": true }
+      }
+    },
+    {
+      "name": "reachesLimitMeasured",
+      "why": "measured 60 > minimumRate → MEASURED. The anchored-limit triple guard passes: pace measured, limit (1h) after now, limit before reset (2h). projectedAtReset = min(100, 40 + 60*2) = 100. sustainable = headroom 60 / hoursLeft 2 = 30.0.",
+      "utilization": 40,
+      "resetsAtOffsetSeconds": 7200,
+      "burnRatePerHour": 60,
+      "projectedLimitAtOffsetSeconds": 3600,
+      "isSessionActive": true,
+      "expect": {
+        "outlook": "REACHES_LIMIT",
+        "pace": "MEASURED",
+        "limitIsAnchored": true,
+        "headline": "Hits 100% in 1h 0m",
+        "detail": "Ease to 30.0%/hr to last the window",
+        "badgeLabel": "At risk",
+        "projectedAtReset": 100,
+        "landingStat": { "label": "To limit", "value": "1h 0m", "isUrgent": true }
+      }
+    },
+    {
+      "name": "limitBeyondResetIsSuppressed",
+      "why": "The anchored guard requires limit < reset. Here the limit lands at 3h and the window resets at 2h, so it is discarded — the window rolls over first and the limit is never reached. The derived-limit fallback only runs for pace AVERAGE, so no limit at all: ON_PACE, projectedAtReset clamped to min(100, 40 + 60*2) = 100.",
+      "utilization": 40,
+      "resetsAtOffsetSeconds": 7200,
+      "burnRatePerHour": 60,
+      "projectedLimitAtOffsetSeconds": 10800,
+      "isSessionActive": true,
+      "expect": {
+        "outlook": "ON_PACE",
+        "pace": "MEASURED",
+        "limitIsAnchored": false,
+        "headline": "On pace for 100% at reset",
+        "badgeLabel": "On pace",
+        "projectedAtReset": 100
+      }
+    },
+    {
+      "name": "onPaceMeasured",
+      "why": "No precomputed limit and pace is MEASURED, so no limit is derived. projectedAtReset = 30 + 10*2 = 50. sustainable = 70/2 = 35.0.",
+      "utilization": 30,
+      "resetsAtOffsetSeconds": 7200,
+      "burnRatePerHour": 10,
+      "isSessionActive": true,
+      "expect": {
+        "outlook": "ON_PACE",
+        "pace": "MEASURED",
+        "headline": "On pace for 50% at reset",
+        "detail": "Room for 35.0%/hr until reset",
+        "badgeLabel": "On pace",
+        "projectedAtReset": 50,
+        "landingStat": { "label": "At reset", "value": "50%", "isUrgent": false }
+      }
+    },
+    {
+      "name": "onPaceAveraged",
+      "why": "No measured rate, so the window average takes over: elapsed = sessionWindow 18000 - secondsLeft 7200 = 10800s = 3h, average = 30/3 = 10.0%/hr. The derived limit would arrive at now + 70/10*3600 = 7h, past the 2h reset, so it is discarded and the outlook stays ON_PACE. badgeLabel says 'Averaging' and detail carries the provenance prefix, so 'on pace' can't be misread as 'right now'.",
+      "utilization": 30,
+      "resetsAtOffsetSeconds": 7200,
+      "burnRatePerHour": 0,
+      "isSessionActive": true,
+      "expect": {
+        "outlook": "ON_PACE",
+        "pace": "AVERAGE",
+        "headline": "On pace for 50% at reset",
+        "detail": "Averaged over this window · Room for 35.0%/hr until reset",
+        "badgeLabel": "Averaging",
+        "projectedAtReset": 50
+      }
+    },
+    {
+      "name": "reachesLimitDerivedFromAverage",
+      "why": "The average path DOES derive a limit when it lands inside the window. elapsed = 18000 - 3600 = 14400s = 4h, average = 80/4 = 20.0%/hr. headroom 20 → arrival = now + 20/20*3600 = 1h, which is before the 1h reset boundary... exactly at it. Swift uses `arrival <= reset`, so a pace that spends the last point precisely at the reset still counts as reaching the limit — calling that 'on pace' would show a calm badge on a window about to be spent.",
+      "utilization": 80,
+      "resetsAtOffsetSeconds": 3600,
+      "burnRatePerHour": 0,
+      "isSessionActive": true,
+      "expect": {
+        "outlook": "REACHES_LIMIT",
+        "pace": "AVERAGE",
+        "limitIsAnchored": false,
+        "badgeLabel": "At risk"
+      }
+    },
+    {
+      "name": "idleNothingUsed",
+      "why": "The average is gated on `util > 0`, so a completely unused window has no pace at all. The headline has its own branch for this rather than saying '100% left'.",
+      "utilization": 0,
+      "resetsAtOffsetSeconds": 7200,
+      "burnRatePerHour": 0,
+      "isSessionActive": false,
+      "expect": {
+        "outlook": "IDLE",
+        "pace": "NONE",
+        "headline": "Nothing used yet this window",
+        "detail": "Room for 50.0%/hr until reset",
+        "badgeLabel": "Idle"
+      }
+    },
+    {
+      "name": "idleTooEarlyToAverage_active",
+      "why": "elapsed = 18000 - 17700 = 300s, below minimumElapsedForAverage (720s), so no average is claimed — dividing by the first few minutes would turn 20% used into a confident-looking '240%/hr'. Active, so the headline says the pace is still being measured. sustainable = 80 / (17700/3600) = 80/4.91666 = 16.271… → '16.3%/hr'.",
+      "utilization": 20,
+      "resetsAtOffsetSeconds": 17700,
+      "burnRatePerHour": 0,
+      "isSessionActive": true,
+      "expect": {
+        "outlook": "IDLE",
+        "pace": "NONE",
+        "headline": "80% left · measuring pace",
+        "detail": "Room for 16.3%/hr until reset",
+        "badgeLabel": "Measuring",
+        "landingStat": { "label": "At reset", "value": "20%", "isUrgent": false }
+      }
+    },
+    {
+      "name": "idleTooEarlyToAverage_inactive",
+      "why": "Identical to the previous case except isSessionActive, which selects the other IDLE phrasing and the other badge. The pair exists because these two strings are the ones most likely to be collapsed into one by a careless edit.",
+      "utilization": 20,
+      "resetsAtOffsetSeconds": 17700,
+      "burnRatePerHour": 0,
+      "isSessionActive": false,
+      "expect": {
+        "outlook": "IDLE",
+        "headline": "80% left in this window",
+        "badgeLabel": "Idle"
+      }
+    },
+    {
+      "name": "measuredBeatsAverage",
+      "why": "Both are available — elapsed = 3h gives an average of 10%/hr — but a measured rate always wins, because it describes right now while the average describes the whole window. projectedAtReset uses the measured 40: 30 + 40*2 = 110 → clamped to 100.",
+      "utilization": 30,
+      "resetsAtOffsetSeconds": 7200,
+      "burnRatePerHour": 40,
+      "isSessionActive": true,
+      "expect": {
+        "pace": "MEASURED",
+        "projectedAtReset": 100,
+        "badgeLabel": "On pace"
+      }
+    },
+    {
+      "name": "noiseIsNotAPace",
+      "why": "0.04 is below minimumRate (0.05), so it is regression noise rather than a pace and must not be promoted to MEASURED. The window average can't rescue it either: elapsed = 300s is below the minimum, so the outlook is IDLE.",
+      "utilization": 20,
+      "resetsAtOffsetSeconds": 17700,
+      "burnRatePerHour": 0.04,
+      "isSessionActive": false,
+      "expect": {
+        "outlook": "IDLE",
+        "pace": "NONE"
+      }
+    },
+    {
+      "name": "expiredLimitIsNotProjected",
+      "why": "A carried-forward payload can hold a limit time that has already passed. The anchored guard requires limit > now, so it is discarded rather than rendered as 'hits limit in 0s'.",
+      "utilization": 50,
+      "resetsAtOffsetSeconds": 7200,
+      "burnRatePerHour": 10,
+      "projectedLimitAtOffsetSeconds": -60,
+      "isSessionActive": true,
+      "expect": {
+        "outlook": "ON_PACE",
+        "limitIsAnchored": false
+      }
+    },
+    {
+      "name": "sustainableRateVanishesNearReset",
+      "why": "With 30 seconds left, headroom/hoursLeft explodes ('room for 6,000%/hr'), so Swift stops claiming one below one minute. detail then falls through to its guard — provenance is null on the measured path, so there is no second line at all.",
+      "utilization": 50,
+      "resetsAtOffsetSeconds": 30,
+      "burnRatePerHour": 10,
+      "isSessionActive": true,
+      "expect": {
+        "outlook": "ON_PACE",
+        "detail": null
+      }
+    }
+  ]
+}
