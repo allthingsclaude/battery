@@ -6,6 +6,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.graphics.Color
 import com.allthingsclaude.battery.core.BatteryPalette
 
@@ -75,6 +78,27 @@ fun BatteryTheme(
         AppearanceMode.LIGHT -> false
         AppearanceMode.DARK -> true
     }
+
+    // Tell the system which ink the status and navigation bars should use.
+    //
+    // Android does not infer this from the window background — an app has to
+    // declare it, and the default is light (white) icons. On our light surface
+    // that makes the clock, wifi and battery indicators invisible. The flag
+    // reads backwards at first glance: `isAppearanceLightStatusBars = true`
+    // means "the BARS sit on a light background", i.e. draw DARK icons.
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        val activity = view.context as? Activity
+        SideEffect {
+            activity?.window?.let { window ->
+                WindowCompat.getInsetsController(window, view).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+        }
+    }
+
     MaterialTheme(
         colorScheme = if (dark) DarkScheme else LightScheme,
         content = content,
