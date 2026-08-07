@@ -115,14 +115,9 @@ object LiveUpdateNotifier {
             // …plus: contentTitle set above, no custom RemoteViews, not a group
             // summary, not colorized, channel not IMPORTANCE_MIN.
             // ───────────────────────────────────────────────────────────────
-            // The status-bar chip. Max width is 96dp and text only renders in
-            // full under ~7 characters, so "87%" is the whole budget.
-            //
-            // Verified NOT rendered by One UI 8.5 (Phase 0) — Samsung draws the
-            // small icon instead. Kept because it is the correct AOSP API, costs
-            // one call, is inert when unrendered, and lights up for free if One
-            // UI ever adopts the AOSP chip.
-            .setShortCriticalText("$percent%")
+            // Drives TWO surfaces: the status-bar chip, and the second line of
+            // the Now Bar pill. See criticalText for why that matters.
+            .setShortCriticalText(criticalText(payload))
             // AOSP does not require a category. Samsung might switch on one, and
             // a burning-down quota is a progress journey by any reading, so this
             // is a free shot at the Now Bar gate.
@@ -263,6 +258,34 @@ object LiveUpdateNotifier {
             .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
         return intent.takeIf { it.resolveActivity(context.packageManager) != null }
     }
+
+    /**
+     * The one string One UI shows in both the status-bar chip and the second
+     * line of the Now Bar pill.
+     *
+     * Those two want different things, which is the whole difficulty. The chip
+     * is a tiny always-on glance and wants the number that matters most; the
+     * pill's second line sits under a title that already says the session
+     * percentage, so repeating it there is wasted space — the card read
+     * "Claude · 9%" over "9%", which is what prompted this.
+     *
+     * Resolved with [UsagePayload.focusWindow], which already exists for exactly
+     * this judgement: lead with whichever window is closer to its ceiling. Early
+     * in a session the weekly is the tighter constraint, so the line reads
+     * "wk 28%" and adds something; late in a session the session leads and the
+     * chip shows the number that actually matters, at the cost of agreeing with
+     * the title.
+     *
+     * Budget is ~7 characters — the chip is capped at 96dp and drops to
+     * icon-only if the text doesn't fit whole. "wk 28%" is six.
+     */
+    private fun criticalText(payload: UsagePayload): String =
+        when (payload.focusWindow) {
+            UsagePayload.FocusWindow.WEEKLY ->
+                "wk ${payload.weeklyUtilization.roundToInt()}%"
+            UsagePayload.FocusWindow.SESSION ->
+                "${payload.sessionUtilization.roundToInt()}%"
+        }
 
     // ── Forecast ────────────────────────────────────────────────────────────
     //

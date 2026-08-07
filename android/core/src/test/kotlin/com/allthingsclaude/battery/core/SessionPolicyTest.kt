@@ -282,4 +282,25 @@ class SessionPolicyTest {
         )
         assertIs<SessionPolicy.Decision.Hide>(outcome.decision)
     }
+
+    // ── Focus window ────────────────────────────────────────────────────────
+
+    @Test
+    fun `focus window leads with whichever is closer to its ceiling`() {
+        // Drives the Now Bar pill's second line and the status-bar chip, which
+        // One UI feeds from one string — so picking the wrong one wastes the
+        // only glanceable surface the app has.
+        fun focus(session: Double, weekly: Double) = UsagePayload(
+            sessionUtilization = session,
+            sessionResetsAt = now.plusSeconds(3600),
+            weeklyUtilization = weekly,
+            weeklyResetsAt = now.plusSeconds(86_400),
+            updatedAt = now,
+        ).focusWindow
+
+        assertEquals(UsagePayload.FocusWindow.WEEKLY, focus(session = 9.0, weekly = 28.0))
+        assertEquals(UsagePayload.FocusWindow.SESSION, focus(session = 80.0, weekly = 28.0))
+        // A tie goes to the session: it moves faster and is the one you can act on.
+        assertEquals(UsagePayload.FocusWindow.SESSION, focus(session = 50.0, weekly = 50.0))
+    }
 }

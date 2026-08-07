@@ -52,6 +52,19 @@ data class UsagePayload(
     val focusUtilization: Double get() = maxOf(sessionUtilization, weeklyUtilization)
 
     /**
+     * Which window a tight surface should lead with. Ported from iOS, where the
+     * comment reads "whichever window is closer to its ceiling — what a 'smart'
+     * surface leads with".
+     *
+     * Ties go to the session: it is the faster-moving of the two and the one a
+     * reader can still act on.
+     */
+    val focusWindow: FocusWindow
+        get() = if (weeklyUtilization > sessionUtilization) FocusWindow.WEEKLY else FocusWindow.SESSION
+
+    enum class FocusWindow { SESSION, WEEKLY }
+
+    /**
      * A projection is only meaningful while it's still in the future and we have a
      * burn rate. Carried-forward payloads can hold a `projectedLimitAt` that has
      * since passed — surfacing it would render nonsense like "hits limit in 0s".
