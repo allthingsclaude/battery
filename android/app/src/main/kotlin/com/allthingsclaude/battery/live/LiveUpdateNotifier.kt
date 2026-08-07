@@ -127,6 +127,16 @@ object LiveUpdateNotifier {
             // a burning-down quota is a progress journey by any reading, so this
             // is a free shot at the Now Bar gate.
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            // Tints the status-bar chip and the Now Bar pill. Without it the
+            // system default (blue) is used — Samsung's own Clock sets
+            // color=0xff5f57d9 and its chip is that purple, which is what
+            // identified this as the mechanism.
+            //
+            // NOT setColorized(true): that fills the whole notification
+            // background and is one of the clauses that disqualifies a
+            // notification from being promoted at all.
+            .setColor(level.color)
+            .setContentIntent(openAppIntent(context))
 
         if (payload.planTier.isNotEmpty()) builder.setSubText(payload.planTier)
 
@@ -147,6 +157,26 @@ object LiveUpdateNotifier {
         }
 
         return builder.build()
+    }
+
+    /**
+     * Tapping the card opens the app.
+     *
+     * Points at MainActivity rather than a trampoline: Android 12+ blocks a
+     * notification from launching an activity via a broadcast or service
+     * receiver, so the target has to be the activity itself.
+     */
+    private fun openAppIntent(context: Context): android.app.PendingIntent {
+        val intent = Intent()
+            .setClassName(context, "com.allthingsclaude.battery.MainActivity")
+            .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return android.app.PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     fun post(

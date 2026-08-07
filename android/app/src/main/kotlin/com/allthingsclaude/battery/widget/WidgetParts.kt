@@ -11,6 +11,9 @@ import androidx.glance.GlanceModifier
 import androidx.glance.Image
 import androidx.glance.ImageProvider
 import androidx.glance.LocalContext
+import android.content.ComponentName
+import androidx.glance.action.actionStartActivity
+import androidx.glance.action.clickable
 import androidx.glance.background
 import androidx.glance.layout.Alignment
 import androidx.glance.appwidget.LinearProgressIndicator
@@ -95,11 +98,25 @@ private fun ringImage(utilization: Double, sizeDp: Int, palette: WidgetPalette, 
         )
     )
 
-/** Every widget's outer frame: fills the cell, paints (or doesn't), and pads once. */
+/**
+ * Every widget's outer frame: fills the cell, paints (or doesn't), pads once,
+ * and opens the app when tapped.
+ *
+ * The click lives here rather than on each layout so no widget can ship without
+ * it — a widget that does nothing when tapped reads as broken, and the first cut
+ * of all four did exactly that.
+ */
 @Composable
 private fun Frame(palette: WidgetPalette, padding: Int = 8, content: @Composable () -> Unit) {
     Box(
-        modifier = GlanceModifier.fillMaxSize().background(palette.surface).padding(padding.dp),
+        modifier = GlanceModifier
+            .fillMaxSize()
+            .background(palette.surface)
+            .clickable(actionStartActivity(ComponentName(
+                LocalContext.current.packageName,
+                "com.allthingsclaude.battery.MainActivity",
+            )))
+            .padding(padding.dp),
         contentAlignment = Alignment.Center,
     ) { content() }
 }
