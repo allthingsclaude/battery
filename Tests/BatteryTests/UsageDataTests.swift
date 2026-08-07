@@ -107,24 +107,24 @@ final class UsageDataTests: XCTestCase {
     func testDecodeFableFromLimits() throws {
         let json = """
         {
-            "five_hour": { "utilization": 11.0, "resets_at": "2026-08-07T22:40:00.813634+00:00" },
-            "seven_day": { "utilization": 46.0, "resets_at": "2026-08-11T10:00:00.813689+00:00" },
+            "five_hour": { "utilization": 25.0, "resets_at": "2026-01-15T18:00:00.111111+00:00" },
+            "seven_day": { "utilization": 40.0, "resets_at": "2026-01-20T06:00:00.222222+00:00" },
             "seven_day_opus": null,
             "seven_day_sonnet": null,
             "limits": [
                 {
                     "group": "session", "is_active": false, "kind": "session",
-                    "percent": 11, "resets_at": "2026-08-07T22:40:00.813634+00:00",
+                    "percent": 25, "resets_at": "2026-01-15T18:00:00.111111+00:00",
                     "scope": null, "severity": "normal"
                 },
                 {
                     "group": "weekly", "is_active": false, "kind": "weekly_all",
-                    "percent": 46, "resets_at": "2026-08-11T10:00:00.813689+00:00",
+                    "percent": 40, "resets_at": "2026-01-20T06:00:00.222222+00:00",
                     "scope": null, "severity": "normal"
                 },
                 {
                     "group": "weekly", "is_active": true, "kind": "weekly_scoped",
-                    "percent": 63, "resets_at": "2026-08-11T10:00:00.813946+00:00",
+                    "percent": 55, "resets_at": "2026-01-20T06:00:00.333333+00:00",
                     "scope": { "model": { "display_name": "Fable", "id": null }, "surface": null },
                     "severity": "normal"
                 }
@@ -134,7 +134,7 @@ final class UsageDataTests: XCTestCase {
 
         let response = try JSONDecoder().decode(UsageResponse.self, from: json)
 
-        XCTAssertEqual(response.fableUtilization, 63)
+        XCTAssertEqual(response.fableUtilization, 55)
         XCTAssertNotNil(response.fableLimit?.resetsAtDate)
         // The session and weekly_all entries restate top-level buckets — they
         // must not be mistaken for a per-model window.
