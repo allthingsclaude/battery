@@ -9,6 +9,8 @@ import com.allthingsclaude.battery.core.UsageApi
 import com.allthingsclaude.battery.core.UsageApiError
 import com.allthingsclaude.battery.core.UsagePayload
 import com.allthingsclaude.battery.core.UsageResponse
+import com.allthingsclaude.battery.widget.BatteryWidget
+import androidx.glance.appwidget.updateAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Instant
@@ -93,6 +95,11 @@ class UsageRepository(context: Context) {
 
             val payload = buildPayload(usage, account.name)
             payloads.save(payload)
+            // Repainted here rather than by the service, because this is the one
+            // place a new payload lands — a manual refresh from the dashboard
+            // has to move the widgets too, and routing it through the service
+            // would mean the widgets only update while a card is up.
+            refreshWidgets()
             PollResult.Success(payload)
         } catch (e: UsageApiError.Unauthorized) {
             PollResult.SignedOut
@@ -177,6 +184,16 @@ class UsageRepository(context: Context) {
         // A different account's samples must never feed this account's
         // regression — the buffer is per-window, not per-account.
         history.reset()
+    }
+
+    private suspend fun refreshWidgets() {
+        runCatching {
+            BatteryWidget().updateAll(appContext)
+        }.onFailure {
+            // A widget that isn't on any home screen throws here. That's the
+            // common case, not an error worth surfacing.
+            Log.d(TAG, "widget update skipped: ${it.message}")
+        }
     }
 
     private fun resetInference() {
