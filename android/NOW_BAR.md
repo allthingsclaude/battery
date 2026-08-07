@@ -70,25 +70,92 @@ demonstrably do nothing is worse than not shipping them.
   held the chip and ours did not appear. The Now Bar pill is not similarly
   limited — both were present.
 
-## The remaining problem: it needs a developer-options toggle
+## The toggle: detected, handled
 
-This is now a distribution problem rather than an engineering one, and it is not
-solved.
+An earlier revision of this file claimed the gate "cannot be detected at
+runtime, so the only honest handling is documentation". That was wrong, and
+wrong for an avoidable reason — test 2 of this file's own checklist (grep the
+settings namespaces) had never been run. It writes a readable key:
 
-- **It cannot be detected at runtime.** With the toggle off, promotion still
-  succeeds — `canPostPromotedNotifications()` is true and `FLAG_PROMOTED_ONGOING`
-  is set. There is no signal that separates "promoted and rendering everywhere"
-  from "promoted and rendering in half the places", so the app cannot
-  helpfully prompt for it.
-- **It cannot be enabled programmatically.** Developer options are not
-  app-writable.
-- So the only honest handling is documentation: first-run guidance saying the
-  Now Bar and status-bar chip need Developer options ▸ *Live notifications for
-  all apps*, and that the lock-screen card works without it.
+```
+secure:  enable_notification_nowbar_test = 1
+system:  settings_change_history = ...|notification_nowbar_test|com.android.settings
+```
 
-Open question worth checking on a second device: whether this toggle is
+The change history even timestamps the moment it was flipped, which corroborates
+the key rather than leaving it inferred from a plausible name.
+
+`NowBarGate` reads it and reports four states, because "off" alone would send
+some people to a screen that does not exist for them yet:
+
+| State | Handling |
+|---|---|
+| `ENABLED` | say nothing |
+| `DISABLED` | dismissible card + deep link to `ACTION_APPLICATION_DEVELOPMENT_SETTINGS` |
+| `DEVELOPER_OPTIONS_OFF` | "tap Build number seven times", deep link to About phone |
+| `NOT_APPLICABLE` | key absent — non-Samsung, or renamed. Say nothing rather than send a Pixel owner hunting a Samsung setting |
+
+The `-1` sentinel on `getInt` matters: it is the only way to distinguish "absent"
+from "present and 0", and those mean opposite things.
+
+**Writing it is still impossible** — that needs `WRITE_SECURE_SETTINGS`, which no
+ordinary app can hold. Detection plus a deep link is the whole of what is
+achievable, but it is far better than a paragraph in a README: it appears only
+when true, disappears when fixed, and works for someone who enables the toggle
+months later.
+
+Open question worth checking on a second device: whether the key is
 One UI 8.5-specific, and whether One UI 9 / Android 17 defaults it on. If it
-does, this whole section becomes a footnote.
+does, `NOT_APPLICABLE` quietly becomes the normal state and this all goes away.
+
+## Field map — where each notification field renders
+
+Verified on device by setting distinct markers, not read from documentation.
+One UI's rendering does not match what the field names imply, so guessing here
+is unusually expensive.
+
+| Field | Renders |
+|---|---|
+| `setContentTitle` | Now Bar pill **line 1**, and the shade title |
+| `setShortCriticalText` | Now Bar pill **line 2** *and* the status-bar chip — **one string, two surfaces** |
+| `setColor` | tints the pill and the chip. Samsung's Clock uses `0xff5f57d9` and its chip is that purple, which is how this was identified |
+| `setContentText` | shade only — **not** seen on the collapsed pill |
+| `setSubText` | shade header |
+| `setWhen` + `setChronometerCountDown` | the live countdown, ticking with zero updates |
+| `ProgressStyle` bar/segments/points | shade only, as far as observed |
+
+`setColorized(true)` and custom `RemoteViews` are **disqualifying** — either one
+costs promotion entirely, so neither can be used to style these surfaces.
+
+### The one string, two surfaces problem
+
+`setShortCriticalText` feeding both the chip and the pill's second line is the
+awkward constraint. The chip is a tiny always-on glance wanting the most urgent
+number; the pill's second line sits under a title that already states the
+session percentage, so repeating it there wastes the only spare line.
+
+Currently resolved with `UsagePayload.focusWindow` — lead with whichever window
+is closer to its ceiling. **This is not settled.** For an account whose weekly
+runs far ahead of any single session (the common case: rarely past 20% in a
+session, past that in the weekly within a day) it means the line reads `wk 28%`
+almost always, and the session number only ever appears in the title.
+
+### Unfinished: the layout experiment
+
+Re-run when the API rate limit clears. Open questions:
+
+- Does the pill render `setLargeIcon`? If it does, a rasterised ring from
+  `UsageRingRenderer` could go on the lock screen — that was the "can we draw
+  the circle" question and it was never answered.
+- Does the pill show action buttons? Samsung's stopwatch has a pause control in
+  its pill, so something reaches it.
+- Does an expanded pill show more than two lines?
+- Can the title carry both windows (`9% · wk 28%`) without truncating?
+
+The probe build is easy to recreate: set every field to a distinct marker
+(`1-TITLE`, `2-TEXT`, `3-SUB`, `4-CHIP`), add a `setLargeIcon` bitmap and an
+action, install, and screenshot the lock screen and the expanded shade. It was
+aborted last time by the rate limit, not by any difficulty.
 
 ## What the app actually does
 
