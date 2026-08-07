@@ -108,6 +108,9 @@ struct MediumOverviewView: View {
                 if let opus = payload.opusUtilization {
                     windowBlock(title: "Opus", util: opus, reset: nil)
                 }
+                if let fable = payload.fableUtilization {
+                    windowBlock(title: "Fable", util: fable, reset: nil)
+                }
             }
             .frame(maxWidth: .infinity)
         }

@@ -8,6 +8,8 @@ struct AccountUsageState {
     var weeklyResetsAt: Date?
     var sonnetUtilization: Double?
     var opusUtilization: Double?
+    var fableUtilization: Double?
+    var fableResetsAt: Date?
     var extraUsageEnabled: Bool = false
     var extraUsageCost: Double?
     var extraUsageLimit: Double?

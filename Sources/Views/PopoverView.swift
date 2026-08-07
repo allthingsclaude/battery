@@ -294,6 +294,17 @@ struct PopoverView: View {
                     )
                 }
 
+                // Fable gauge (if applicable)
+                if let fableUtil = viewModel.fableUtilization {
+                    Divider()
+                    WeeklyGaugeView(
+                        title: "Fable (7-day)",
+                        utilization: fableUtil,
+                        resetsAt: viewModel.fableResetsAt ?? viewModel.weeklyResetsAt,
+                        color: UsageLevel.from(utilization: fableUtil).color
+                    )
+                }
+
                 // Extra usage (if enabled)
                 if viewModel.extraUsageEnabled {
                     Divider()

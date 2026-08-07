@@ -20,6 +20,9 @@ struct UsagePayload: Codable, Equatable {
     // Opus 7-day window (nil when the plan has no Opus access)
     var opusUtilization: Double?
 
+    // Fable 7-day window (nil until the account has Fable usage this week)
+    var fableUtilization: Double?
+
     // Precomputed burn-rate projection (see BurnRateCalculator)
     var burnRatePerHour: Double        // percentage points / hour, 0 when unknown
     var projectedLimitAt: Date?        // when 100% is reached, nil when not projected
@@ -68,6 +71,7 @@ struct UsagePayload: Codable, Equatable {
         weeklyUtilization: 63,
         weeklyResetsAt: Date().addingTimeInterval(3 * 86400),
         opusUtilization: nil,   // most accounts have no Opus bucket — don't imply one in previews
+        fableUtilization: nil,
         burnRatePerHour: 0,
         projectedLimitAt: nil,
         isSessionActive: false,

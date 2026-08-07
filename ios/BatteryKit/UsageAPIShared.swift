@@ -39,12 +39,14 @@ struct UsageResponse: Codable {
     /// Plan/rate-limit tier if the API returns it (it usually doesn't). We never
     /// guess the plan from Opus presence.
     let rateLimitTier: String?
+    let limits: [UsageLimit]
 
     enum CodingKeys: String, CodingKey {
         case fiveHour = "five_hour"
         case sevenDay = "seven_day"
         case sevenDayOpus = "seven_day_opus"
         case rateLimitTier = "rate_limit_tier"
+        case limits
     }
 
     init(from decoder: Decoder) throws {
@@ -53,7 +55,19 @@ struct UsageResponse: Codable {
         sevenDay = try c.decode(UsageBucket.self, forKey: .sevenDay)
         sevenDayOpus = try? c.decodeIfPresent(UsageBucket.self, forKey: .sevenDayOpus)
         rateLimitTier = try? c.decodeIfPresent(String.self, forKey: .rateLimitTier)
+        limits = (try? c.decodeIfPresent([UsageLimit].self, forKey: .limits)) ?? []
     }
+
+    /// Fable's weekly window, which the API reports only inside `limits` — there
+    /// is no `seven_day_fable` counterpart to the other per-model buckets.
+    var fableLimit: UsageLimit? {
+        limits.first {
+            $0.kind == "weekly_scoped"
+                && $0.modelName?.caseInsensitiveCompare("Fable") == .orderedSame
+        }
+    }
+
+    var fableUtilization: Double? { fableLimit?.utilization }
 
     /// Display name for the plan, or "" when unknown.
     var planDisplayName: String {
@@ -62,6 +76,59 @@ struct UsageResponse: Codable {
         if t.contains("max") { return "Max" }
         if t.contains("pro") { return "Pro" }
         return ""
+    }
+}
+
+/// One entry in the API's `limits` array — a generic per-window shape that sits
+/// alongside the fixed `five_hour` / `seven_day` / `seven_day_<model>` fields.
+///
+/// The `session` and `weekly_all` entries restate buckets we already read from
+/// the top level; the interesting ones are `weekly_scoped`, which carry the
+/// model they apply to in `scope`.
+struct UsageLimit: Codable {
+    let kind: String
+    /// The API sends whole numbers here today. Decoded as `Double` to match the
+    /// `utilization` it is displayed alongside, and in case it gains a
+    /// fractional part later.
+    let utilization: Double
+    let resetsAt: String?
+    let scope: Scope?
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case utilization = "percent"
+        case resetsAt = "resets_at"
+        case scope
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? ""
+        utilization = (try? c.decodeIfPresent(Double.self, forKey: .utilization)) ?? 0
+        resetsAt = try? c.decodeIfPresent(String.self, forKey: .resetsAt)
+        scope = try? c.decodeIfPresent(Scope.self, forKey: .scope)
+    }
+
+    /// The only model identifier the API offers — `scope.model.id` comes back
+    /// null, so a display name is all there is to match on.
+    var modelName: String? { scope?.model?.displayName }
+
+    var resetsAtDate: Date? {
+        UsageBucket(utilization: utilization, resetsAt: resetsAt).resetsAtDate
+    }
+
+    struct Scope: Codable {
+        let model: Model?
+
+        struct Model: Codable {
+            let displayName: String?
+            let id: String?
+
+            enum CodingKeys: String, CodingKey {
+                case displayName = "display_name"
+                case id
+            }
+        }
     }
 }
 
@@ -146,6 +213,7 @@ extension UsagePayload {
             weeklyUtilization: usage.sevenDay.utilization,
             weeklyResetsAt: usage.sevenDay.resetsAtDate,
             opusUtilization: usage.sevenDayOpus?.utilization,
+            fableUtilization: usage.fableUtilization,
             burnRatePerHour: hasFreshProjection ? projection.ratePerHour : carriedRate,
             projectedLimitAt: hasFreshProjection ? projection.limitAt : carriedLimit,
             isSessionActive: session != nil && sessionUtil > (previous?.sessionUtilization ?? 0),

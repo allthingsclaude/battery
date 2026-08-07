@@ -197,6 +197,10 @@ struct DashboardView: View {
                 Divider().overlay(BatteryPalette.hairline)
                 barRow(title: "Opus · 7-day", icon: "sparkles", utilization: opus, reset: nil)
             }
+            if let fable = payload.fableUtilization {
+                Divider().overlay(BatteryPalette.hairline)
+                barRow(title: "Fable · 7-day", icon: "sparkles", utilization: fable, reset: nil)
+            }
         }
         .batteryCard()
     }

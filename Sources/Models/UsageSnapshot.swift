@@ -10,6 +10,7 @@ struct UsageSnapshot: Codable, Identifiable {
     let weeklyResetsAt: Date
     let sonnetUtilization: Double?
     let opusUtilization: Double?
+    let fableUtilization: Double?
     let planTier: String
     let accountId: UUID?
 
@@ -22,6 +23,7 @@ struct UsageSnapshot: Codable, Identifiable {
         weeklyResetsAt: Date,
         sonnetUtilization: Double? = nil,
         opusUtilization: Double? = nil,
+        fableUtilization: Double? = nil,
         planTier: String = "unknown",
         accountId: UUID? = nil
     ) {
@@ -33,6 +35,7 @@ struct UsageSnapshot: Codable, Identifiable {
         self.weeklyResetsAt = weeklyResetsAt
         self.sonnetUtilization = sonnetUtilization
         self.opusUtilization = opusUtilization
+        self.fableUtilization = fableUtilization
         self.planTier = planTier
         self.accountId = accountId
     }

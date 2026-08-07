@@ -12,6 +12,8 @@ class UsageViewModel: ObservableObject {
     @Published var weeklyResetsAt: Date?
     @Published var sonnetUtilization: Double?
     @Published var opusUtilization: Double?
+    @Published var fableUtilization: Double?
+    @Published var fableResetsAt: Date?
     @Published var extraUsageEnabled: Bool = false
     @Published var extraUsageCost: Double?
     @Published var extraUsageLimit: Double?
@@ -321,6 +323,8 @@ class UsageViewModel: ObservableObject {
         state.weeklyResetsAt = weeklyResetsAt
         state.sonnetUtilization = sonnetUtilization
         state.opusUtilization = opusUtilization
+        state.fableUtilization = fableUtilization
+        state.fableResetsAt = fableResetsAt
         state.extraUsageEnabled = extraUsageEnabled
         state.extraUsageCost = extraUsageCost
         state.extraUsageLimit = extraUsageLimit
@@ -346,6 +350,8 @@ class UsageViewModel: ObservableObject {
         weeklyResetsAt = state.weeklyResetsAt
         sonnetUtilization = state.sonnetUtilization
         opusUtilization = state.opusUtilization
+        fableUtilization = state.fableUtilization
+        fableResetsAt = state.fableResetsAt
         extraUsageEnabled = state.extraUsageEnabled
         extraUsageCost = state.extraUsageCost
         extraUsageLimit = state.extraUsageLimit
@@ -467,6 +473,8 @@ class UsageViewModel: ObservableObject {
         weeklyResetsAt = usage.sevenDay.resetsAtDate
         sonnetUtilization = usage.sevenDaySonnet?.utilization
         opusUtilization = usage.sevenDayOpus?.utilization
+        fableUtilization = usage.fableUtilization
+        fableResetsAt = usage.fableLimit?.resetsAtDate
         extraUsageEnabled = usage.extraUsage?.isEnabled ?? false
         extraUsageCost = usage.extraUsage?.usedCredits
         extraUsageLimit = usage.extraUsage?.monthlyLimit
@@ -541,6 +549,7 @@ class UsageViewModel: ObservableObject {
             weeklyResetsAt: usage.sevenDay.resetsAtDate ?? Date(),
             sonnetUtilization: usage.sevenDaySonnet?.utilization,
             opusUtilization: usage.sevenDayOpus?.utilization,
+            fableUtilization: usage.fableUtilization,
             planTier: planTier.rawValue,
             accountId: selectedAccountId
         )
