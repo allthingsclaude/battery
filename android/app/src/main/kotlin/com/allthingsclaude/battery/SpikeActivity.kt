@@ -16,34 +16,42 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.allthingsclaude.battery.auth.AuthService
+import com.allthingsclaude.battery.core.UsageForecast
 import com.allthingsclaude.battery.core.UsagePayload
+import com.allthingsclaude.battery.data.UsageRepository
 import com.allthingsclaude.battery.live.LiveUpdateNotifier
+import kotlinx.coroutines.launch
 
 /**
- * Phase 0 — the Now Bar spike.
+ * The Phase 0/2 harness. Not the real UI — the Compose dashboard is Phase 4.
  *
- * The only unverified thing in the whole plan is whether One UI 8.5 promotes a
- * third-party Live Update at all, and whether a *usage meter* survives Google's
- * "user-initiated journey" framing. Every other surface in this app is ordinary
- * Android work. So this screen does one thing: post a card built from a
- * synthetic payload and report exactly what the system thinks of it.
+ * It does two jobs. **Synthetic mode** posts a card from
+ * [UsagePayload.PLACEHOLDER] so the notification can be exercised without a live
+ * session, including at percentages a real account would take hours to reach.
+ * **Live mode** signs in for real and polls the usage API, which is what proves
+ * the whole chain end to end.
  *
- * Deliberately no auth, no network, no storage. One variable — if the card
- * doesn't reach the Now Bar, the cause is inside LiveUpdateNotifier and nowhere
- * else.
+ * Everything here is deliberately one screen of buttons: the value is in being
+ * able to reach any state on demand, not in looking like anything.
  */
 class SpikeActivity : ComponentActivity() {
 
@@ -52,67 +60,156 @@ class SpikeActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         if (Build.VERSION.SDK_INT >= 33) {
             requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    SpikeScreen()
-                }
+                Surface(modifier = Modifier.fillMaxSize()) { SpikeScreen() }
             }
         }
     }
 }
 
-@androidx.compose.runtime.Composable
+@Composable
 private fun SpikeScreen() {
     val context = LocalContext.current
-    val base = remember { UsagePayload.PLACEHOLDER }
-    var utilization by remember { androidx.compose.runtime.mutableDoubleStateOf(base.sessionUtilization) }
-    var diagnostics by remember { mutableStateOf("Post the card, then refresh.") }
+    val scope = rememberCoroutineScope()
+    val repository = remember { UsageRepository(context) }
+    val auth = remember { AuthService(context) }
+
+    val placeholder = remember { UsagePayload.PLACEHOLDER }
+    var synthetic by remember { mutableDoubleStateOf(placeholder.sessionUtilization) }
+    var live by remember { mutableStateOf(repository.lastKnownPayload) }
+    var status by remember {
+        mutableStateOf(if (repository.isSignedIn()) "Signed in." else "Not signed in.")
+    }
+    var diagnostics by remember { mutableStateOf("Post a card, then refresh.") }
     var samsungExtras by remember { mutableStateOf(LiveUpdateNotifier.samsungExtrasEnabled) }
 
-    fun payload() = base.copy(sessionUtilization = utilization)
+    // Live data wins when we have it — the synthetic slider is the fallback.
+    fun payload(): UsagePayload =
+        live ?: placeholder.copy(sessionUtilization = synthetic)
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("Now Bar spike", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            "Session ${utilization.toInt()}% — synthetic payload, no network.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
+        Text("Battery — harness", style = MaterialTheme.typography.headlineSmall)
+        Text(status, style = MaterialTheme.typography.bodyMedium)
+
+        live?.let { p ->
+            val forecast = UsageForecast(p)
+            Card {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        "${p.accountName}${if (p.planTier.isNotEmpty()) " · ${p.planTier}" else ""}",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Text(
+                        "Session ${p.sessionUtilization.toInt()}%  ·  Weekly ${p.weeklyUtilization.toInt()}%",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(forecast.headline, style = MaterialTheme.typography.bodyMedium)
+                    forecast.detail?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text(
+                        "${forecast.badgeLabel} · rate ${forecast.rateText} · " +
+                            "${forecast.landingStat.label} ${forecast.landingStat.value}",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
+        }
+
+        HorizontalDivider()
+        Text("Live", style = MaterialTheme.typography.titleSmall)
+
+        Button(
+            onClick = {
+                status = "Opening sign-in…"
+                // The callback fires on the listener's own thread. Every branch
+                // touches Compose state, so all of it is hopped onto the
+                // composition's dispatcher (Main) rather than mutating snapshot
+                // state off-thread.
+                auth.start { result ->
+                    scope.launch {
+                        when (result) {
+                            is AuthService.Result.Success -> {
+                                if (repository.addAccount(result.tokens)) {
+                                    status = "Signed in. Fetching…"
+                                    refresh(context, repository) { p, message ->
+                                        live = p; status = message
+                                    }
+                                } else {
+                                    status = "Couldn't store the credential."
+                                }
+                            }
+                            is AuthService.Result.Failure -> status = result.message
+                            AuthService.Result.Cancelled -> status = "Sign-in cancelled."
+                        }
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (repository.isSignedIn()) "Add another account" else "Sign in with Claude") }
+
+        OutlinedButton(
+            onClick = {
+                status = "Fetching…"
+                scope.launch {
+                    refresh(context, repository) { p, message -> live = p; status = message }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Poll now (real data)") }
+
+        OutlinedButton(onClick = {
+            repository.signOutAll()
+            live = null
+            status = "Signed out."
+            LiveUpdateNotifier.cancel(context)
+        }) { Text("Sign out") }
+
+        HorizontalDivider()
+        Text("Synthetic", style = MaterialTheme.typography.titleSmall)
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = {
-                utilization = (utilization - 5).coerceAtLeast(0.0)
+                live = null
+                synthetic = (synthetic - 5).coerceAtLeast(0.0)
                 LiveUpdateNotifier.post(context, payload())
             }) { Text("−5%") }
-
             OutlinedButton(onClick = {
-                utilization = (utilization + 5).coerceAtMost(100.0)
+                live = null
+                synthetic = (synthetic + 5).coerceAtMost(100.0)
                 LiveUpdateNotifier.post(context, payload())
             }) { Text("+5%") }
+            Text(
+                "  ${synthetic.toInt()}%",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 14.dp),
+            )
         }
+
+        HorizontalDivider()
+        Text("Card", style = MaterialTheme.typography.titleSmall)
 
         Button(
             onClick = { LiveUpdateNotifier.post(context, payload()) },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Post Live Update") }
 
-        OutlinedButton(onClick = { LiveUpdateNotifier.cancel(context) }) { Text("Cancel") }
+        OutlinedButton(onClick = { LiveUpdateNotifier.cancel(context) }) { Text("Cancel card") }
 
-        // The A/B for the two-pipeline theory. One UI's Now Bar is driven by
-        // Samsung's private ongoing-activity extras, not by the AOSP promoted
-        // APIs we already satisfy — so post once with this off, once with it on,
-        // and compare. Toggling it here avoids a rebuild between the two.
+        // The A/B for the two-pipeline theory — see android/NOW_BAR.md. One UI's
+        // Now Bar is driven by Samsung's private ongoing-activity extras, not the
+        // AOSP promoted APIs we already satisfy. Toggling here avoids a rebuild
+        // between the two posts.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(
                 checked = samsungExtras,
@@ -123,7 +220,7 @@ private fun SpikeScreen() {
                 },
             )
             Text(
-                "  Samsung ongoing-activity extras (experiment)",
+                "  Samsung ongoing-activity extras",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -132,19 +229,17 @@ private fun SpikeScreen() {
             diagnostics = LiveUpdateNotifier.diagnose(context, payload())
         }) { Text("Refresh diagnostics") }
 
-        // Which screen this lands on is itself the finding — see the KDoc on
-        // LiveUpdateNotifier.promotedNotificationSettingsIntent.
         OutlinedButton(onClick = {
             val intent = LiveUpdateNotifier.promotedNotificationSettingsIntent(context)
             diagnostics = if (intent == null) {
-                "ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS resolves to nothing on this\n" +
-                    "device — One UI has not wired AOSP's promoted-notification\n" +
-                    "settings surface. That corroborates the two-pipeline theory."
+                "ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS resolves to nothing here —\n" +
+                    "One UI has not wired AOSP's promoted-notification settings\n" +
+                    "surface. Corroborates the two-pipeline theory."
             } else {
                 context.startActivity(intent)
                 "Opened promoted-notification settings. Note WHICH screen appeared:\n" +
                     "a per-app Live-notifications toggle means AOSP's surface is the\n" +
-                    "gate; the generic app-notification screen means it isn't."
+                    "gate; the generic screen means it isn't."
             }
         }) { Text("Open promoted-notification settings") }
 
@@ -153,14 +248,42 @@ private fun SpikeScreen() {
                 diagnostics,
                 modifier = Modifier.padding(14.dp),
                 style = MaterialTheme.typography.bodySmall,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontFamily = FontFamily.Monospace,
             )
         }
+    }
+}
 
-        Text(
-            "Check: Now Bar (lock screen), AOD, status-bar chip, shade collapsed " +
-                "and expanded. FLAG_PROMOTED true = it reached the Now Bar.",
-            style = MaterialTheme.typography.bodySmall,
+/**
+ * One real poll, and — on success — the card it produces.
+ *
+ * Posting here rather than only from the button is the point of live mode: it
+ * exercises the same path the foreground service will take in Phase 3, so what
+ * appears on the lock screen is driven by the API rather than by a slider.
+ *
+ * Every failure keeps its own message. Collapsing them into "poll failed" would
+ * hide the one distinction that matters to a user — a dead grant needs a new
+ * sign-in, everything else just needs waiting.
+ */
+private suspend fun refresh(
+    context: android.content.Context,
+    repository: UsageRepository,
+    onResult: (UsagePayload?, String) -> Unit,
+) {
+    when (val result = repository.poll()) {
+        is UsageRepository.PollResult.Success -> {
+            LiveUpdateNotifier.post(context, result.payload)
+            onResult(result.payload, "Updated ${result.payload.sessionUtilization.toInt()}%.")
+        }
+        UsageRepository.PollResult.SignedOut ->
+            onResult(null, "Session expired — sign in again.")
+        UsageRepository.PollResult.NoAccount ->
+            onResult(null, "No account. Sign in first.")
+        is UsageRepository.PollResult.Failed -> onResult(
+            null,
+            result.retryAfterSeconds
+                ?.let { "${result.message} Retry in ${it}s." }
+                ?: result.message,
         )
     }
 }
