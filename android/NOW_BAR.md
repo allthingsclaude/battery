@@ -114,48 +114,66 @@ Verified on device by setting distinct markers, not read from documentation.
 One UI's rendering does not match what the field names imply, so guessing here
 is unusually expensive.
 
-| Field | Renders |
-|---|---|
-| `setContentTitle` | Now Bar pill **line 1**, and the shade title |
-| `setShortCriticalText` | Now Bar pill **line 2** *and* the status-bar chip — **one string, two surfaces** |
-| `setColor` | tints the pill and the chip. Samsung's Clock uses `0xff5f57d9` and its chip is that purple, which is how this was identified |
-| `setContentText` | shade only — **not** seen on the collapsed pill |
-| `setSubText` | shade header |
-| `setWhen` + `setChronometerCountDown` | the live countdown, ticking with zero updates |
-| `ProgressStyle` bar/segments/points | shade only, as far as observed |
+There are **three** lock-screen states, not two, and conflating the first two is
+what made an earlier version of this table wrong:
+
+1. **collapsed pill** — the Now Bar capsule sitting above the shortcuts
+2. **expanded card** — tap the pill; it opens in place
+3. **status-bar chip** — the tiny capsule next to the clock
+
+| Field | Collapsed pill | Expanded card | Chip |
+|---|---|---|---|
+| `setContentTitle` | **line 1**, ellipsised at ~23 chars | wraps to 2 lines, no truncation | — |
+| `setShortCriticalText` | **line 2**, ~22 chars rendered in full | — | **the chip text**, ~9 chars then it marquees |
+| `setContentText` | — | yes, wraps to 2 lines | — |
+| `setSubText` | — | header, beside the app name | — |
+| `setLargeIcon` | **ignored** | **yes** — circular badge, top right | — |
+| `addAction` | — | **yes** — full-width buttons | — |
+| `ProgressStyle` | — | **yes** — segments, tracker icon and point all render | — |
+| `setSmallIcon` | filled circle, tinted by `setColor` | filled square, tinted by `setColor` | inside the chip |
+| `setColor` | tints pill and chip. Samsung's Clock uses `0xff5f57d9` and its chip is that purple, which is how this was identified | | |
+| `setWhen` + `setChronometerCountDown` | the live countdown, ticking with zero updates | | |
+
+Two of these overturn what this file previously asserted. `setContentText` and
+`ProgressStyle` were recorded as "shade only"; both render in the expanded card.
+And `setLargeIcon` was an open question — the answer is that it depends entirely
+on which of the three states you mean, which is why asking "does the pill render
+it" had no single answer.
 
 `setColorized(true)` and custom `RemoteViews` are **disqualifying** — either one
 costs promotion entirely, so neither can be used to style these surfaces.
 
 ### The one string, two surfaces problem
 
-`setShortCriticalText` feeding both the chip and the pill's second line is the
-awkward constraint. The chip is a tiny always-on glance wanting the most urgent
-number; the pill's second line sits under a title that already states the
-session percentage, so repeating it there wastes the only spare line.
+`setShortCriticalText` feeds both the chip and the pill's second line, and the
+measurement makes that worse than it looked: **the two surfaces have very
+different capacity.** At 22 characters the pill's second line rendered every one
+of them; the chip showed about nine and marqueed the rest, scrolling text next
+to the clock. So the binding constraint is the chip, and it is tight — the pill
+has room the chip cannot use.
 
-Currently resolved with `UsagePayload.focusWindow` — lead with whichever window
-is closer to its ceiling. **This is not settled.** For an account whose weekly
-runs far ahead of any single session (the common case: rarely past 20% in a
-session, past that in the weekly within a day) it means the line reads `wk 28%`
-almost always, and the session number only ever appears in the title.
+Which means the string should be sized for the chip (a couple of characters),
+and the pill's second line will always be mostly empty. That is a real cost, but
+a smaller one than it appears, because the title turns out to hold far more than
+was assumed: `9% · wk 28%` is eleven characters against a ~23-character budget.
+**Both windows fit on line 1**, so the second line is not the only place a
+second number can go.
 
-### Unfinished: the layout experiment
+`UsagePayload.focusWindow` was the previous answer — lead with whichever window
+is closer to its ceiling. It is a poor fit for an account whose weekly runs far
+ahead of any single session, since the line then reads `wk 28%` almost always
+and the session number never appears at all.
 
-Re-run when the API rate limit clears. Open questions:
+### How the probe was run
 
-- Does the pill render `setLargeIcon`? If it does, a rasterised ring from
-  `UsageRingRenderer` could go on the lock screen — that was the "can we draw
-  the circle" question and it was never answered.
-- Does the pill show action buttons? Samsung's stopwatch has a pause control in
-  its pill, so something reaches it.
-- Does an expanded pill show more than two lines?
-- Can the title carry both windows (`9% · wk 28%`) without truncating?
+Set every field to a distinct marker with a character ruler appended
+(`9% · wk 28% 0123456789ABC…`), so the same screenshot identifies the field
+*and* measures where it cuts. Add a `setLargeIcon` bitmap with a recognisable
+value and two labelled actions. Install, then capture: home screen for the chip,
+lock screen for the collapsed pill, and tap the pill for the expanded card.
 
-The probe build is easy to recreate: set every field to a distinct marker
-(`1-TITLE`, `2-TEXT`, `3-SUB`, `4-CHIP`), add a `setLargeIcon` bitmap and an
-action, install, and screenshot the lock screen and the expanded shade. It was
-aborted last time by the rate limit, not by any difficulty.
+Promotion survives `setLargeIcon` and two actions — `flags` still carried
+`PROMOTED_ONGOING` with `actions=2` and a 113×113 bitmap attached.
 
 ## What the app actually does
 
