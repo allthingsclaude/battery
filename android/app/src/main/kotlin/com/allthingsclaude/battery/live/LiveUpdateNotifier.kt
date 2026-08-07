@@ -303,14 +303,27 @@ object LiveUpdateNotifier {
      * five-hour window reads as fine; seconds-scale would not.
      */
     private fun title(payload: UsagePayload): String {
-        val session = payload.sessionUtilization.roundToInt()
         val weekly = payload.weeklyUtilization.roundToInt()
-        val remaining = payload.sessionResetsAt
-            ?.let { (it.toEpochMilli() - System.currentTimeMillis()) / 1000.0 }
-            ?.takeIf { it > 0 }
-            ?.let { TimeFormatting.shortDuration(it).replace(" ", "") }
-        return listOfNotNull(remaining, "$session%", "wk $weekly%").joinToString(" · ")
+        return listOfNotNull(glance(payload), "wk $weekly%").joinToString(" · ")
     }
+
+    /**
+     * `11% · 1h17m` — percentage first, then time left in the window.
+     *
+     * The same order the macOS menu bar uses, deliberately: this is the string
+     * the eye lands on in three different places (the chip, the pill's second
+     * line, the front of the title) and someone running both apps should not
+     * have to read them differently.
+     */
+    private fun glance(payload: UsagePayload, separator: String = " · "): String =
+        listOfNotNull("${payload.sessionUtilization.roundToInt()}%", remaining(payload))
+            .joinToString(separator)
+
+    /** Time left in the session window, compact: `1h17m`, `47m`. Null once past. */
+    private fun remaining(payload: UsagePayload): String? = payload.sessionResetsAt
+        ?.let { (it.toEpochMilli() - System.currentTimeMillis()) / 1000.0 }
+        ?.takeIf { it > 0 }
+        ?.let { TimeFormatting.shortDuration(it).replace(" ", "") }
 
     /**
      * The status-bar chip, and the pill's second line — one string, two
@@ -323,8 +336,7 @@ object LiveUpdateNotifier {
      * in [title]; what the chip wants is the fast-moving one a reader can still
      * act on.
      */
-    private fun criticalText(payload: UsagePayload): String =
-        "${payload.sessionUtilization.roundToInt()}%"
+    private fun criticalText(payload: UsagePayload): String = glance(payload, separator = "·")
 
     // ── Forecast ────────────────────────────────────────────────────────────
     //
