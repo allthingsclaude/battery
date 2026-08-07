@@ -40,6 +40,6 @@ val SessionPolicy.Mode.title: String
 val SessionPolicy.Mode.subtitle: String
     get() = when (this) {
         SessionPolicy.Mode.OFF -> "Never show a lock-screen card"
-        SessionPolicy.Mode.SMART -> "Only while a session is busy or past 40%"
+        SessionPolicy.Mode.SMART -> "While a session is open and in use"
         SessionPolicy.Mode.WHENEVER_OPEN -> "Any time a 5-hour window is open, at any percentage"
     }

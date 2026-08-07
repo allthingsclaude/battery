@@ -382,7 +382,7 @@ private fun CardNote(mode: SessionPolicy.Mode) {
             SessionPolicy.Mode.OFF ->
                 "The lock-screen card is off. Turn it on in Settings."
             SessionPolicy.Mode.SMART ->
-                "The lock-screen card appears while a session is busy, or once it passes 40%."
+                "The lock-screen card appears once you've used an open session, and goes after a long idle."
             SessionPolicy.Mode.WHENEVER_OPEN ->
                 "The lock-screen card stays up for the whole 5-hour window."
         },

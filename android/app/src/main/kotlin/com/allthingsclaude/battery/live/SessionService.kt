@@ -15,9 +15,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The foreground service whose notification **is** the lock-screen card.
@@ -48,11 +50,16 @@ class SessionService : Service() {
     private var policyState = SessionPolicy.State()
     private val backoff = PollBackoff()
 
+    /**
+     * Cuts a poll delay short. Conflated because the signal is "something
+     * changed, look again" — two of them pending mean the same as one, and
+     * dropping the duplicate is the point rather than a compromise.
+     */
+    private val wake = Channel<Unit>(Channel.CONFLATED)
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (loop?.isActive == true) return START_STICKY
-
         // MUST precede startForeground. build() does not create the channel —
         // only post() did — so a fresh install that starts the service without
         // ever posting a card hit `IllegalArgumentException: No Channel found`,
@@ -69,11 +76,33 @@ class SessionService : Service() {
         // screen.
         val initial = repo.lastKnownPayload ?: UsagePayload.PLACEHOLDER
 
-        // startForeground is unavoidable — a service started with
-        // startForegroundService MUST promote or the system kills it — so an
-        // already-dismissed window is handled by promoting and immediately
-        // standing down rather than by skipping the call.
+        // Promote on EVERY start, including one that arrives while the loop is
+        // already running, for two independent reasons.
+        //
+        // The contract one: each startForegroundService call carries its own
+        // "you must promote" timer, and already being foreground does not
+        // discharge it.
+        //
+        // The bug one: this is what repaints a stale card. The loop spends
+        // nearly all of its life parked in a delay — three minutes normally, up
+        // to ten after a failure — and the dashboard polls independently on
+        // resume. A poll landing there wrote a fresh payload and refreshed the
+        // widgets, but nothing rebuilt the notification, so the app read 10%
+        // while the pill, the chip and the lock-screen card all sat at 9% until
+        // the loop happened to wake. `lastKnownPayload` is that fresh number.
         promote(LiveUpdateNotifier.build(this, initial))
+
+        if (loop?.isActive == true) {
+            // Re-evaluate now rather than whenever the current delay expires —
+            // otherwise mode changes and fresh payloads take effect up to ten
+            // minutes late. Cheap: the repository's own freshness gate serves
+            // this from cache, so waking costs no request.
+            wake.trySend(Unit)
+            return START_STICKY
+        }
+
+        // An already-dismissed window is handled by promoting and immediately
+        // standing down rather than by skipping the promote call above.
         if (dismissal.isDismissed(initial.sessionResetsAt)) {
             stopWithoutCard()
             return START_NOT_STICKY
@@ -99,7 +128,7 @@ class SessionService : Service() {
                 UsageRepository.PollResult.Stale -> {
                     // The account changed mid-poll; this result belongs to
                     // nobody. Skip it and let the next tick fetch the new one.
-                    delay(SessionPolicy.pollIntervalSeconds(SessionPolicy.Decision.Hide) * 1000)
+                    waitOrWake(SessionPolicy.pollIntervalSeconds(SessionPolicy.Decision.Hide))
                     continue
                 }
                 is UsageRepository.PollResult.Failed -> {
@@ -109,7 +138,7 @@ class SessionService : Service() {
                     // visibly instead of pretending to be current.
                     val wait = backoff.recordFailure(result.retryAfterSeconds)
                     Log.w(TAG, "poll failed (${backoff.failureCount}x): ${result.message}; waiting ${wait}s")
-                    delay(wait * 1000)
+                    waitOrWake(wait)
                     continue
                 }
             }
@@ -132,7 +161,7 @@ class SessionService : Service() {
             when (val decision = outcome.decision) {
                 is SessionPolicy.Decision.Show -> {
                     LiveUpdateNotifier.post(this, payload, alertLevel = decision.alertLevel)
-                    delay(SessionPolicy.pollIntervalSeconds(decision) * 1000)
+                    waitOrWake(SessionPolicy.pollIntervalSeconds(decision))
                 }
 
                 SessionPolicy.Decision.ShowReset -> {
@@ -151,6 +180,11 @@ class SessionService : Service() {
                 }
             }
         }
+    }
+
+    /** Sleep for [seconds], or until someone signals [wake] — whichever is first. */
+    private suspend fun waitOrWake(seconds: Long) {
+        withTimeoutOrNull(seconds * 1000) { wake.receive() }
     }
 
     private fun promote(notification: android.app.Notification) {

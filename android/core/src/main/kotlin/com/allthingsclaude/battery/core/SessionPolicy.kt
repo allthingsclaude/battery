@@ -23,14 +23,31 @@ import java.time.Instant
  */
 object SessionPolicy {
 
-    /** Begin watching a climbing session at or above this. */
-    const val START_THRESHOLD = 40.0
-
-    /** Low enough to stop watching. */
+    /**
+     * High enough that the card stays up through a lull, because at this level
+     * the number itself is the thing worth watching.
+     *
+     * There used to be a matching `START_THRESHOLD = 40.0` that SMART required
+     * before it would show anything. It was removed: on a plan where a five-hour
+     * window rarely passes 20%, a 40% gate never opens, so "smart" collapsed
+     * into "activity detection or nothing" — and activity detection needs two
+     * polls to see a rise. A percentage is the wrong shape for *presence*
+     * anyway. It belongs to alerting, which is what [UsageLevel.isAlarming]
+     * already does.
+     */
     const val END_THRESHOLD = 25.0
 
-    /** Must stay idle and low this long before the card auto-dismisses. */
-    const val END_GRACE_SECONDS = 10 * 60L
+    /**
+     * Must stay idle this long before the card auto-dismisses.
+     *
+     * Thirty minutes, not ten. Ten minutes of not burning tokens is a code
+     * review, a meeting, or lunch ordered — not the end of a work session. And
+     * the cost of being wrong is asymmetric: when the card goes, so does the
+     * foreground service, and nothing schedules its return, so the card cannot
+     * come back until the app is opened again. Dismissing early doesn't hide a
+     * card for ten minutes, it hides it for the rest of the day.
+     */
+    const val END_GRACE_SECONDS = 30 * 60L
 
     /** A drop from above this to below [RESET_TO] means the window rolled over. */
     const val RESET_FROM = 30.0
@@ -48,8 +65,8 @@ object SessionPolicy {
          * (`LiveActivityController.swift`, the `else` branch of the start/update
          * split). Without this, opening the app at 80% makes a noise on Android
          * and stays silent on iOS — and worse, since `Hide` stops the service
-         * and discards this state, a session oscillating around the 40% start
-         * threshold would re-alert on every restart.
+         * and discards this state, a session that keeps dropping in and out of
+         * view would re-alert on every restart.
          */
         val isShowing: Boolean = false,
     )
@@ -72,8 +89,17 @@ object SessionPolicy {
         OFF,
 
         /**
-         * Only while a session is worth watching: actively burning, or already
-         * past [START_THRESHOLD]. Quietest, and the default.
+         * While there is an open window you have actually used, until you have
+         * been idle long enough that the session is plainly over.
+         *
+         * Deliberately **not** conditioned on a percentage. The earlier rule was
+         * `isSessionActive || utilization >= 40%`, which reads as reasonable and
+         * behaves badly: for anyone whose sessions live in single digits the
+         * 40% arm never fires, so the card's entire existence rested on the
+         * activity arm — and that arm needs two polls to see a rise, i.e. up to
+         * six minutes of typing before anything appears. "Any usage at all in an
+         * open window" fires on the *first* poll and costs nothing, because a
+         * window you have not touched is already excluded.
          */
         SMART,
 
@@ -88,10 +114,10 @@ object SessionPolicy {
          * activity" the API is for. The card still disappears when the window
          * closes — this is not "always on", it is "for the whole activity".
          *
-         * It also fixes a real gap in SMART: `isSessionActive` is derived by
-         * comparing consecutive polls, so it cannot be true until the second one.
-         * At a three-minute cadence that is up to six minutes of coding before
-         * the card appears.
+         * It also used to be the only way to get a card up promptly, because
+         * SMART could not show anything until it had seen two polls. SMART now
+         * shows on any usage in an open window, so the remaining difference is
+         * narrow and honest: this mode never dismisses for idleness.
          */
         WHENEVER_OPEN,
     }
@@ -144,7 +170,11 @@ object SessionPolicy {
         val shouldShow = when (mode) {
             Mode.OFF -> false   // unreachable; handled above
             Mode.WHENEVER_OPEN -> payload.sessionResetsAt != null
-            Mode.SMART -> payload.isSessionActive || utilization >= START_THRESHOLD
+            // An open window plus any usage at all. The window check is what
+            // keeps this from being "always": between sessions there is no
+            // window, and a fresh one starts at zero.
+            Mode.SMART -> payload.sessionResetsAt != null &&
+                (payload.isSessionActive || utilization > 0.0)
         }
         if (!shouldShow) {
             return Outcome(

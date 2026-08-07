@@ -33,8 +33,10 @@ class SessionPolicyTest {
     // ── Starting ────────────────────────────────────────────────────────────
 
     @Test
-    fun `a quiet low session shows nothing`() {
-        val outcome = SessionPolicy.evaluate(SessionPolicy.State(), payload(10.0), now = now)
+    fun `an untouched window shows nothing`() {
+        // Zero usage is what separates SMART from "always on": a window opens
+        // when the previous one expires, whether or not anyone is working.
+        val outcome = SessionPolicy.evaluate(SessionPolicy.State(), payload(0.0), now = now)
         assertIs<SessionPolicy.Decision.Hide>(outcome.decision)
     }
 
@@ -46,13 +48,28 @@ class SessionPolicyTest {
     }
 
     @Test
-    fun `an idle session shows once it crosses the start threshold`() {
-        assertIs<SessionPolicy.Decision.Hide>(
-            SessionPolicy.evaluate(SessionPolicy.State(), payload(39.0), now = now).decision
-        )
-        assertIs<SessionPolicy.Decision.Show>(
-            SessionPolicy.evaluate(SessionPolicy.State(), payload(40.0), now = now).decision
-        )
+    fun `SMART shows at percentages a heavy plan never reaches`() {
+        // Regression. SMART used to require `isSessionActive || utilization >=
+        // 40%`. On an account whose five-hour windows live in single digits the
+        // second arm never fires, so the card existed only when activity
+        // detection happened to be warm — and that needs two polls to see a
+        // rise. The reported symptom was "smart just isn't a thing on my plan".
+        for (utilization in listOf(0.5, 3.0, 9.0, 20.0, 39.0)) {
+            assertIs<SessionPolicy.Decision.Show>(
+                SessionPolicy.evaluate(SessionPolicy.State(), payload(utilization), now = now).decision,
+                "$utilization% in an open window should show",
+            )
+        }
+    }
+
+    @Test
+    fun `SMART shows on the first poll, before activity can be inferred`() {
+        // isSessionActive is false here because it takes two samples to derive.
+        // The old rule made that the *only* way in below 40%, which is where the
+        // six-minute delay came from.
+        val outcome =
+            SessionPolicy.evaluate(SessionPolicy.State(), payload(2.0, active = false), now = now)
+        assertIs<SessionPolicy.Decision.Show>(outcome.decision)
     }
 
     @Test
@@ -74,8 +91,8 @@ class SessionPolicyTest {
         // silently when it starts an activity and only alerts on updates, so
         // opening the app at 80% is quiet there. Alerting here would also mean
         // re-alerting every time the service restarts, since Hide discards this
-        // state and a session oscillating around the 40% start threshold
-        // restarts often.
+        // state and a session that keeps dropping in and out of view restarts
+        // often.
         val first = SessionPolicy.evaluate(
             SessionPolicy.State(),
             payload(76.0, active = true),
@@ -153,21 +170,29 @@ class SessionPolicyTest {
         val idleStart = now
         var state = SessionPolicy.State(previousUtilization = 20.0)
 
-        // First idle poll starts the clock but keeps whatever the card was doing.
-        state = SessionPolicy.evaluate(state, payload(20.0), now = idleStart).state
-        assertEquals(idleStart, state.idleSince)
+        // First idle poll starts the clock, and the card stays up: 20% of a
+        // used window is worth showing even with nothing burning right now.
+        val first = SessionPolicy.evaluate(state, payload(20.0), now = idleStart)
+        assertIs<SessionPolicy.Decision.Show>(first.decision)
+        assertEquals(idleStart, first.state.idleSince)
+        state = first.state
 
-        // Not yet.
+        // Still up one second before the grace expires.
         val early = SessionPolicy.evaluate(
             state,
             payload(20.0),
             now = idleStart.plusSeconds(SessionPolicy.END_GRACE_SECONDS - 1),
         )
-        assertIs<SessionPolicy.Decision.Hide>(early.decision)
+        assertIs<SessionPolicy.Decision.Show>(early.decision)
+        assertEquals(idleStart, early.state.idleSince, "the clock must not restart")
 
-        // And after the grace period it's still hidden — this payload was never
-        // showing. The meaningful assertion is that idleSince survived.
-        assertEquals(idleStart, early.state.idleSince)
+        // And gone once it does.
+        val late = SessionPolicy.evaluate(
+            state,
+            payload(20.0),
+            now = idleStart.plusSeconds(SessionPolicy.END_GRACE_SECONDS),
+        )
+        assertIs<SessionPolicy.Decision.Hide>(late.decision)
     }
 
     @Test
@@ -195,15 +220,18 @@ class SessionPolicyTest {
 
     @Test
     fun `no window at all does not count as past its reset`() {
-        // resetsAt == null is "no session open", not "expired". Treating it as
-        // expired would be indistinguishable in effect here, but the card should
-        // hide because it isn't worth showing, not because of a stale timestamp.
+        // resetsAt == null is "no session open", not "expired". Both hide, so
+        // the decision alone can't tell them apart — the state can. The
+        // past-reset branch returns a bare State and drops alertedLevel; the
+        // not-worth-showing branch carries it. Asserting on the state is what
+        // makes this a test of the reason rather than of the outcome.
         val outcome = SessionPolicy.evaluate(
-            SessionPolicy.State(),
+            SessionPolicy.State(alertedLevel = UsageLevel.HIGH, isShowing = true),
             payload(50.0, active = true, resetsAt = null),
             now = now,
         )
-        assertIs<SessionPolicy.Decision.Show>(outcome.decision)
+        assertIs<SessionPolicy.Decision.Hide>(outcome.decision)
+        assertEquals(UsageLevel.HIGH, outcome.state.alertedLevel)
     }
 
     // ── Cadence ─────────────────────────────────────────────────────────────
@@ -221,9 +249,10 @@ class SessionPolicyTest {
 
     @Test
     fun `WHENEVER_OPEN shows at any percentage while a window is open`() {
-        // The gap this mode exists to close: SMART derives isSessionActive by
-        // comparing consecutive polls, so it cannot be true until the second
-        // one — up to six minutes of coding before the card appears.
+        // Includes 0.0, which is the one case SMART deliberately excludes: a
+        // window that has just opened and has not been touched. That single
+        // value is now most of what separates the two modes on the show side —
+        // the rest of the difference is that this one never idles out.
         for (utilization in listOf(0.0, 1.0, 6.0, 39.0)) {
             val outcome = SessionPolicy.evaluate(
                 SessionPolicy.State(),

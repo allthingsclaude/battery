@@ -41,15 +41,6 @@ class UsageRepository(context: Context) {
 
     private val api by lazy { UsageApi(userAgent) }
 
-    /**
-     * Activity inference, mirroring iOS: a session is "active" if utilization
-     * climbed within the last ten minutes. Held in memory only — a cold start
-     * legitimately doesn't know yet, and persisting it would let a stale "active"
-     * keep a foreground service alive across a reboot.
-     */
-    private var lastRiseAt: Instant? = null
-    private var lastUtilization: Double? = null
-
     val lastKnownPayload: UsagePayload? get() = payloads.load()
 
     fun isSignedIn(): Boolean = accounts.load().isNotEmpty()
@@ -143,13 +134,21 @@ class UsageRepository(context: Context) {
         val sessionUtil = session?.utilization ?: 0.0
         val sessionReset = session?.resetsAt
 
-        val projection = history.record(sessionUtil, sessionReset)
-
         val now = Instant.now()
-        lastUtilization?.let { if (sessionUtil > it + 0.01) lastRiseAt = now }
-        lastUtilization = sessionUtil
-        val isActive = session != null &&
-            (lastRiseAt?.let { now.epochSecond - it.epochSecond < ACTIVE_WINDOW_SECONDS } ?: false)
+        val projection = history.record(sessionUtil, sessionReset, now)
+
+        // Activity inference, mirroring iOS: a session is "active" if
+        // utilization climbed within the last ten minutes.
+        //
+        // Read from the shared snapshot buffer rather than from fields on this
+        // object, because this object is not shared. The dashboard builds one
+        // repository and the foreground service builds another, so an in-memory
+        // "last utilization" meant each one had to observe two polls of its own
+        // before it could see a rise — and the service is constructed exactly
+        // when the card is meant to appear, so it was always the blind one.
+        val lastRise = history.lastRiseAt(sessionReset)
+        val isActive = session != null && lastRise != null &&
+            now.epochSecond - lastRise.epochSecond < ACTIVE_WINDOW_SECONDS
 
         return UsagePayload(
             sessionUtilization = sessionUtil,
@@ -223,10 +222,9 @@ class UsageRepository(context: Context) {
 
     fun selectAccount(id: String) {
         accounts.selectedId = id
-        resetInference()
         // A different account's samples must never feed this account's
         // regression — the buffer is per-window, not per-account.
-        history.reset()
+        resetInference()
     }
 
     private suspend fun refreshWidgets() {
@@ -239,10 +237,14 @@ class UsageRepository(context: Context) {
         }
     }
 
-    private fun resetInference() {
-        lastRiseAt = null
-        lastUtilization = null
-    }
+    /**
+     * Forget this account's samples.
+     *
+     * Now a single call, because the buffer is the only place session history
+     * lives — activity inference reads it too, so clearing it clears both the
+     * burn-rate regression and any lingering idea that a session is live.
+     */
+    private fun resetInference() = history.reset()
 
     private companion object {
         const val TAG = "UsageRepository"

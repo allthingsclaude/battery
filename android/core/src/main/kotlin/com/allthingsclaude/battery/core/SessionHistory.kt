@@ -59,13 +59,7 @@ class SessionHistory(private val store: SnapshotStore) {
             return Projection.NONE
         }
 
-        // Same 1-second tolerance the calculator uses: a reset time round-trips
-        // through JSON and can come back a hair off.
-        val history = (
-            store.load().filter {
-                abs((it.sessionResetsAt.toEpochMilli() - resetsAt.toEpochMilli()) / 1000.0) < 1.0
-            } + UsageSnapshot(now, utilization, resetsAt)
-            )
+        val history = (currentWindow(resetsAt) + UsageSnapshot(now, utilization, resetsAt))
             .sortedBy { it.timestamp }
             .takeLast(CAPACITY)
 
@@ -83,10 +77,59 @@ class SessionHistory(private val store: SnapshotStore) {
         return Projection(projection.currentRate, limit)
     }
 
+    /**
+     * When session utilization last went **up** inside the current window, or
+     * null if it never has.
+     *
+     * This is the "is the user actually working right now" signal, and it reads
+     * the persisted buffer rather than fields on the caller for a reason that
+     * cost a real bug: [UsageSnapshot]s are shared, but the object holding
+     * in-memory `lastUtilization` was not. Every entry point builds its own
+     * repository, so two consecutive polls had to land in the *same* instance
+     * before a rise could be noticed — meaning the dashboard and the foreground
+     * service each formed their own opinion, and a service restart went blind
+     * for a full poll cycle at exactly the moment the card was meant to appear.
+     *
+     * Persisting it is safe despite the obvious worry (a stale "active" keeping
+     * a service alive across a reboot) because every caller pairs this with a
+     * recency test: a rise older than the activity window reads as idle no
+     * matter how it was stored.
+     */
+    fun lastRiseAt(resetsAt: Instant?): Instant? {
+        if (resetsAt == null) return null
+        return currentWindow(resetsAt)
+            .sortedBy { it.timestamp }
+            .zipWithNext()
+            .lastOrNull { (before, after) ->
+                after.sessionUtilization > before.sessionUtilization + RISE_EPSILON
+            }
+            ?.second
+            ?.timestamp
+    }
+
+    /**
+     * Samples belonging to the window ending at [resetsAt].
+     *
+     * Same 1-second tolerance the calculator uses: a reset time round-trips
+     * through JSON and can come back a hair off.
+     */
+    private fun currentWindow(resetsAt: Instant): List<UsageSnapshot> =
+        store.load().filter {
+            abs((it.sessionResetsAt.toEpochMilli() - resetsAt.toEpochMilli()) / 1000.0) < 1.0
+        }
+
     /** Forget everything — a different account's usage must never feed this one. */
     fun reset() = store.clear()
 
     companion object {
+
+        /**
+         * How much utilization must climb between two samples to count as a
+         * rise. Guards against a percentage that jitters in the last decimal
+         * place reading as continuous activity forever.
+         */
+        const val RISE_EPSILON = 0.01
+
         /**
          * Roughly 30–90 minutes of samples at the poll cadence. The regression
          * wants recency, not depth — an older tail would drag the rate toward
