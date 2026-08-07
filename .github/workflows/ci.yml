@@ -58,3 +58,43 @@ jobs:
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO \
             -quiet
+
+  # The Android app is a separate Gradle build under android/. It runs on Linux
+  # and in parallel with the macOS jobs above, so it adds no wall-clock time to
+  # the Swift builds and none of their cost — macOS runners bill at a multiple of
+  # ubuntu ones.
+  android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # JDK 17 explicitly. The local dev machine happens to have 26 and the build
+      # targets 17 bytecode without pinning a toolchain, but CI should not
+      # inherit whatever the runner image ships this month.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # core/ first and on its own: it is pure JVM, it holds the golden fixtures
+      # shared with the Swift suite, and it fails fast. A break here means the
+      # Kotlin port has drifted from ios/BatteryKit/, which is worth surfacing
+      # before spending three minutes on an APK.
+      - name: Test core (golden fixtures)
+        working-directory: android
+        run: ./gradlew :core:test
+
+      - name: Build (unsigned)
+        working-directory: android
+        run: ./gradlew :app:assembleDebug
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-report
+          path: android/core/build/reports/tests/test

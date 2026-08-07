@@ -23,13 +23,40 @@ android {
         // gated at runtime rather than by the manifest.
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // Overridable from CI: versionName comes from the android-v* tag and
+        // versionCode from the commit count, so there is no second place to
+        // remember to bump. The literals are only the local-build defaults.
+        versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
+        versionName = (findProperty("versionName") as String?) ?: "0.1.0"
+    }
+
+    signingConfigs {
+        create("release") {
+            // Present only in CI, where the workflow decodes the keystore into
+            // the runner's temp dir and shreds it afterwards. Absent locally, in
+            // which case the release build falls back to the debug key below —
+            // which is what makes `assembleRelease` work on a dev machine
+            // without anyone holding the real signing key.
+            val path = System.getenv("BATTERY_KEYSTORE")
+            if (path != null && file(path).exists()) {
+                storeFile = file(path)
+                storePassword = System.getenv("BATTERY_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("BATTERY_KEY_ALIAS")
+                keyPassword = System.getenv("BATTERY_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
+            // Left off deliberately for now: R8 would need keep rules for the
+            // Glance/Compose runtime and for the reflective notification extras,
+            // and a stripped release that silently stops promoting would be very
+            // hard to diagnose against the Now Bar work still in flight.
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release").takeIf {
+                it.storeFile != null
+            } ?: signingConfigs.getByName("debug")
         }
     }
 
