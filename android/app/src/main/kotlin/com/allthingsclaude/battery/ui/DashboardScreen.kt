@@ -18,7 +18,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import com.allthingsclaude.battery.live.NowBarGate
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,6 +73,7 @@ fun DashboardScreen(
             .padding(top = 8.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        NowBarBanner()
         SessionCard(payload, now)
         ForecastCard(UsageForecast(payload, now = now))
         WeeklyCard(payload, now)
@@ -383,4 +391,49 @@ private fun CardNote(mode: SessionPolicy.Mode) {
         textAlign = TextAlign.Center,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
     )
+}
+
+/**
+ * Shown only when Samsung's gate is closed.
+ *
+ * Dismissible and remembered, because it is advice rather than an error: the app
+ * works without it — the lock-screen card, the shade ranking and every widget
+ * are unaffected — and a permanent banner for an optional surface would be
+ * nagging. It reappears if the gate is still closed on a later install, which is
+ * the only case where it's worth saying again.
+ */
+@Composable
+private fun NowBarBanner() {
+    val context = LocalContext.current
+    val state = remember { NowBarGate.state(context) }
+    val advice = NowBarGate.advice(state) ?: return
+
+    var dismissed by remember {
+        mutableStateOf(
+            context.getSharedPreferences("banners", android.content.Context.MODE_PRIVATE)
+                .getBoolean("nowbar_dismissed", false)
+        )
+    }
+    if (dismissed) return
+
+    BatteryCard(padding = 14) {
+        Text(advice.title, style = MaterialTheme.typography.titleSmall)
+        Text(
+            advice.body,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = {
+                NowBarGate.settingsIntent(state)?.let(context::startActivity)
+            }) { Text(advice.action) }
+            TextButton(onClick = {
+                dismissed = true
+                context.getSharedPreferences("banners", android.content.Context.MODE_PRIVATE)
+                    .edit().putBoolean("nowbar_dismissed", true).apply()
+            }) {
+                Text("Not now", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+            }
+        }
+    }
 }

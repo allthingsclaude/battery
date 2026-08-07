@@ -35,6 +35,7 @@ import com.allthingsclaude.battery.data.Account
 import com.allthingsclaude.battery.data.Settings
 import com.allthingsclaude.battery.data.subtitle
 import com.allthingsclaude.battery.data.title
+import com.allthingsclaude.battery.live.NowBarGate
 
 /**
  * Settings.
@@ -96,6 +97,27 @@ fun SettingsSheet(
                     onCardModeChanged(mode)
                 },
             )
+        }
+
+        SectionHeader("Now Bar")
+        val gate = remember { NowBarGate.state(context) }
+        when (gate) {
+            NowBarGate.State.ENABLED -> StatusNote(
+                "Enabled — the session card appears on the Now Bar, the lock " +
+                    "screen and the status bar."
+            )
+            NowBarGate.State.NOT_APPLICABLE -> StatusNote(
+                "Not applicable on this device. The lock-screen card and widgets " +
+                    "work regardless."
+            )
+            else -> NowBarGate.advice(gate)?.let { advice ->
+                StatusNote(advice.body)
+                ActionRow(
+                    title = advice.action,
+                    subtitle = "Samsung keeps this outside app settings",
+                    onClick = { NowBarGate.settingsIntent(gate)?.let(context::startActivity) },
+                )
+            }
         }
 
         SectionHeader("Widgets")
@@ -278,4 +300,14 @@ private fun ChoiceRow(title: String, subtitle: String, selected: Boolean, onClic
             )
         }
     }
+}
+
+@Composable
+private fun StatusNote(text: String) {
+    Text(
+        text,
+        Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+    )
 }
