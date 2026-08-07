@@ -114,17 +114,22 @@ Verified on device by setting distinct markers, not read from documentation.
 One UI's rendering does not match what the field names imply, so guessing here
 is unusually expensive.
 
-There are **three** lock-screen states, not two, and conflating the first two is
-what made an earlier version of this table wrong:
+There are **three** states, not two, and conflating the first two is what made an
+earlier version of this table wrong:
 
-1. **collapsed pill** — the Now Bar capsule sitting above the shortcuts
-2. **expanded card** — tap the pill; it opens in place
+1. **collapsed pill** — the Now Bar capsule sitting above the lock-screen shortcuts
+2. **expanded card** — one surface reached three ways: tap or expand the pill,
+   expand the status-bar chip, or open the shade
 3. **status-bar chip** — the tiny capsule next to the clock
+
+The chip is not a dead end: expanding it opens the same expanded card the pill
+does. So every entry point converges, and there is exactly one detailed layout
+to design rather than three.
 
 | Field | Collapsed pill | Expanded card | Chip |
 |---|---|---|---|
 | `setContentTitle` | **line 1**, ellipsised at ~23 chars | wraps to 2 lines, no truncation | — |
-| `setShortCriticalText` | **line 2**, ~22 chars rendered in full | — | **the chip text**, ~9 chars then it marquees |
+| `setShortCriticalText` | **line 2**, ~22 chars rendered in full | — | **the chip text**, ~10 glyphs (see below) |
 | `setContentText` | — | yes, wraps to 2 lines | — |
 | `setSubText` | — | header — **and it displaces the chronometer**, see below | — |
 | `setWhen` + `setChronometerCountDown` | — | header, ticking every second with zero updates from us | — |
@@ -168,6 +173,19 @@ different capacity.** At 22 characters the pill's second line rendered every one
 of them; the chip showed about nine and marqueed the rest, scrolling text next
 to the clock. So the binding constraint is the chip, and it is tight — the pill
 has room the chip cannot use.
+
+The chip has **two** failure modes, and the threshold between them matters when
+choosing a string:
+
+| Length | Chip behaviour |
+|---|---|
+| ≤ ~10 glyphs | renders whole — `11%·1h9m` is fine |
+| ~11–12 | ellipsis fade on the right; `11% · 1h11m` lost its trailing `m` |
+| ~22 | **marquee** — the text scrolls beside the clock |
+
+Spaces are not free at this width: `11% · 1h11m` truncates where `11%·1h9m`
+does not, and the only difference worth two glyphs is the padding around the
+separator.
 
 Which means the string should be sized for the chip (a couple of characters),
 and the pill's second line will always be mostly empty. That is a real cost, but
