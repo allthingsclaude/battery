@@ -62,7 +62,7 @@
             android:exported="false" />
 
         <activity
-            android:name=".SpikeActivity"
+            android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name">
             <intent-filter>
@@ -70,5 +70,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          The Phase 0 harness, kept and reachable from the dashboard's
+          Diagnostics button rather than deleted: the Now Bar questions in
+          android/NOW_BAR.md are still open, and answering them needs the
+          ability to post a card at an arbitrary percentage on demand.
+          Not exported — nothing outside the app should be able to launch it.
+        -->
+        <activity
+            android:name=".SpikeActivity"
+            android:exported="false"
+            android:label="Battery diagnostics" />
     </application>
 </manifest>
