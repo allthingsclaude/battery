@@ -104,11 +104,11 @@ private fun Root() {
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner, signedIn) {
         if (!signedIn) return@LaunchedEffect
-        when (val result = repository.poll()) {
+        val result = repository.poll()
+        when (result) {
             is UsageRepository.PollResult.Success -> {
                 payload = result.payload
                 message = null
-                SessionService.start(context)
             }
             UsageRepository.PollResult.SignedOut -> {
                 signedIn = false
@@ -116,6 +116,15 @@ private fun Root() {
             }
             is UsageRepository.PollResult.Failed -> message = result.message
             else -> Unit
+        }
+        // Start the service on anything short of a dead grant, NOT only on a
+        // successful poll. The first version started it inside the Success
+        // branch, so a single failed poll on launch — a rate limit, a dropped
+        // connection — meant no card at all, even with a perfectly good
+        // last-known payload to show. The service handles failures itself: it
+        // holds the last value and backs off.
+        if (result !is UsageRepository.PollResult.SignedOut && cardMode != SessionPolicy.Mode.OFF) {
+            SessionService.start(context)
         }
     }
 

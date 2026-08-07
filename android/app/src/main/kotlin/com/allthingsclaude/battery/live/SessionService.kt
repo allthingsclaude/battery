@@ -7,6 +7,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import com.allthingsclaude.battery.core.PollBackoff
 import com.allthingsclaude.battery.core.SessionPolicy
 import com.allthingsclaude.battery.core.UsagePayload
 import com.allthingsclaude.battery.data.UsageRepository
@@ -45,6 +46,7 @@ class SessionService : Service() {
     private val settings by lazy { com.allthingsclaude.battery.data.Settings(this) }
     private var loop: Job? = null
     private var policyState = SessionPolicy.State()
+    private val backoff = PollBackoff()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -105,14 +107,17 @@ class SessionService : Service() {
                     // it: a transient network blip should not clear the user's
                     // lock screen. `updatedAt` is untouched, so the card ages
                     // visibly instead of pretending to be current.
-                    Log.w(TAG, "poll failed: ${result.message}")
-                    delay(backoffSeconds(result.retryAfterSeconds) * 1000)
+                    val wait = backoff.recordFailure(result.retryAfterSeconds)
+                    Log.w(TAG, "poll failed (${backoff.failureCount}x): ${result.message}; waiting ${wait}s")
+                    delay(wait * 1000)
                     continue
                 }
             }
 
             // Re-read every poll rather than caching: changing the mode in
             // settings has to take effect on the next tick, not on a restart.
+            backoff.recordSuccess()
+
             val outcome = SessionPolicy.evaluate(policyState, payload, settings.cardMode)
             policyState = outcome.state
 
@@ -147,14 +152,6 @@ class SessionService : Service() {
             }
         }
     }
-
-    /**
-     * A 429 tells us how long to wait; honour it. Anything else gets the idle
-     * cadence — retrying a broken network every three minutes drains the battery
-     * to no purpose.
-     */
-    private fun backoffSeconds(retryAfter: Long?): Long =
-        retryAfter?.coerceIn(30, 3600) ?: com.allthingsclaude.battery.core.AppConfig.IDLE_POLL_SECONDS
 
     private fun promote(notification: android.app.Notification) {
         if (Build.VERSION.SDK_INT >= 34) {

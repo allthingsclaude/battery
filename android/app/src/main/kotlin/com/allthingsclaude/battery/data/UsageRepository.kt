@@ -69,7 +69,28 @@ class UsageRepository(context: Context) {
         object Stale : PollResult()
     }
 
-    suspend fun poll(): PollResult = withContext(Dispatchers.IO) {
+    /**
+     * @param force skip the freshness gate. Only for an explicit user action —
+     *   never for a lifecycle event, which is what caused the problem below.
+     */
+    suspend fun poll(force: Boolean = false): PollResult = withContext(Dispatchers.IO) {
+        // Rate-limit guard, at the single choke point every caller goes through.
+        //
+        // Learned the hard way: the app polls on every resume, the service polls
+        // on its own cadence, and switching accounts or card modes polls too. A
+        // day of relaunching the app while developing was enough to earn a 429
+        // from the API — and the same shape of usage (open app, close, reopen)
+        // is entirely normal for a real user.
+        //
+        // Anything inside this window gets the cached payload, which is what
+        // every surface would have rendered anyway.
+        val cached = payloads.load()
+        if (!force && cached != null &&
+            Instant.now().epochSecond - cached.updatedAt.epochSecond < MIN_POLL_INTERVAL_SECONDS
+        ) {
+            return@withContext PollResult.Success(cached)
+        }
+
         val all = accounts.load()
         val account = all.firstOrNull { it.id == accounts.selectedId } ?: all.firstOrNull()
             ?: return@withContext PollResult.NoAccount
@@ -226,5 +247,12 @@ class UsageRepository(context: Context) {
     private companion object {
         const val TAG = "UsageRepository"
         const val ACTIVE_WINDOW_SECONDS = 10 * 60
+
+        /**
+         * Floor between network polls. Comfortably under the service's own
+         * three-minute cadence, so it never delays a scheduled refresh — it only
+         * absorbs the bursts that come from lifecycle events.
+         */
+        const val MIN_POLL_INTERVAL_SECONDS = 60
     }
 }
