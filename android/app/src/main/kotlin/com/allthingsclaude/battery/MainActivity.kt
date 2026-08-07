@@ -39,7 +39,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.allthingsclaude.battery.auth.AuthService
 import com.allthingsclaude.battery.core.UsagePayload
 import com.allthingsclaude.battery.data.Settings
@@ -99,32 +101,47 @@ private fun Root() {
     var showSettings by remember { mutableStateOf(false) }
     var cardMode by remember { mutableStateOf(Settings(context).cardMode) }
 
-    // One refresh per resume. Enough to make reopening the app feel current
-    // without competing with the service for the poll budget.
+    // One refresh per resume.
+    //
+    // `repeatOnLifecycle`, not a bare LaunchedEffect keyed on the lifecycle
+    // owner. That was the original, and it did not do what its own comment
+    // claimed: neither key changes when the activity is resumed, and the owner
+    // was captured rather than observed, so the body ran once per *composition*
+    // — a cold start. The activity is singleTask, so returning from the home
+    // screen or tapping a widget resumes the existing instance without
+    // recomposing, and nothing refreshed at all. That is the missing trigger
+    // behind a card left sitting on a stale number: the surface that was
+    // supposed to notice had stopped looking.
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner, signedIn) {
         if (!signedIn) return@LaunchedEffect
-        val result = repository.poll()
-        when (result) {
-            is UsageRepository.PollResult.Success -> {
-                payload = result.payload
-                message = null
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            val result = repository.poll()
+            when (result) {
+                is UsageRepository.PollResult.Success -> {
+                    payload = result.payload
+                    message = null
+                }
+                UsageRepository.PollResult.SignedOut -> {
+                    signedIn = false
+                    message = "Session expired — sign in again."
+                }
+                is UsageRepository.PollResult.Failed -> message = result.message
+                else -> Unit
             }
-            UsageRepository.PollResult.SignedOut -> {
-                signedIn = false
-                message = "Session expired — sign in again."
+            // Start the service on anything short of a dead grant, NOT only on a
+            // successful poll. The first version started it inside the Success
+            // branch, so a single failed poll on launch — a rate limit, a dropped
+            // connection — meant no card at all, even with a perfectly good
+            // last-known payload to show. The service handles failures itself: it
+            // holds the last value and backs off.
+            //
+            // Starting an already-running service is the deliberate path, not a
+            // wasted call: it repaints the card from the payload this poll just
+            // stored and wakes the poll loop out of its delay.
+            if (result !is UsageRepository.PollResult.SignedOut && cardMode != SessionPolicy.Mode.OFF) {
+                SessionService.start(context)
             }
-            is UsageRepository.PollResult.Failed -> message = result.message
-            else -> Unit
-        }
-        // Start the service on anything short of a dead grant, NOT only on a
-        // successful poll. The first version started it inside the Success
-        // branch, so a single failed poll on launch — a rate limit, a dropped
-        // connection — meant no card at all, even with a perfectly good
-        // last-known payload to show. The service handles failures itself: it
-        // holds the last value and backs off.
-        if (result !is UsageRepository.PollResult.SignedOut && cardMode != SessionPolicy.Mode.OFF) {
-            SessionService.start(context)
         }
     }
 
