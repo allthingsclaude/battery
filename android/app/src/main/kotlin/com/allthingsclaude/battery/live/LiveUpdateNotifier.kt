@@ -22,20 +22,23 @@ import kotlin.math.roundToInt
  * Builds and posts the Live Update — the prominent lock-screen card, and the
  * top-of-shade ranking that comes with it.
  *
- * **What this reaches, measured on a Galaxy S24 Ultra / One UI 8.5:** the
- * lock-screen card and the shade. **What it does not:** the status-bar chip
- * (One UI draws the small icon instead) or Samsung's bottom Now Bar pill.
+ * **Measured on a Galaxy S24 Ultra / One UI 8.5, this reaches all of it:**
+ * Samsung's Now Bar pill, the status-bar chip, the lock screen, and the top of
+ * the shade — on plain AOSP APIs, with no Samsung-specific code whatsoever.
  *
- * One UI appears to run two pipelines. AOSP's promoted notifications — which
- * this satisfies completely, verified by `FLAG_PROMOTED_ONGOING` on a live post
- * — drive the lock-screen card. Samsung's own apps reach the Now Bar and the
- * chip through a *private* ongoing-activity path instead, using
- * `android.ongoingActivityNoti.*` extras and a `com.samsung.android.support.ongoing_activity`
- * manifest entry, and use none of the AOSP promoted APIs at all. Evidence
- * suggests that path is package-whitelisted.
+ * The catch is a gate, not an API. One UI 8.5 ships **Developer options ▸ "Live
+ * notifications for all apps" turned OFF**, and with it off a promoted
+ * notification still gets `FLAG_PROMOTED_ONGOING` and still renders as a
+ * lock-screen card — it simply never reaches the Now Bar or the chip. That
+ * partial success is what made it look like a missing capability rather than a
+ * switch. See android/NOW_BAR.md.
  *
- * So [samsungExtrasEnabled] and the manifest meta-data are live experiments, not
- * dependencies. Everything the app promises works on the AOSP path alone.
+ * An earlier revision carried decompiled `android.ongoingActivityNoti.*` extras
+ * on the theory that Samsung's own apps use a private pipeline. They do — the
+ * Clock's stopwatch has `mIsPromotion=false` and those extras — but it is not
+ * the only way in. Verified by posting with the extras provably absent
+ * (`ongoingActivityNoti keys: 0`) and watching the pill appear anyway, so the
+ * experiment is deleted rather than shipped.
  *
  * The failure mode worth knowing: if *any* qualification clause is missed, the
  * notification still posts and still looks correct in the shade — it simply
@@ -59,15 +62,6 @@ object LiveUpdateNotifier {
             .build()
         NotificationManagerCompat.from(context).createNotificationChannel(channel)
     }
-
-    /**
-     * Undocumented Samsung extras, recovered by decompiling Samsung Clock /
-     * Health / Voice Recorder. Off by default — this is an experiment toggle so
-     * the hypothesis can be A/B'd on device without a rebuild, not something the
-     * app relies on. See [buildSamsungExtras].
-     */
-    @Volatile
-    var samsungExtrasEnabled: Boolean = false
 
     fun build(
         context: Context,
@@ -143,8 +137,6 @@ object LiveUpdateNotifier {
         // dismissed even while the service runs, so this genuinely fires.
         builder.setDeleteIntent(dismissIntent(context, payload))
 
-        if (samsungExtrasEnabled) builder.addExtras(buildSamsungExtras(percent, level))
-
         // The countdown to reset, ticked by the system with zero updates from us —
         // the direct analogue of iOS's `Text(resetsAt, style: .relative)`.
         payload.sessionResetsAt?.let { resetsAt ->
@@ -196,27 +188,6 @@ object LiveUpdateNotifier {
     }
 
     /**
-     * Samsung's private ongoing-activity payload. `style = 1` asks for both the
-     * notification and the Now Bar (0 = notification only, 2 = Now Bar only).
-     *
-     * Every key here is decompilation-derived from Samsung's own apps, not
-     * documented anywhere, and the evidence says the pipeline is probably
-     * package-whitelisted — so treat a success here as a discovery and a failure
-     * as the expected outcome. Unrecognised extras are ignored by the platform,
-     * so this cannot break the AOSP card we already have.
-     */
-    private fun buildSamsungExtras(percent: Int, level: UsageLevel): Bundle =
-        Bundle().apply {
-            putInt("android.ongoingActivityNoti.style", 1)
-            putInt("android.ongoingActivityNoti.chipBgColor", level.color)
-            putString("android.ongoingActivityNoti.chipExpandedText", "$percent%")
-            putString("android.ongoingActivityNoti.primaryInfo", "Claude · $percent%")
-            putString("android.ongoingActivityNoti.nowbarPrimaryInfo", "Claude · $percent%")
-            putInt("android.ongoingActivityNoti.progress", percent)
-            putInt("android.ongoingActivityNoti.progressMax", 100)
-        }
-
-    /**
      * Everything the system will tell us about whether this card was actually
      * promoted. Without it the only symptom of a failed clause is an absence.
      */
@@ -242,7 +213,6 @@ object LiveUpdateNotifier {
         // their ongoing-activity code on exactly this feature string.
         val pm = context.packageManager
         sb.appendLine("feature.nowbar    ${pm.hasSystemFeature("com.samsung.feature.nowbar")}")
-        sb.appendLine("samsung extras    ${if (samsungExtrasEnabled) "ON (experiment)" else "off"}")
         return sb.toString().trim()
     }
 

@@ -87,7 +87,6 @@ private fun SpikeScreen() {
         mutableStateOf(if (repository.isSignedIn()) "Signed in." else "Not signed in.")
     }
     var diagnostics by remember { mutableStateOf("Post a card, then refresh.") }
-    var samsungExtras by remember { mutableStateOf(LiveUpdateNotifier.samsungExtrasEnabled) }
 
     // Live data wins when we have it — the synthetic slider is the fallback.
     fun payload(): UsagePayload =
@@ -220,25 +219,6 @@ private fun SpikeScreen() {
                 SessionService.stop(context)
                 status = "Session service stopped."
             }) { Text("Stop service") }
-        }
-
-        // The A/B for the two-pipeline theory — see android/NOW_BAR.md. One UI's
-        // Now Bar is driven by Samsung's private ongoing-activity extras, not the
-        // AOSP promoted APIs we already satisfy. Toggling here avoids a rebuild
-        // between the two posts.
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Switch(
-                checked = samsungExtras,
-                onCheckedChange = {
-                    samsungExtras = it
-                    LiveUpdateNotifier.samsungExtrasEnabled = it
-                    LiveUpdateNotifier.post(context, payload())
-                },
-            )
-            Text(
-                "  Samsung ongoing-activity extras",
-                style = MaterialTheme.typography.bodySmall,
-            )
         }
 
         OutlinedButton(onClick = {

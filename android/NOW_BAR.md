@@ -1,137 +1,112 @@
-# The Now Bar: what we know, and what to test next
+# The Now Bar: solved
 
-Status as of Phase 0 + research. Read this before spending another hour on the
-Now Bar — most of the obvious theories are already dead.
+**It works, on plain AOSP APIs, with no Samsung-specific code at all.** The
+blocker was never a missing capability — it was a switch that ships off.
 
-## What works today
+Verified on a Galaxy S24 Ultra, SM-S928B, One UI 8.5 / Android 16 / API 36.
 
-On a Galaxy S24 Ultra (SM-S928B), One UI 8.5 / Android 16 / API 36, the app's
-`ProgressStyle` notification is promoted by the system:
+## The answer
+
+**Developer options ▸ "Live notifications for all apps" is OFF by default in One
+UI 8.5 stable.** Turn it on and a standard `Notification.ProgressStyle` Live
+Update reaches every surface at once:
+
+| Surface | With the toggle off | With it on |
+|---|---|---|
+| Samsung Now Bar pill (lock screen) | ✗ | ✅ `Claude · 8%` |
+| Status-bar chip | ✗ (icon only) | ✅ |
+| Lock-screen card | ✅ | ✅ |
+| Top of the notification shade | ✅ | ✅ |
+
+Nothing in the app changed between those two columns.
+
+## Why this took so long to find
+
+The failure was **partial**, which is the worst kind. With the toggle off the
+notification still earns `FLAG_PROMOTED_ONGOING`, still gets the prominent
+lock-screen card, still outranks everything in the shade. Every diagnostic said
+"promoted". Only two of four surfaces were missing, which reads as a
+capability Samsung withholds rather than a switch nobody flipped.
+
+That led to a wrong conclusion being written down as settled: *"One UI does not
+render the AOSP status-bar chip; `setShortCriticalText` reaches the system and
+Samsung simply doesn't draw it; there is no alternative API and this is not
+fixable from the app."* All of it was gated, none of it was true.
+
+`setShortCriticalText` is used, incidentally — One UI renders it as the pill's
+second line, not in the status bar. On our card that's the `8%` under
+`Claude · 8%`.
+
+## The two-pipeline theory: half right, and irrelevant
+
+Samsung's own apps genuinely do not use AOSP promotion. The Clock's stopwatch,
+dumped while sitting in the Now Bar:
 
 ```
-flags=ONGOING_EVENT|PROMOTED_ONGOING
+flags=ONGOING_EVENT|NO_CLEAR|FOREGROUND_SERVICE     ← no PROMOTED_ONGOING
+mIsPromotion=false
+android.ongoingActivityNoti.nowbarPrimaryInfo = "Stopwatch"
+android.ongoingActivityNoti.secondaryInfo     = "No laps completed"
+android.ongoingActivityNoti.chipIcon          = Icon(...)
+android.ongoingActivityNoti.chronometerRemoteViewTag = "stopwatch_ongoing_activity_chronometer"
 ```
 
-That buys the **prominent lock-screen card** and **top-of-shade ranking** — it
-outranks a freshly-arrived IM. No developer flag was needed; the
-`Live notifications for all apps` toggle was a One UI 8 *beta* gate.
+So the private pipeline is real. It is simply **not the only way in**, which is
+the part the research got wrong. Proven by posting with those extras provably
+absent — `ongoingActivityNoti keys: 0` — and watching the pill appear anyway.
 
-## What doesn't, and why it probably isn't our fault
+The decompiled extras and the
+`com.samsung.android.support.ongoing_activity` manifest entry have therefore
+been **deleted**, not kept as a fallback. Shipping reverse-engineered keys that
+demonstrably do nothing is worse than not shipping them.
 
-| Surface | Result |
-|---|---|
-| Status-bar chip (`setShortCriticalText`) | **Not rendered.** One UI draws the app's small icon instead |
-| Samsung's bottom Now Bar pill | **Not reached** |
-| AOD | Icon only (but see test 8 — this may be normal One UI behaviour) |
+## Also settled
 
-`setShortCriticalText` is not missing or wrong: the value reaches the system,
-sitting in the posted notification's extras as
-`android.shortCriticalText=String (87%)`. AOSP's feature flags are all on
-(`android.app.ui_rich_ongoing`, `status_bar_chips_modernization`). Samsung simply
-doesn't draw it — and the neighbouring `status_bar_call_chip_use_is_hidden=true`
-shows they deliberately hide AOSP's chip in favour of their own.
+- **The Settings ▸ Live notifications allowlist is irrelevant.** Battery is not
+  in it and reaches the Now Bar regardless. It is an OS-curated list (an inert
+  Uber toggle appeared there before Uber had implemented anything), and
+  membership is neither necessary nor sufficient.
+- **Only one status-bar chip renders at a time.** With the stopwatch running it
+  held the chip and ours did not appear. The Now Bar pill is not similarly
+  limited — both were present.
 
-## The two-pipeline theory
+## The remaining problem: it needs a developer-options toggle
 
-Decompilation of Samsung Clock, Health, Voice Recorder, SmartThings and Notes
-finds `android.ongoingActivityNoti.*` extras, a
-`com.samsung.android.support.ongoing_activity` manifest entry, and feature
-detection on `com.samsung.feature.nowbar` — and **no** `setRequestPromotedOngoing`,
-`POST_PROMOTED_NOTIFICATIONS` or `Notification.ProgressStyle` anywhere. Samsung's
-own apps do not use the API we're using.
+This is now a distribution problem rather than an engineering one, and it is not
+solved.
 
-So One UI likely runs AOSP promoted notifications (→ lock-screen card) and a
-private Samsung ongoing-activity path (→ Now Bar + chip) side by side.
+- **It cannot be detected at runtime.** With the toggle off, promotion still
+  succeeds — `canPostPromotedNotifications()` is true and `FLAG_PROMOTED_ONGOING`
+  is set. There is no signal that separates "promoted and rendering everywhere"
+  from "promoted and rendering in half the places", so the app cannot
+  helpfully prompt for it.
+- **It cannot be enabled programmatically.** Developer options are not
+  app-writable.
+- So the only honest handling is documentation: first-run guidance saying the
+  Now Bar and status-bar chip need Developer options ▸ *Live notifications for
+  all apps*, and that the lock-screen card works without it.
 
-## Two things that are settled
+Open question worth checking on a second device: whether this toggle is
+One UI 8.5-specific, and whether One UI 9 / Android 17 defaults it on. If it
+does, this whole section becomes a footnote.
 
-**The Settings ▸ Live notifications list is a Samsung-curated allowlist.** The
-decisive evidence: an **Uber** toggle appeared in that list on an internal
-One UI 8 build and was completely inert — enabling it changed nothing, because
-Uber hadn't implemented anything. Samsung shipped the toggle from the OS side,
-keyed on package name. No amount of correct code adds us to that list. Perplexity
-is almost certainly there via its Galaxy partnership (preloaded on S26, "first
-non-Google company to receive OS-level access").
+## What the app actually does
 
-**But list membership is not required for the Now Bar.** Zomato (v19.2.4.1, Oct
-2025) shipped Now Bar *and* status-bar pill support using Android 16 Live
-Updates, and users report no toggle for it in that settings list. A third-party
-non-partner app got there on the public API.
+Plain AOSP, and that is the whole point:
 
-**Therefore: stop chasing the list. Chase the chip.** Zomato is the existence
-proof that it's reachable.
-
-## Device tests, in order
-
-Run top to bottom; stop when one succeeds. Each says what its result *means*.
-
-1. **Developer options → "Live notifications for all apps".**
-   Present and OFF → enable, repost. Chip appears ⇒ **done, that's the gate.**
-   Present and ON already ⇒ refutes the hypothesis, go to 4.
-   Absent ⇒ removed or renamed in 8.5; note it.
-
-2. `adb shell settings list global | grep -iE 'live|nowbar|ongoing|promoted'`
-   (repeat for `secure`, `system`). A Samsung-namespaced key can be flipped
-   directly with `settings put` — fastest possible win.
-
-3. **Spike app → "Refresh diagnostics".** Read `canPostPromoted` and
-   `feature.nowbar`. `canPostPromoted=false` ⇒ a settings toggle is blocking us,
-   not code. `feature.nowbar=false` ⇒ the device doesn't advertise the Now Bar
-   at all, which would reframe everything.
-
-4. **Spike app → "Open promoted-notification settings".** *Which screen appears
-   is the finding.* A dedicated per-app Live-notifications toggle ⇒ AOSP's
-   surface is wired and that's the gate. The generic app-notification screen, or
-   nothing ⇒ Samsung didn't wire it, corroborating the two-pipeline theory.
-   (Note: the Android docs name this intent `ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS`,
-   which does not exist. The real constant is `ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS`.)
-
-5. **Spike app → toggle "Samsung ongoing-activity extras", which reposts.**
-   Chip or Now Bar appears ⇒ the private extras are the path and are not
-   whitelisted. Nothing ⇒ expected; the path is package-gated.
-
-6. **Install Zomato, trigger an order, or build Google's `platform-samples`
-   live-updates sample.** *This is the highest-value test in the list.* If
-   Zomato/the sample gets a chip and we don't, the difference is in **our
-   payload** — diff the two `dumpsys notification` records. If neither does, it's
-   a device-wide gate and no code change will help.
-
-7. `adb shell dumpsys notification --noredact`, then start a Samsung Clock timer
-   or a Voice Recorder recording and diff their record against ours. Look for
-   `android.ongoingActivityNoti.*` keys in theirs. Present in theirs and absent
-   in ours ⇒ confirms the two pipelines and names the exact keys that matter.
-
-8. **AOD.** Set *Settings ▸ Lock screen and AOD ▸ Always On Display ▸ When to
-   show* = **Always** (it was off entirely during Phase 0, so that result was
-   void). Then **double-tap the notification icon on the AOD**. If the card
-   expands, our AOD observation is normal One UI behaviour and not a bug — don't
-   spend engineering time on it.
-
-## Already applied in code
-
-- `com.samsung.android.support.ongoing_activity` manifest meta-data
-- `setCategory(CATEGORY_PROGRESS)`
-- `LiveUpdateNotifier.samsungExtrasEnabled` — the private-extras experiment,
-  default off, toggleable in the spike UI
-- `feature.nowbar` and `canPostPromotedNotifications()` in `diagnose()`
+- `POST_PROMOTED_NOTIFICATIONS` + `setRequestPromotedOngoing(true)` + `setOngoing(true)`
+- `Notification.ProgressStyle` with the terracotta ramp as segments and the
+  projection as a `Point`
+- `setShortCriticalText` — the pill's second line
+- `setWhen` + `setChronometerCountDown` — the countdown, ticking with zero updates
+- `setCategory(CATEGORY_PROGRESS)` — not required, but honest semantics
+- a `specialUse` foreground service whose notification *is* the card
 
 ## Dead ends — do not re-litigate
 
-- **There is no public Samsung Now Bar SDK.** A developer asked on the Samsung
-  Developer Forums in Feb 2025; the thread is unanswered, and a site-restricted
-  search of developer.samsung.com turns up nothing else.
-- **`setColorized(true)`** and **custom `RemoteViews`** are *disqualifying* under
-  AOSP — they'd lose us the card we already have.
-- **Our AOSP implementation is not the problem.** `FLAG_PROMOTED_ONGOING` proves
-  every documented clause is satisfied. Don't re-audit it.
-- **`MediaSession`** only earns the dedicated "Media player" row. It is not a
-  general Now Bar entry point, and a usage meter can't use it.
-- **AOSP feature flags** are all enabled; they aren't the gate.
-
-## The honest fallback
-
-If every test above fails, the lock-screen card is what Android gives a
-non-partner app — and per PLAN_01 that was accepted as the product. It is a live,
-always-current usage meter on the lock screen with a countdown that ticks for
-free, ranked above everything else in the shade. The Now Bar pill would be nice.
-It was never the thing that makes this useful.
+- No public Samsung Now Bar SDK exists.
+- `setColorized(true)` and custom `RemoteViews` are **disqualifying** under AOSP.
+- `MediaSession` only earns the dedicated "Media player" row.
+- The AOSP feature flags (`ui_rich_ongoing` et al.) were never the gate; they
+  were enabled throughout.
+- The `ongoingActivityNoti.*` extras are not needed. Tried, measured, removed.

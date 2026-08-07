@@ -42,18 +42,17 @@ this same APK.
 
 ## The Now Bar
 
-Read [`NOW_BAR.md`](NOW_BAR.md) before spending time on it. Short version:
+**Solved** — see [`NOW_BAR.md`](NOW_BAR.md). It works on plain AOSP APIs with no
+Samsung-specific code, and reaches the Now Bar pill, the status-bar chip, the
+lock-screen card and the top of the shade at once.
 
-- The promoted **lock-screen card works** — verified on a Galaxy S24 Ultra,
-  One UI 8.5: `flags=ONGOING_EVENT|PROMOTED_ONGOING`, no developer flag needed.
-- The **status-bar chip does not render**, and it is not our bug —
-  `setShortCriticalText` reaches the system, and Samsung's SystemUI simply
-  doesn't draw the AOSP chip.
-- Samsung's **bottom Now Bar pill is a second, private pipeline** that Samsung's
-  own apps use and which is probably package-whitelisted.
-- The **Settings ▸ Live notifications list is an OS-curated allowlist.** No code
-  gets an app into it. But list membership is *not* required for the Now Bar, so
-  it isn't the thing to chase.
+The one catch is a switch, not an API: **Developer options ▸ "Live notifications
+for all apps" ships OFF in One UI 8.5.** With it off, promotion still succeeds
+and the lock-screen card still appears — only the Now Bar and the chip are
+missing, which is exactly why it looked like a missing capability for so long.
+
+It cannot be detected at runtime (promotion reports success either way) and it
+cannot be set programmatically, so the only handling is telling the user.
 
 ---
 
