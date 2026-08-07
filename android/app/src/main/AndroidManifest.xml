@@ -12,6 +12,19 @@
     -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
 
+    <!--
+      The service exists exactly as long as its notification is on the lock
+      screen, so the notification is the user-visible justification for it.
+
+      specialUse rather than dataSync: dataSync is capped at 6h per 24h on
+      Android 15+, which a back-to-back coding day would exhaust, and there is no
+      graceful degradation — the system throws. specialUse carries no timeout,
+      and distribution is off-Play so its Play Console justification doesn't
+      apply.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
@@ -34,6 +47,15 @@
         <meta-data
             android:name="com.samsung.android.support.ongoing_activity"
             android:value="true" />
+
+        <service
+            android:name=".live.SessionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the live Claude Code session card on the lock screen current while a session is active." />
+        </service>
 
         <activity
             android:name=".SpikeActivity"

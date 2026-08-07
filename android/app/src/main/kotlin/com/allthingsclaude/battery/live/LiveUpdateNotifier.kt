@@ -68,7 +68,12 @@ object LiveUpdateNotifier {
     @Volatile
     var samsungExtrasEnabled: Boolean = false
 
-    fun build(context: Context, payload: UsagePayload): Notification {
+    fun build(
+        context: Context,
+        payload: UsagePayload,
+        didReset: Boolean = false,
+        alertLevel: UsageLevel? = null,
+    ): Notification {
         val percent = payload.sessionUtilization.roundToInt().coerceIn(0, 100)
         val level = UsageLevel.from(payload.sessionUtilization)
 
@@ -98,8 +103,16 @@ object LiveUpdateNotifier {
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_battery)
-            .setContentTitle("Claude · $percent%")
-            .setContentText(headline(payload))
+            .setContentTitle(if (didReset) "Session reset" else "Claude · $percent%")
+            .setContentText(
+                if (didReset) "A fresh 5-hour window just opened." else headline(payload)
+            )
+            // An alerting update makes a sound and shows a banner. Only ever set
+            // on a level crossing — SessionPolicy guarantees at most one per
+            // level, because re-alerting on every poll at 91% is how a user
+            // learns to swipe the card away, and a dismissed Live Update must
+            // never be reposted.
+            .setOnlyAlertOnce(alertLevel == null)
             .setStyle(style)
             // ── The four clauses that make this a Live Update ───────────────
             .setOngoing(true)
@@ -136,9 +149,15 @@ object LiveUpdateNotifier {
         return builder.build()
     }
 
-    fun post(context: Context, payload: UsagePayload) {
+    fun post(
+        context: Context,
+        payload: UsagePayload,
+        didReset: Boolean = false,
+        alertLevel: UsageLevel? = null,
+    ) {
         ensureChannel(context)
-        NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, build(context, payload))
+        NotificationManagerCompat.from(context)
+            .notify(NOTIFICATION_ID, build(context, payload, didReset, alertLevel))
     }
 
     fun cancel(context: Context) {

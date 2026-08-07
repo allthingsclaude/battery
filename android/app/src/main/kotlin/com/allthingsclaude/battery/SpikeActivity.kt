@@ -35,10 +35,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.allthingsclaude.battery.auth.AuthService
+import com.allthingsclaude.battery.core.AppConfig
 import com.allthingsclaude.battery.core.UsageForecast
 import com.allthingsclaude.battery.core.UsagePayload
 import com.allthingsclaude.battery.data.UsageRepository
 import com.allthingsclaude.battery.live.LiveUpdateNotifier
+import com.allthingsclaude.battery.live.SessionService
 import kotlinx.coroutines.launch
 
 /**
@@ -205,6 +207,20 @@ private fun SpikeScreen() {
         ) { Text("Post Live Update") }
 
         OutlinedButton(onClick = { LiveUpdateNotifier.cancel(context) }) { Text("Cancel card") }
+
+        // The real path: the service's own notification IS the card, so starting
+        // it is what a hot session will do on its own in the finished app.
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                SessionService.start(context)
+                status = "Session service started — polling every " +
+                    "${AppConfig.ACTIVE_POLL_SECONDS / 60} min."
+            }) { Text("Start service") }
+            OutlinedButton(onClick = {
+                SessionService.stop(context)
+                status = "Session service stopped."
+            }) { Text("Stop service") }
+        }
 
         // The A/B for the two-pipeline theory — see android/NOW_BAR.md. One UI's
         // Now Bar is driven by Samsung's private ongoing-activity extras, not the
