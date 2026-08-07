@@ -1,0 +1,256 @@
+package com.allthingsclaude.battery.core
+
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.format.DateTimeParseException
+
+/**
+ * OAuth tokens for one account. Port of `StoredTokens` in
+ * `ios/BatteryKit/UsageAPIShared.swift`.
+ *
+ * [expiresAt] is epoch **milliseconds**, matching the iOS field exactly, so a
+ * future cross-platform pairing step wouldn't have to reconcile two encodings.
+ */
+data class StoredTokens(
+    val accessToken: String,
+    val refreshToken: String?,
+    val expiresAt: Long,
+) {
+    val expiryInstant: Instant get() = Instant.ofEpochMilli(expiresAt)
+
+    fun isExpiringSoon(now: Instant = Instant.now()): Boolean =
+        expiryInstant.epochSecond - now.epochSecond < AppConfig.TOKEN_REFRESH_LEEWAY_SECONDS
+
+    companion object {
+        fun fromExpiresIn(accessToken: String, refreshToken: String?, expiresInSeconds: Long) =
+            StoredTokens(
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+                expiresAt = System.currentTimeMillis() + expiresInSeconds * 1000,
+            )
+    }
+}
+
+/** One rate-limit window as the API reports it. */
+data class UsageBucket(val utilization: Double, val resetsAt: Instant?)
+
+/** The `/api/oauth/usage` response. */
+data class UsageResponse(
+    val fiveHour: UsageBucket?,
+    val sevenDay: UsageBucket,
+    val sevenDayOpus: UsageBucket?,
+    val rateLimitTier: String?,
+) {
+    /**
+     * Display name for the plan, or "" when unknown.
+     *
+     * Never guessed from the presence of an Opus bucket — the iOS and macOS
+     * comments are emphatic about this, and a wrong plan label on a Live Update
+     * is a confident lie on the lock screen.
+     */
+    val planDisplayName: String
+        get() {
+            val t = rateLimitTier?.lowercase() ?: return ""
+            return when {
+                t.contains("max_5x") || t.contains("max5x") -> "Max 5x"
+                t.contains("max") -> "Max"
+                t.contains("pro") -> "Pro"
+                else -> ""
+            }
+        }
+}
+
+/** Everything that can go wrong talking to the usage API. */
+sealed class UsageApiError(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    /** The grant is dead — the account must be re-added. */
+    object Unauthorized : UsageApiError("Session expired — please sign in again.")
+    class RateLimited(val retryAfterSeconds: Long?) : UsageApiError("Rate limited by the API.")
+    class Server(val code: Int) : UsageApiError("Server error ($code).")
+    class Network(cause: Throwable) : UsageApiError(cause.message ?: "Network error", cause)
+    class Decoding(cause: Throwable) : UsageApiError("Bad response: ${cause.message}", cause)
+}
+
+/**
+ * The usage API client. A merge of the iOS `UsageAPI` actor and `UsageFetcher`.
+ *
+ * Deliberately built on `HttpURLConnection` and hand-parsed JSON rather than
+ * OkHttp + a serialization plugin: this module is plain JVM by design (see
+ * `core/build.gradle.kts`), the whole surface is one GET and one POST, and four
+ * fields do not justify a compiler plugin. `parseToJsonElement` is a runtime-only
+ * API, so no `@Serializable` types and no plugin are involved.
+ *
+ * [transport] exists so tests can drive the parsing and the refresh logic without
+ * a network — the iOS original has no such seam and is correspondingly untested.
+ */
+class UsageApi(
+    private val userAgent: String,
+    private val transport: HttpTransport = UrlConnectionTransport(),
+) {
+
+    /** The narrow HTTP surface this client needs. */
+    interface HttpTransport {
+        /** @return status code and body. Throws only for transport-level failures. */
+        fun request(
+            url: String,
+            method: String,
+            headers: Map<String, String>,
+            body: String?,
+        ): Response
+
+        data class Response(val code: Int, val body: String, val headers: Map<String, String> = emptyMap())
+    }
+
+    /**
+     * Fetch usage, refreshing the access token first if it's close to expiry.
+     *
+     * @return the usage plus, when a refresh happened, the tokens to persist.
+     * The caller must store them: a rotated refresh token that isn't saved
+     * invalidates the grant on the next call.
+     */
+    fun fetchUsage(tokens: StoredTokens): Pair<UsageResponse, StoredTokens?> {
+        var updated: StoredTokens? = null
+        var accessToken = tokens.accessToken
+
+        if (tokens.isExpiringSoon()) {
+            val refresh = tokens.refreshToken ?: throw UsageApiError.Unauthorized
+            val refreshed = refreshTokens(refresh, tokens)
+            accessToken = refreshed.accessToken
+            updated = refreshed
+        }
+
+        return requestUsage(accessToken) to updated
+    }
+
+    /** A plain GET with an already-valid access token. Never refreshes. */
+    fun requestUsage(accessToken: String): UsageResponse {
+        val response = try {
+            transport.request(
+                url = AppConfig.API_BASE_URL + AppConfig.USAGE_PATH,
+                method = "GET",
+                headers = mapOf(
+                    "Authorization" to "Bearer $accessToken",
+                    "anthropic-beta" to AppConfig.BETA_HEADER,
+                    "User-Agent" to userAgent,
+                ),
+                body = null,
+            )
+        } catch (e: Exception) {
+            throw UsageApiError.Network(e)
+        }
+
+        when (response.code) {
+            200 -> Unit
+            401 -> throw UsageApiError.Unauthorized
+            429 -> throw UsageApiError.RateLimited(
+                response.headers["Retry-After"]?.toLongOrNull()
+            )
+            else -> throw UsageApiError.Server(response.code)
+        }
+
+        return try {
+            parseUsage(response.body)
+        } catch (e: Exception) {
+            throw UsageApiError.Decoding(e)
+        }
+    }
+
+    /**
+     * Exchange a refresh token for a fresh access token.
+     *
+     * `refresh_token` may be absent from the response, in which case the old one
+     * is still valid and must be carried forward — dropping it here would sign
+     * the account out on the next refresh.
+     */
+    fun refreshTokens(refreshToken: String, previous: StoredTokens): StoredTokens {
+        val body = buildString {
+            append("{\"grant_type\":\"refresh_token\",")
+            append("\"refresh_token\":${quote(refreshToken)},")
+            append("\"client_id\":${quote(AppConfig.OAUTH_CLIENT_ID)},")
+            append("\"scope\":${quote(AppConfig.OAUTH_SCOPES)}}")
+        }
+
+        val response = try {
+            transport.request(
+                url = AppConfig.OAUTH_TOKEN_URL,
+                method = "POST",
+                headers = mapOf(
+                    "Content-Type" to "application/json",
+                    "User-Agent" to userAgent,
+                ),
+                body = body,
+            )
+        } catch (e: Exception) {
+            throw UsageApiError.Network(e)
+        }
+
+        if (response.code != 200) {
+            // 400/401/403 mean the grant itself is dead, not that the request
+            // was malformed — the only cure is a new sign-in.
+            if (response.code in listOf(400, 401, 403)) throw UsageApiError.Unauthorized
+            throw UsageApiError.Server(response.code)
+        }
+
+        return parseTokens(response.body, previous)
+    }
+
+    companion object {
+        private val json = Json { ignoreUnknownKeys = true }
+
+        fun parseUsage(body: String): UsageResponse {
+            val root = json.parseToJsonElement(body).jsonObject
+            return UsageResponse(
+                fiveHour = bucket(root, "five_hour"),
+                sevenDay = bucket(root, "seven_day")
+                    ?: throw IllegalArgumentException("response has no seven_day bucket"),
+                sevenDayOpus = bucket(root, "seven_day_opus"),
+                rateLimitTier = root["rate_limit_tier"]?.jsonPrimitive?.contentOrNullSafe(),
+            )
+        }
+
+        fun parseTokens(body: String, previous: StoredTokens?): StoredTokens {
+            val root = json.parseToJsonElement(body).jsonObject
+            val access = root["access_token"]?.jsonPrimitive?.contentOrNullSafe()
+                ?: throw IllegalArgumentException("token response has no access_token")
+            val refresh = root["refresh_token"]?.jsonPrimitive?.contentOrNullSafe()
+                ?: previous?.refreshToken
+            val expiresIn = root["expires_in"]?.jsonPrimitive?.contentOrNullSafe()?.toLongOrNull()
+                ?: 3600L
+            return StoredTokens.fromExpiresIn(access, refresh, expiresIn)
+        }
+
+        private fun bucket(root: kotlinx.serialization.json.JsonObject, key: String): UsageBucket? {
+            val obj = root[key]?.takeIf { it is kotlinx.serialization.json.JsonObject }
+                ?.jsonObject ?: return null
+            val utilization = obj["utilization"]?.jsonPrimitive?.contentOrNullSafe()?.toDoubleOrNull()
+                ?: return null
+            return UsageBucket(
+                utilization = utilization,
+                resetsAt = obj["resets_at"]?.jsonPrimitive?.contentOrNullSafe()?.let(::parseInstant),
+            )
+        }
+
+        /**
+         * The API sends ISO-8601 with or without fractional seconds; iOS tries
+         * both formats for the same reason.
+         */
+        fun parseInstant(text: String): Instant? = try {
+            OffsetDateTime.parse(text).toInstant()
+        } catch (_: DateTimeParseException) {
+            try {
+                Instant.parse(text)
+            } catch (_: DateTimeParseException) {
+                null
+            }
+        }
+
+        private fun quote(s: String): String =
+            "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+        /** `jsonPrimitive.content` on a JSON null yields the string "null". */
+        private fun kotlinx.serialization.json.JsonPrimitive.contentOrNullSafe(): String? =
+            if (this is kotlinx.serialization.json.JsonNull) null else content
+    }
+}

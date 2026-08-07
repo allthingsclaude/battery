@@ -24,6 +24,11 @@ java {
 }
 
 dependencies {
+    // Used via the runtime `parseToJsonElement` API only — no @Serializable
+    // types, so no compiler plugin. The API surface is one GET and one POST;
+    // four fields do not justify code generation.
+    implementation(libs.kotlinx.serialization.json)
+
     testImplementation(kotlin("test"))
     // Test-only, and only for reading the shared fixtures. No @Serializable types
     // and therefore no compiler plugin: Json.parseToJsonElement is a pure runtime
