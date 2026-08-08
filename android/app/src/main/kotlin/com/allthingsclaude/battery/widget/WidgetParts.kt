@@ -323,7 +323,7 @@ fun OverviewLayout(payload: UsagePayload, palette: WidgetPalette, short: Boolean
                 WindowRow(palette, "Weekly", payload.weeklyUtilization, resetText(payload.weeklyResetsAt))
                 payload.opusUtilization?.let {
                     Spacer(GlanceModifier.height(12.dp))
-                    WindowRow(palette, "Opus", it, null)
+                    WindowRow(palette, payload.scopedTitle, it, null)
                 }
             }
         }

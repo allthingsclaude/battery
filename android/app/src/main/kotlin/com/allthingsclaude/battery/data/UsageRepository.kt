@@ -125,7 +125,13 @@ class UsageRepository(context: Context) {
                 return@withContext PollResult.Stale
             }
 
-            val payload = buildPayload(usage, account.name)
+            // Accounts created before the plan badge existed have no tier, and
+            // the alternative to filling it in here is telling people to sign
+            // out and back in for a cosmetic label. One request, once per
+            // account, wrapped so it can never turn a good poll into a failure.
+            val planTier = account.planTier.ifEmpty { backfillPlanTier(account, stored) }
+
+            val payload = buildPayload(usage, account.name, planTier)
             payloads.save(payload)
             // Repainted here rather than by the service, because this is the one
             // place a new payload lands — a manual refresh from the dashboard
@@ -140,6 +146,27 @@ class UsageRepository(context: Context) {
         } catch (e: UsageApiError) {
             PollResult.Failed(e.message ?: "Couldn't refresh usage.", null)
         }
+    }
+
+    /**
+     * Resolve and store the plan for an account that has none.
+     *
+     * Returns "" on any failure, which simply means the badge stays hidden and
+     * the next poll tries again — the same outcome as before this existed.
+     */
+    private fun backfillPlanTier(account: Account, tokens: StoredTokens): String {
+        val label = runCatching {
+            ProfileApi(userAgent).fetch(tokens.accessToken)?.planLabel
+        }.getOrNull().orEmpty()
+        if (label.isEmpty()) return ""
+
+        // Re-read rather than reusing the list captured before the request: the
+        // user may have renamed or removed accounts while it was in flight.
+        val current = accounts.load()
+        if (current.none { it.id == account.id }) return ""
+        accounts.save(current.map { if (it.id == account.id) it.copy(planTier = label) else it })
+        Log.i(TAG, "resolved plan tier for ${account.id}")
+        return label
     }
 
     /**
@@ -169,7 +196,11 @@ class UsageRepository(context: Context) {
      * so a response can only ever be labelled with the account it was fetched
      * for — the account can change while a request is in flight.
      */
-    private fun buildPayload(usage: UsageResponse, accountName: String): UsagePayload {
+    private fun buildPayload(
+        usage: UsageResponse,
+        accountName: String,
+        accountPlanTier: String,
+    ): UsagePayload {
         val session = usage.fiveHour
         val sessionUtil = session?.utilization ?: 0.0
         val sessionReset = session?.resetsAt
@@ -195,11 +226,14 @@ class UsageRepository(context: Context) {
             sessionResetsAt = sessionReset,
             weeklyUtilization = usage.sevenDay.utilization,
             weeklyResetsAt = usage.sevenDay.resetsAt,
-            opusUtilization = usage.sevenDayOpus?.utilization,
+            opusUtilization = usage.scopedWeekly?.utilization,
+            scopedLabel = usage.scopedWeekly?.label ?: "",
             burnRatePerHour = projection.ratePerHour,
             projectedLimitAt = projection.limitAt,
             isSessionActive = isActive,
-            planTier = usage.planDisplayName,
+            // From the account, not the usage response: that response has no
+            // rate_limit_tier at all, so this badge was permanently blank.
+            planTier = accountPlanTier,
             accountName = accountName,
             isConnected = true,
             updatedAt = now,
@@ -218,10 +252,13 @@ class UsageRepository(context: Context) {
      */
     suspend fun addAccount(newTokens: StoredTokens): Boolean = withContext(Dispatchers.IO) {
         val existing = accounts.load()
-        val label = runCatching {
-            ProfileApi(userAgent).fetch(newTokens.accessToken)?.label
+        val profile = runCatching {
+            ProfileApi(userAgent).fetch(newTokens.accessToken)
         }.getOrNull()
-        val account = Account.new(label ?: accounts.nextAccountName(existing))
+        val account = Account.new(
+            name = profile?.label ?: accounts.nextAccountName(existing),
+            planTier = profile?.planLabel.orEmpty(),
+        )
         // If the credential can't be stored, don't pretend the account exists —
         // it would look signed in while every poll returned SignedOut.
         if (!tokens.save(account.id, newTokens)) return@withContext false

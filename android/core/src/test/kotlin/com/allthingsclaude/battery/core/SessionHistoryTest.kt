@@ -240,3 +240,94 @@ class UntilResetTest {
         assertNull(TimeFormatting.untilReset(-99_999.0))
     }
 }
+
+/**
+ * The two things a live response taught us that the client had wrong.
+ *
+ * Both bodies below are trimmed from an actual `/api/oauth/usage` and
+ * `/api/oauth/profile` response, so these are regression tests against reality
+ * rather than against an assumed schema.
+ */
+class ApiShapeTest {
+
+    @Test
+    fun `the model-scoped weekly comes from limits, and names its model`() {
+        // seven_day_opus is null while limits[] carries a weekly_scoped entry
+        // scoped to Fable. Reading only the flat key shows an empty Opus row
+        // forever and never mentions the model that is actually limited.
+        val body = """
+            {"five_hour":{"utilization":3.0,"resets_at":null},
+             "seven_day":{"utilization":34.0,"resets_at":null},
+             "seven_day_opus":null,
+             "limits":[
+               {"kind":"session","group":"session","percent":3,"scope":null},
+               {"kind":"weekly_all","group":"weekly","percent":34,"scope":null},
+               {"kind":"weekly_scoped","group":"weekly","percent":7,
+                "scope":{"model":{"id":null,"display_name":"Fable"}}}]}
+        """.trimIndent()
+
+        val scoped = UsageApi.parseUsage(body).scopedWeekly
+        assertNotNull(scoped)
+        assertEquals("Fable", scoped.label)
+        assertEquals(7.0, scoped.utilization)
+    }
+
+    @Test
+    fun `an older response still works through the flat key`() {
+        val body = """
+            {"five_hour":{"utilization":3.0,"resets_at":null},
+             "seven_day":{"utilization":34.0,"resets_at":null},
+             "seven_day_opus":{"utilization":21.0,"resets_at":null}}
+        """.trimIndent()
+
+        val scoped = UsageApi.parseUsage(body).scopedWeekly
+        assertNotNull(scoped)
+        assertEquals("Opus", scoped.label)
+        assertEquals(21.0, scoped.utilization)
+    }
+
+    @Test
+    fun `a scoped entry with no model name is ignored`() {
+        // A bare percentage under no heading says nothing about what is limited.
+        val body = """
+            {"seven_day":{"utilization":34.0,"resets_at":null},
+             "limits":[{"kind":"weekly_scoped","group":"weekly","percent":7,"scope":null}]}
+        """.trimIndent()
+        assertNull(UsageApi.parseUsage(body).scopedWeekly)
+    }
+
+    @Test
+    fun `the plan tier is read from the profile, and 20x is not plain Max`() {
+        // The live value. A contains("max") check ranks it as "Max", which is a
+        // different and cheaper plan — the narrower tiers must be tested first.
+        val body = """
+            {"account":{"email":"a@b.c","full_name":"Ivan"},
+             "organization":{"rate_limit_tier":"default_claude_max_20x"}}
+        """.trimIndent()
+        val profile = ProfileApi.parse(body)
+        assertNotNull(profile)
+        assertEquals("default_claude_max_20x", profile.rateLimitTier)
+        assertEquals("Max 20x", profile.planLabel)
+    }
+
+    @Test
+    fun `every tier maps to something a reader recognises`() {
+        fun label(tier: String) = ProfileApi.Profile(null, "x", tier).planLabel
+        assertEquals("Max 20x", label("default_claude_max_20x"))
+        assertEquals("Max 5x", label("default_claude_max_5x"))
+        assertEquals("Max", label("claude_max"))
+        assertEquals("Pro", label("default_claude_pro"))
+        assertEquals("", label("something_unreleased"))
+        assertEquals("", ProfileApi.Profile(null, "x", null).planLabel)
+    }
+
+    @Test
+    fun `a profile without an organization still yields a label`() {
+        // The plan is a nicety; the account name is not. Losing one must not
+        // cost the other.
+        val profile = ProfileApi.parse("""{"account":{"email":"a@b.c"}}""")
+        assertNotNull(profile)
+        assertEquals("a@b.c", profile.label)
+        assertEquals("", profile.planLabel)
+    }
+}

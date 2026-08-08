@@ -37,11 +37,24 @@ data class StoredTokens(
 /** One rate-limit window as the API reports it. */
 data class UsageBucket(val utilization: Double, val resetsAt: Instant?)
 
+/**
+ * The weekly limit that applies to one model rather than to everything.
+ *
+ * [label] comes from the response — `scope.model.display_name` — instead of
+ * being hardcoded, which is the whole point of this type. The app shipped a
+ * literal "Opus" heading; the API has since moved this into a `limits` array and
+ * now reports the model by name, and on a live account that name is "Fable".
+ * Any label baked into the client is a guess with an expiry date.
+ */
+data class ScopedWeekly(val label: String, val utilization: Double, val resetsAt: Instant?)
+
 /** The `/api/oauth/usage` response. */
 data class UsageResponse(
     val fiveHour: UsageBucket?,
     val sevenDay: UsageBucket,
     val sevenDayOpus: UsageBucket?,
+    /** The model-scoped weekly window, whatever model it is scoped to. */
+    val scopedWeekly: ScopedWeekly?,
     val rateLimitTier: String?,
 ) {
     /**
@@ -227,6 +240,7 @@ class UsageApi(
                 sevenDay = bucket(root, "seven_day")
                     ?: throw IllegalArgumentException("response has no seven_day bucket"),
                 sevenDayOpus = bucket(root, "seven_day_opus"),
+                scopedWeekly = scopedWeekly(root),
                 rateLimitTier = root["rate_limit_tier"]?.jsonPrimitive?.contentOrNullSafe(),
             )
         }
@@ -251,6 +265,46 @@ class UsageApi(
                 utilization = utilization,
                 resetsAt = obj["resets_at"]?.jsonPrimitive?.contentOrNullSafe()?.let(::parseInstant),
             )
+        }
+
+        /**
+         * The model-scoped weekly limit, read from the `limits` array.
+         *
+         * The response carries the same numbers twice: flat keys like
+         * `seven_day_opus`, and a `limits` array of
+         * `{kind, percent, resets_at, scope}` entries. The array is the one that
+         * says *which* model a scoped limit belongs to, via
+         * `scope.model.display_name`, and on a live account today that reads
+         * "Fable" while `seven_day_opus` is null. A client that only knows the
+         * flat keys shows an empty Opus row forever and never mentions Fable.
+         *
+         * Falls back to `seven_day_opus` labelled "Opus" so an older response —
+         * or an account still on that shape — keeps working.
+         */
+        private fun scopedWeekly(root: kotlinx.serialization.json.JsonObject): ScopedWeekly? {
+            val entry = (root["limits"] as? kotlinx.serialization.json.JsonArray)
+                ?.mapNotNull { it as? kotlinx.serialization.json.JsonObject }
+                ?.firstOrNull { it["kind"]?.jsonPrimitive?.contentOrNullSafe() == "weekly_scoped" }
+
+            if (entry != null) {
+                val label = entry["scope"]?.let { it as? kotlinx.serialization.json.JsonObject }
+                    ?.get("model")?.let { it as? kotlinx.serialization.json.JsonObject }
+                    ?.get("display_name")?.jsonPrimitive?.contentOrNullSafe()
+                val percent = entry["percent"]?.jsonPrimitive?.contentOrNullSafe()?.toDoubleOrNull()
+                // No label means nothing can be said about *what* is limited, and
+                // a bare percentage under no heading is worse than no row.
+                if (label != null && percent != null) {
+                    return ScopedWeekly(
+                        label = label,
+                        utilization = percent,
+                        resetsAt = entry["resets_at"]?.jsonPrimitive?.contentOrNullSafe()
+                            ?.let(::parseInstant),
+                    )
+                }
+            }
+
+            return bucket(root, "seven_day_opus")
+                ?.let { ScopedWeekly("Opus", it.utilization, it.resetsAt) }
         }
 
         /**

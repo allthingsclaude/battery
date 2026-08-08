@@ -283,11 +283,12 @@ private fun WeeklyCard(payload: UsagePayload, now: Instant) {
                 TimeFormatting.untilReset((it.epochSecond - now.epochSecond).toDouble())
             },
         )
-        // Most accounts have no Opus bucket; an empty row would imply a limit
-        // they don't have.
+        // Most accounts have no model-scoped bucket; an empty row would imply a
+        // limit they don't have. The heading comes from the API, not from here —
+        // it was hardcoded "Opus" and the live answer is now "Fable".
         payload.opusUtilization?.let {
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-            BarRow("Opus · 7-day", it, null)
+            BarRow("${payload.scopedTitle} · 7-day", it, null)
         }
     }
 }

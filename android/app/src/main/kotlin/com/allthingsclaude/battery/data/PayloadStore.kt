@@ -57,6 +57,7 @@ class PayloadStore(context: Context) {
         put("weeklyUtilization", p.weeklyUtilization)
         put("weeklyResetsAt", p.weeklyResetsAt?.toEpochMilli() ?: JSONObject.NULL)
         put("opusUtilization", p.opusUtilization ?: JSONObject.NULL)
+        put("scopedLabel", p.scopedLabel)
         put("burnRatePerHour", p.burnRatePerHour)
         put("projectedLimitAt", p.projectedLimitAt?.toEpochMilli() ?: JSONObject.NULL)
         put("isSessionActive", p.isSessionActive)
@@ -72,6 +73,10 @@ class PayloadStore(context: Context) {
         weeklyUtilization = o.getDouble("weeklyUtilization"),
         weeklyResetsAt = o.instantOrNull("weeklyResetsAt"),
         opusUtilization = if (o.isNull("opusUtilization")) null else o.getDouble("opusUtilization"),
+        // Absent in payloads written before the label existed; an empty
+        // label falls back to "Opus" at the render site, which is what
+        // those payloads meant.
+        scopedLabel = o.optString("scopedLabel", ""),
         burnRatePerHour = o.optDouble("burnRatePerHour", 0.0),
         projectedLimitAt = o.instantOrNull("projectedLimitAt"),
         isSessionActive = o.optBoolean("isSessionActive", false),

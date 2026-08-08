@@ -27,8 +27,17 @@ data class UsagePayload(
     val weeklyUtilization: Double,
     val weeklyResetsAt: Instant?,
 
-    // Opus 7-day window (null when the plan has no Opus access)
+    // The model-scoped 7-day window, null when the plan has none.
     val opusUtilization: Double? = null,
+    /**
+     * What that scoped window is scoped *to* — "Opus", "Fable", whatever the
+     * API reports next. Read from `scope.model.display_name` rather than
+     * hardcoded, because the app shipped a literal "Opus" heading and the live
+     * answer is now "Fable". A label baked into a client is a guess with an
+     * expiry date; the field name below is kept only to avoid rewriting a
+     * stored-payload key for a rename.
+     */
+    val scopedLabel: String = "",
 
     // Precomputed burn-rate projection (see BurnRateCalculator — Phase 1)
     /** Percentage points per hour; 0 when unknown. */
@@ -47,6 +56,15 @@ data class UsagePayload(
 ) {
     val sessionLevel: UsageLevel get() = UsageLevel.from(sessionUtilization)
     val weeklyLevel: UsageLevel get() = UsageLevel.from(weeklyUtilization)
+
+    /**
+     * Heading for the model-scoped weekly row.
+     *
+     * Falls back to "Opus" only for payloads stored before the label existed —
+     * those were written when the row could only ever have been Opus, so that is
+     * what they meant. Anything fetched since carries the API's own answer.
+     */
+    val scopedTitle: String get() = scopedLabel.ifEmpty { "Opus" }
 
     /** Whichever window is closer to its ceiling — what a glanceable surface leads with. */
     val focusUtilization: Double get() = maxOf(sessionUtilization, weeklyUtilization)

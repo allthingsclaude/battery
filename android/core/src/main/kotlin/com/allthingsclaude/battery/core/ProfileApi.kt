@@ -25,9 +25,43 @@ class ProfileApi(
     private val transport: UsageApi.HttpTransport = UrlConnectionTransport(),
 ) {
 
-    data class Profile(val email: String?, val displayName: String?) {
+    data class Profile(
+        val email: String?,
+        val displayName: String?,
+        /** `organization.rate_limit_tier`, e.g. `default_claude_max_20x`. */
+        val rateLimitTier: String? = null,
+    ) {
         /** The best human label available, or null to fall back to "Account N". */
         val label: String? get() = email ?: displayName
+
+        /**
+         * The plan, as a badge, or "" when it cannot be said.
+         *
+         * This lives here and not on the usage response because that is where
+         * the answer actually is. `/api/oauth/usage` carries no
+         * `rate_limit_tier` at all — measured on a live account — so the badge
+         * was permanently blank and looked like a rendering bug. macOS reads the
+         * tier from the Keychain, where the Claude Code CLI happens to have left
+         * it, which is not a source an Android app has.
+         *
+         * **Order matters and is the whole reason this is not a `when` on the
+         * raw string.** The live value is `default_claude_max_20x`, which
+         * contains "max" — so a naive contains-check labels a 20x plan as plain
+         * "Max". The narrower tiers have to be tested first.
+         */
+        val planLabel: String
+            get() {
+                val t = rateLimitTier?.lowercase() ?: return ""
+                return when {
+                    t.contains("max_20x") || t.contains("max20x") -> "Max 20x"
+                    t.contains("max_5x") || t.contains("max5x") -> "Max 5x"
+                    t.contains("max") -> "Max"
+                    t.contains("pro") -> "Pro"
+                    t.contains("team") -> "Team"
+                    t.contains("enterprise") -> "Enterprise"
+                    else -> ""
+                }
+            }
     }
 
     fun fetch(accessToken: String): Profile? {
@@ -64,6 +98,15 @@ class ProfileApi(
             Profile(
                 email = findString(root, setOf("email", "email_address")),
                 displayName = findString(root, setOf("display_name", "name", "full_name")),
+                // Read from the exact path rather than by the recursive search
+                // the label uses. The search exists because the shape was
+                // unknown; this key has now been seen, it sits under
+                // `organization`, and a stray match elsewhere would put a wrong
+                // plan on a lock screen.
+                rateLimitTier = (root["organization"] as? JsonObject)
+                    ?.get("rate_limit_tier")
+                    ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+                    ?.takeIf { it.isNotBlank() && it != "null" },
             ).takeIf { it.email != null || it.displayName != null }
         }.getOrNull()
 

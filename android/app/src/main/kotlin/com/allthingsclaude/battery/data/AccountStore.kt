@@ -6,9 +6,22 @@ import org.json.JSONObject
 import java.util.UUID
 
 /** One Claude account. Tokens live in [TokenStore], keyed by [id]. */
-data class Account(val id: String, val name: String) {
+data class Account(
+    val id: String,
+    val name: String,
+    /**
+     * The plan badge, resolved once at sign-in from `/api/oauth/profile`.
+     *
+     * Stored beside the name because it comes from the same call and has the
+     * same character: a label, resolved once, not worth a request per poll. The
+     * usage endpoint carries no plan information at all — measured — so this is
+     * the only place it can come from.
+     */
+    val planTier: String = "",
+) {
     companion object {
-        fun new(name: String) = Account(UUID.randomUUID().toString(), name)
+        fun new(name: String, planTier: String = "") =
+            Account(UUID.randomUUID().toString(), name, planTier)
     }
 }
 
@@ -30,14 +43,18 @@ class AccountStore(context: Context) {
             val array = JSONArray(raw)
             (0 until array.length()).map { i ->
                 val obj = array.getJSONObject(i)
-                Account(obj.getString("id"), obj.getString("name"))
+                // optString: accounts saved before the plan existed have no
+                // such key, and an empty badge is exactly what they mean.
+                Account(obj.getString("id"), obj.getString("name"), obj.optString("planTier", ""))
             }
         }.getOrDefault(emptyList())
     }
 
     fun save(accounts: List<Account>) {
         val array = JSONArray()
-        accounts.forEach { array.put(JSONObject().put("id", it.id).put("name", it.name)) }
+        accounts.forEach {
+            array.put(JSONObject().put("id", it.id).put("name", it.name).put("planTier", it.planTier))
+        }
         prefs.edit().putString(KEY_ACCOUNTS, array.toString()).apply()
     }
 
