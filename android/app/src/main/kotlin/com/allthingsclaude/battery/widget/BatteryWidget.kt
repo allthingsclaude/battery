@@ -104,15 +104,46 @@ class ForecastWidget : BasePayloadWidget() {
 }
 
 /**
- * Forgets a removed widget's settings.
+ * Forgets a removed widget's settings, and owns the refresh schedule.
  *
- * Android reuses appWidgetIds, so without this a newly placed widget would
- * silently inherit the opacity and colours of a deleted one.
+ * Android reuses appWidgetIds, so without the cleanup a newly placed widget
+ * would silently inherit the opacity and colours of a deleted one.
+ *
+ * The schedule is tied to `onEnabled`/`onDisabled` rather than started at app
+ * launch because those are per-provider: the framework calls them for the first
+ * and last widget *of each type*. [WidgetRefreshWorker.schedule] is idempotent
+ * (`KEEP`), so four providers enabling it is the same as one — and the cancel is
+ * guarded on there being no widgets of any type left, since "the last Overview
+ * widget was removed" says nothing about the Session Row still on screen.
  */
 abstract class ConfigCleaningReceiver : GlanceAppWidgetReceiver() {
+
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
         appWidgetIds.forEach { WidgetConfig.delete(context, it) }
         super.onDeleted(context, appWidgetIds)
+    }
+
+    override fun onEnabled(context: Context) {
+        super.onEnabled(context)
+        WidgetRefreshWorker.schedule(context)
+    }
+
+    override fun onDisabled(context: Context) {
+        super.onDisabled(context)
+        if (!hasAnyWidget(context)) WidgetRefreshWorker.cancel(context)
+    }
+}
+
+/** Whether any Battery widget of any type is still placed. */
+internal fun hasAnyWidget(context: Context): Boolean {
+    val manager = android.appwidget.AppWidgetManager.getInstance(context) ?: return false
+    return listOf(
+        SessionRowWidgetReceiver::class.java,
+        SessionRingWidgetReceiver::class.java,
+        OverviewWidgetReceiver::class.java,
+        ForecastWidgetReceiver::class.java,
+    ).any {
+        manager.getAppWidgetIds(android.content.ComponentName(context, it)).isNotEmpty()
     }
 }
 

@@ -47,6 +47,7 @@ import com.allthingsclaude.battery.core.UsagePayload
 import com.allthingsclaude.battery.data.Settings
 import com.allthingsclaude.battery.data.UsageRepository
 import com.allthingsclaude.battery.live.SessionService
+import com.allthingsclaude.battery.widget.WidgetRefreshWorker
 import com.allthingsclaude.battery.ui.AppearanceMode
 import com.allthingsclaude.battery.ui.BatteryTheme
 import com.allthingsclaude.battery.core.SessionPolicy
@@ -142,6 +143,9 @@ private fun Root() {
             if (result !is UsageRepository.PollResult.SignedOut && cardMode != SessionPolicy.Mode.OFF) {
                 SessionService.start(context)
             }
+            // Self-heals in both directions — see syncSchedule. Cheap: KEEP
+            // leaves an existing schedule untouched rather than restarting it.
+            WidgetRefreshWorker.syncSchedule(context)
         }
     }
 
