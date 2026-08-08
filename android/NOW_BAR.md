@@ -20,6 +20,11 @@ Update reaches every surface at once:
 
 Nothing in the app changed between those two columns.
 
+The left column is not a broken app, which matters for anyone running this on a
+device where the switch is off and out of reach: it degrades to an ordinary
+sticky notification — what an ongoing notification looked like before Live
+Updates existed. Re-checked on the device after the card work landed.
+
 ## Why this took so long to find
 
 The failure was **partial**, which is the worst kind. With the toggle off the
