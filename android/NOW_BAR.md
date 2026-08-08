@@ -199,6 +199,45 @@ is closer to its ceiling. It is a poor fit for an account whose weekly runs far
 ahead of any single session, since the line then reads `wk 28%` almost always
 and the session number never appears at all.
 
+### Semantic colouring: real, documented, and Android 17
+
+`ProgressStyle.Point` and `Segment` both carry `setSemanticStyle(int)`, and it is
+**not** an undocumented hook — an earlier note here said the platform declared no
+constants for it, which was wrong and wrong for a lazy reason: the constants are
+on `Notification`, not on `ProgressStyle`, so looking at the wrong class found
+nothing. They are:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `SEMANTIC_STYLE_UNSPECIFIED` | 0 | no semantic colour |
+| `SEMANTIC_STYLE_INFO` | 1 | blue — informational, stands out |
+| `SEMANTIC_STYLE_SAFE` | 2 | green — the user is fine |
+| `SEMANTIC_STYLE_CAUTION` | 3 | orange — pay attention |
+| `SEMANTIC_STYLE_DANGER` | 4 | red — urgent |
+
+`androidx.core` re-exports them as `NotificationCompat.SEMANTIC_STYLE_*`.
+
+**They are `since="37.0"` — Android 17.** The test device is Android 16 / API 36,
+which is the whole explanation for the probe result below: five points at styles
+0 through 4 rendered identically because the platform on the device has no
+implementation, not because Samsung discards it. `compileSdk 37` is what let it
+compile at all.
+
+Two consequences worth keeping straight:
+
+- **It sets colour, not shape.** Even on Android 17 a `Point` stays a chunky
+  rounded block; the semantic style only changes what colour it is. So the
+  question "can we get a round point" is answered **no** at the API level, not
+  just on this device.
+- **It applies to text as well.** `Notification.createSemanticStyleAnnotation(int)`
+  returns a span, so on Android 17 a percentage inside the title or body can be
+  coloured by severity and let the system pick the exact hue. That is a real
+  option for this app later — the usage ramp currently hard-codes terracotta
+  where the platform would supply a palette that matches the user's theme.
+
+Retest when a device runs Android 17. Until then `USAGE_RAMP_SEGMENTS` colouring
+segments by hand is the only thing that works.
+
 ### How the probe was run
 
 Set every field to a distinct marker with a character ruler appended

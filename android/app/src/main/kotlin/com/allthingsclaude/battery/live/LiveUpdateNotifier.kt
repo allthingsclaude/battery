@@ -342,10 +342,14 @@ object LiveUpdateNotifier {
      * when it is visibly clear of the tracker.
      *
      * Both are suppressed when they would land within [MARK_CLEARANCE] of
-     * something else. One UI draws a point as a chunky rounded block, not a
-     * hairline — measured, and `setSemanticStyle` 0 through 4 all render
-     * identically, so there is no thinner variant to ask for. Two of those
-     * blocks touching read as one wide smear rather than as two marks.
+     * something else. A point renders as a chunky rounded block, not a hairline,
+     * and two of them touching read as one wide smear rather than as two marks.
+     *
+     * The block is not stylable. `setSemanticStyle` takes
+     * `NotificationCompat.SEMANTIC_STYLE_*` — UNSPECIFIED/INFO/SAFE/CAUTION/
+     * DANGER — and those pick a *colour*, never a shape. They are also API 37
+     * and this ships to 36, so on the test device all five render identically;
+     * see android/NOW_BAR.md.
      */
     private fun points(
         payload: UsagePayload,
