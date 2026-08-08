@@ -3,6 +3,7 @@ package com.allthingsclaude.battery.core
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -127,5 +128,75 @@ class SessionHistoryTest {
             h.record(i.toDouble(), resetsAt, now.plusSeconds(i * 60L))
         }
         assertEquals(SessionHistory.CAPACITY, store.load().size)
+    }
+}
+
+/**
+ * The pace mark — how far the clock has run through the session window.
+ *
+ * Its whole value is being comparable to `sessionUtilization`, so the cases that
+ * matter are the ones where it could lie: no window, a window longer than the
+ * five hours we assume, and a reset time already in the past.
+ */
+class ElapsedPercentTest {
+
+    private val now: Instant = Instant.parse("2026-01-01T12:00:00Z")
+
+    private fun payload(remainingSeconds: Long?) = UsagePayload(
+        sessionUtilization = 20.0,
+        sessionResetsAt = remainingSeconds?.let { now.plusSeconds(it) },
+        weeklyUtilization = 30.0,
+        weeklyResetsAt = now.plusSeconds(86_400),
+        updatedAt = now,
+    )
+
+    @Test
+    fun `a fresh window has barely elapsed`() {
+        assertEquals(0, payload(UsagePayload.SESSION_WINDOW_SECONDS).elapsedPercent(now))
+    }
+
+    @Test
+    fun `halfway through reads fifty`() {
+        assertEquals(50, payload(UsagePayload.SESSION_WINDOW_SECONDS / 2).elapsedPercent(now))
+    }
+
+    @Test
+    fun `the last minutes read near a hundred`() {
+        assertEquals(98, payload(5 * 60).elapsedPercent(now))
+    }
+
+    @Test
+    fun `a window that just expired reads a hundred`() {
+        assertEquals(100, payload(0).elapsedPercent(now))
+    }
+
+    @Test
+    fun `no open window has no mark`() {
+        assertNull(payload(null).elapsedPercent(now))
+    }
+
+    @Test
+    fun `a reset already in the past has no mark`() {
+        // Not clamped to 100: a negative remaining means the payload is stale or
+        // the clocks disagree, and a mark pinned to the end would assert
+        // something about a window we are no longer watching.
+        assertNull(payload(-60).elapsedPercent(now))
+    }
+
+    @Test
+    fun `a window longer than the one we assume has no mark`() {
+        // The API never states the window length. If it is ever not five hours,
+        // every mark this produces is wrong by an unknown amount — so say
+        // nothing rather than draw a confident line in the wrong place.
+        assertNull(payload(UsagePayload.SESSION_WINDOW_SECONDS + 60).elapsedPercent(now))
+    }
+
+    @Test
+    fun `it never leaves the bar`() {
+        for (remaining in 0..UsagePayload.SESSION_WINDOW_SECONDS step 137) {
+            val mark = payload(remaining).elapsedPercent(now)
+            assertNotNull(mark)
+            assertTrue(mark in 0..100, "elapsed $mark% is off the bar")
+        }
     }
 }

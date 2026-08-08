@@ -52,6 +52,34 @@ data class UsagePayload(
     val focusUtilization: Double get() = maxOf(sessionUtilization, weeklyUtilization)
 
     /**
+     * How far the *clock* has run through the five-hour window, 0–100. Null when
+     * no window is open, or when it cannot be computed honestly.
+     *
+     * This is the budget line to compare [sessionUtilization] against: usage
+     * behind it means the window is being spent slower than the clock, ahead of
+     * it means faster. No other figure the app shows says that — the burn rate
+     * answers "how fast", the projection answers "where will it land", neither
+     * answers "am I ahead or behind right now".
+     *
+     * The window length has to be assumed rather than read, because the API only
+     * reports when the window *ends*. macOS assumes the same five hours in
+     * `UsageViewModel.menuBarText` (`18000 - remaining`, with the same comment),
+     * so at least the two agree.
+     *
+     * Returning null rather than clamping when `remaining` exceeds the window is
+     * deliberate: that means the assumption is wrong for this account, or the
+     * device clock disagrees with the server's, and in either case an invented
+     * mark is worse than no mark.
+     */
+    fun elapsedPercent(now: Instant = Instant.now()): Int? {
+        val resetsAt = sessionResetsAt ?: return null
+        val remaining = resetsAt.epochSecond - now.epochSecond
+        if (remaining < 0 || remaining > SESSION_WINDOW_SECONDS) return null
+        val elapsed = SESSION_WINDOW_SECONDS - remaining
+        return ((elapsed * 100.0) / SESSION_WINDOW_SECONDS).toInt().coerceIn(0, 100)
+    }
+
+    /**
      * Which window a tight surface should lead with. Ported from iOS, where the
      * comment reads "whichever window is closer to its ceiling — what a 'smart'
      * surface leads with".
@@ -81,6 +109,14 @@ data class UsagePayload(
         sessionResetsAt?.let { maxOf(0L, it.epochSecond - now.epochSecond) } ?: 0L
 
     companion object {
+        /**
+         * The session window, in seconds. The API reports only when a window
+         * ends, never how long it is, so anything asking "how far through are
+         * we" has to assume — and macOS assumes the same 18000 in
+         * `UsageViewModel.menuBarText`.
+         */
+        const val SESSION_WINDOW_SECONDS = 5L * 60 * 60
+
         /**
          * A neutral stand-in for surfaces that must render before any real data
          * exists — the widget picker's preview, Compose `@Preview`s, and the

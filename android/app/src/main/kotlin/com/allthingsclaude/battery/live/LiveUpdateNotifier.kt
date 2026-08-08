@@ -15,9 +15,11 @@ import com.allthingsclaude.battery.R
 import com.allthingsclaude.battery.core.USAGE_RAMP_SEGMENTS
 import com.allthingsclaude.battery.core.UsageForecast
 import com.allthingsclaude.battery.core.UsageLevel
+import com.allthingsclaude.battery.core.BatteryPalette
 import com.allthingsclaude.battery.core.TimeFormatting
 import com.allthingsclaude.battery.core.UsagePayload
 import com.allthingsclaude.battery.ui.UsageRingRenderer
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -84,19 +86,7 @@ object LiveUpdateNotifier {
                 }
             )
 
-        // The projection as a mark on the bar. iOS hand-draws this tick in
-        // ForecastBar; here the platform owns it. Only shown once it's visibly
-        // ahead of the tracker — a point sitting under the tracker reads as a
-        // rendering bug rather than as information.
-        val projected = projectedAtReset(payload)
-        if (projected != null && projected - percent > 2) {
-            style.setProgressPoints(
-                listOf(
-                    NotificationCompat.ProgressStyle.Point(projected)
-                        .setColor(UsageLevel.from(projected.toDouble()).color)
-                )
-            )
-        }
+        style.setProgressPoints(points(payload, percent))
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_battery)
@@ -336,7 +326,56 @@ object LiveUpdateNotifier {
      * in [title]; what the chip wants is the fast-moving one a reader can still
      * act on.
      */
-    private fun criticalText(payload: UsagePayload): String = glance(payload, separator = "·")
+    private fun criticalText(payload: UsagePayload): String =
+        "${payload.sessionUtilization.roundToInt()}%"
+
+    /**
+     * The marks on the bar. At most two, and they answer different questions.
+     *
+     * **The pace mark** sits where the clock is — [UsagePayload.elapsedPercent].
+     * It is the only thing on the card that says whether you are ahead of or
+     * behind budget right now; the tracker says how much is gone and the body
+     * text says where it will land, and neither of those is the same question.
+     *
+     * **The projection mark** sits where the burn rate says the window will
+     * finish. It duplicates the body text in words, so it earns its place only
+     * when it is visibly clear of the tracker.
+     *
+     * Both are suppressed when they would land within [MARK_CLEARANCE] of
+     * something else. One UI draws a point as a chunky rounded block, not a
+     * hairline — measured, and `setSemanticStyle` 0 through 4 all render
+     * identically, so there is no thinner variant to ask for. Two of those
+     * blocks touching read as one wide smear rather than as two marks.
+     */
+    private fun points(
+        payload: UsagePayload,
+        percent: Int,
+    ): List<NotificationCompat.ProgressStyle.Point> {
+        val marks = mutableListOf<NotificationCompat.ProgressStyle.Point>()
+
+        val pace = payload.elapsedPercent()
+        if (pace != null && abs(pace - percent) > MARK_CLEARANCE) {
+            marks += NotificationCompat.ProgressStyle.Point(pace)
+                .setColor(BatteryPalette.SECONDARY)
+        }
+
+        val projected = projectedAtReset(payload)
+        if (projected != null &&
+            projected - percent > MARK_CLEARANCE &&
+            marks.none { abs(it.position - projected) <= MARK_CLEARANCE }
+        ) {
+            marks += NotificationCompat.ProgressStyle.Point(projected)
+                .setColor(UsageLevel.from(projected.toDouble()).color)
+        }
+
+        return marks
+    }
+
+    /**
+     * How far apart two marks must be, in percentage points, to be worth drawing
+     * separately. Sized from the rendered block, not from the data.
+     */
+    private const val MARK_CLEARANCE = 2
 
     // ── Forecast ────────────────────────────────────────────────────────────
     //
