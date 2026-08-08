@@ -32,9 +32,9 @@ the shade entry, and the always-on display.
 |:--|:--|
 | ![Now Bar pill](../assets/android-nowbar-pill.webp) | ![Status-bar chip](../assets/android-statusbar-chip.webp) |
 
-![The app](../assets/android-dashboard.webp)
-
-![Widgets](../assets/android-widgets.webp)
+| The app | Widgets |
+|:--|:--|
+| ![The app](../assets/android-dashboard.webp) | ![Widgets](../assets/android-widgets.webp) |
 
 > Numbers in these shots are staged — a five-hour window sitting at 3% shows an
 > empty ring and a forecast nobody worries about. Only the values are synthetic;
