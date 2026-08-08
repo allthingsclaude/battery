@@ -11,16 +11,27 @@ card exists  ⟺  service running  ⟺  fast polling
 
 On iOS the poll loop and the Live Activity are separate concerns reconciled by
 `LiveActivityController.sync()`. Here the foreground service's notification *is*
-the card, so those collapse into a single decision — which is less code, and
-makes the foreground service self-justifying in exactly the way Google's Live
-Update guidelines want. It isn't a background poller wearing a notification as a
-disguise; the notification is the product.
+the card, so those collapse into a single decision, and the service is doing
+work the user can see for as long as it runs.
 
-That equivalence has one consequence worth stating up front, because it explains
-several design choices further down: **when the card goes, the poller goes with
-it.** Nothing else in the app runs on a schedule, so anything that needs to
-happen while no card is up has to be somebody else's job. That somebody is
-`WidgetRefreshWorker`.
+**When the card goes, the poller goes with it.** Nothing else in the app runs on
+a schedule, so anything that needs to happen while no card is up has to be
+somebody else's job. That somebody is `WidgetRefreshWorker`.
+
+One arrow does not point both ways, which matters before a `dumpsys` showing a
+promoted card and no `ServiceRecord` reads as a bug:
+
+```
+service running  ⟹  card exists            (the service's notification IS the card)
+card exists      ⟹̸  service running        (the worker can post one on its own)
+```
+
+A foreground service justifies *continuous polling*; it is not what earns
+promotion. `setOngoing` plus `setRequestPromotedOngoing` does that, and an
+ordinary notification carries both — so a card revived by `WidgetRefreshWorker`
+from the background is fully promoted, and refreshes on the worker's
+fifteen-minute cadence rather than the service's three. `startForeground` adopts
+the same notification id when the service can legitimately start again.
 
 ![The lock-screen card, expanded](../assets/android-lockscreen-card.webp)
 
@@ -36,10 +47,6 @@ the shade entry, and the always-on display.
 |:--|:--|
 | ![The app](../assets/android-dashboard.webp) | ![Widgets](../assets/android-widgets.webp) |
 
-> Numbers in these shots are staged — a five-hour window sitting at 3% shows an
-> empty ring and a forecast nobody worries about. Only the values are synthetic;
-> every pixel is the app rendering them.
-
 ---
 
 ## Layout
@@ -52,16 +59,13 @@ android/
   app/     everything Android: Compose UI, auth, storage, the service, widgets
 ```
 
-`core/` staying Android-free is a rule worth defending, not an accident. It is
-what lets the regression, the forecast wording and the card's state machine run
-as ordinary JVM tests in milliseconds against the fixtures in `../fixtures/` —
-and it is the reason `SessionPolicy` has 24 tests where the iOS original has
-none. 101 tests in total, all JVM, all under two seconds.
+Because `core/` has no Android dependency, the regression, the forecast wording
+and the card's state machine run as ordinary JVM tests against the fixtures in
+`../fixtures/`. 101 tests, all JVM, all under two seconds.
 
-Glance widgets need no separate module. Unlike iOS, where the widget extension
-is a codesigned `.appex` in its own process, they are a `BroadcastReceiver` in
-this same APK — so no credential is ever copied anywhere, which removes a whole
-class of exposure the iOS widget has to reason about.
+Glance widgets need no separate module. They are a `BroadcastReceiver` in this
+same APK rather than a separate codesigned extension in its own process, and
+they read the payload the app already wrote — no credential is copied anywhere.
 
 ---
 
@@ -74,8 +78,8 @@ status-bar chip, the lock-screen card and the top of the shade at once.
 
 The one catch is a switch, not an API: **Developer options ▸ "Live notifications
 for all apps" ships OFF in One UI 8.5.** With it off, promotion still succeeds
-and the lock-screen card still appears — only the Now Bar and the chip are
-missing, which is exactly why it looked like a missing capability for so long.
+and the lock-screen card still appears; only the Now Bar and the chip are
+missing, and the card degrades to an ordinary sticky notification.
 
 It **can** be detected at runtime. It writes `Settings.Secure`
 `enable_notification_nowbar_test`, which any app can read, so `NowBarGate`
@@ -114,8 +118,7 @@ cd android
 Requires **JDK 17+** and **compileSdk 37**. CI installs `platforms;android-37`
 explicitly when the runner image lacks it; locally, Android Studio or
 `sdkmanager` will fetch it. The build targets 17 bytecode without pinning a
-toolchain, so any modern JDK works locally; CI pins 17 rather than inheriting
-whatever the runner image ships this month.
+toolchain, so any modern JDK works.
 
 - `minSdk 31` — the app installs from Android 12.
 - `targetSdk 36` — matches the device.
@@ -128,8 +131,8 @@ Debug builds only: the Settings sheet's *Diagnostics* row opens a harness that
 posts a card at any percentage on demand, reads
 `canPostPromotedNotifications` / `hasPromotableCharacteristics` /
 `FLAG_PROMOTED_ONGOING` / `feature.nowbar`, and deep-links to the system's
-promoted-notification settings. Being able to produce a card at 91% without
-waiting for a real session is what made the escalation paths testable at all.
+promoted-notification settings. Posting at 91% on demand is how the escalation
+paths are tested without waiting for a real session.
 
 `SpikeActivity` is `exported=false`, so `adb am start` cannot reach it — go
 through the app.
@@ -141,14 +144,11 @@ through the app.
 `.github/workflows/android-ci.yml` runs `:core:test` and `:app:assembleDebug` on
 `ubuntu-latest`.
 
-It is a separate file from `ci.yml`, not a job inside it, for two reasons.
-`ci.yml` runs on `macos-26`, which bills at a multiple of an ubuntu runner, so
-widening *its* triggers to cover Android branches would spend macOS minutes on
-pushes that cannot affect the Mac or iOS builds. And it triggers on `main` and
-`android/**`, where `ci.yml` fires only on main and PRs against it — a
-long-lived branch would otherwise get no CI until the moment it is proposed for
-merge, which is the worst possible time to discover the runner cannot resolve
-`compileSdk`.
+It is a separate file from `ci.yml` because `ci.yml` runs on `macos-26` and
+fires only on `main` and pull requests against it. Widening its triggers would
+spend macOS minutes on pushes that cannot affect the Mac or iOS builds, and a
+long-lived `android/**` branch would otherwise get no CI until the moment it is
+proposed for merge.
 
 > **`workflow_dispatch` only appears for workflows on the repository's default
 > branch.** A workflow that exists only on a feature branch has no "Run
@@ -199,16 +199,14 @@ base64 -i release.jks | tr -d '\n' | gh secret set ANDROID_KEYSTORE --repo OWNER
 > default format since JDK 9 is PKCS12, which has no separate key encryption.
 > Pass a different `-keypass` and it prints `Ignoring user-specified -keypass
 > value` and protects the key with the *store* password instead — so a
-> perfectly reasonable-looking set of four secrets fails at `:app:packageRelease`
-> with `Given final block not properly padded`, two minutes into the build. This
-> is not hypothetical; it is what the first real release run did.
+> reasonable-looking set of four secrets fails at `:app:packageRelease` with
+> `Given final block not properly padded`, two minutes into the build.
 >
-> Confusingly, `keytool` itself will not catch this: it ignores `-keypass` on
-> read commands too, so a keytool-based check passes with the wrong password.
-> The workflow's `Verify signing credentials` step therefore uses the `KeyStore`
-> API directly — `ks.getKey(alias, keyPassword)` — which is what AGP calls and
-> the only thing that actually exercises the key password. It fails in seconds
-> with an explanation instead of two minutes in with a stack trace.
+> `keytool` will not catch this either: it ignores `-keypass` on read commands
+> too, so a keytool-based check passes with the wrong password. The workflow's
+> `Verify signing credentials` step uses the `KeyStore` API directly —
+> `ks.getKey(alias, keyPassword)`, which is what AGP calls — and fails in
+> seconds with an explanation.
 
 > **The keystore is permanent.** Android has no key rotation for sideloaded
 > APKs: a build signed with key A can never be updated by one signed with key B —
@@ -229,8 +227,7 @@ A sideloaded APK has neither Sparkle nor TestFlight, so `UpdateChecker` polls th
 GitHub releases feed. It is deliberately **check-and-hand-off**: it opens the
 release page rather than downloading and installing, because installing would
 mean holding `REQUEST_INSTALL_PACKAGES` — a permission that lets an app install
-arbitrary software. Two extra taps, one fewer permission that has no business
-being here.
+arbitrary software.
 
 ---
 
@@ -238,10 +235,9 @@ being here.
 
 - **`core/` must not gain an Android dependency.** The moment it does, the shared
   fixture story is over and `SessionPolicy` stops being testable.
-- **Every string about a projection comes from `UsageForecast`.** This branch
-  already made the opposite mistake once: the Live Update kept a "temporary"
-  local headline helper after the port landed, and the lock-screen card and the
-  in-app card promptly disagreed about the same payload.
+- **Every string about a projection comes from `UsageForecast`.** A second local
+  helper means the lock-screen card and the in-app card can disagree about the
+  same payload.
 - **Never repost a dismissed card.** `CardDismissal` enforces it. Reposting is
   what drives users to revoke promotion, and that revocation is effectively
   permanent.
@@ -252,10 +248,12 @@ being here.
   frozen, so "resets in 2h 13m" is a string sampled at composition. Only
   `WidgetRefreshWorker` re-renders it, and it is also what brings the card back
   after `SessionPolicy` has stood the service down — see the note at the top.
+- **Call `refreshAllWidgets` at most once per event.** Glance composes each
+  widget in its own WorkManager session; a second call while the first is still
+  composing cancels it, and both repaints are lost. Nothing throws.
 - **Anything about the notification's rendering belongs in `NOW_BAR.md`, and it
-  belongs there measured.** Three separate claims in that file were recorded as
-  settled and later disproved on hardware. Prefer one screenshot to any amount of
-  reasoning about One UI.
+  belongs there measured.** Prefer one screenshot to any amount of reasoning
+  about One UI.
 - **Fixtures are the specification.** If `../fixtures/` disagrees with
   `Tests/BatteryTests/`, the fixture is wrong — fix it there first, then fix
   whichever implementation drifted.

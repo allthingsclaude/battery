@@ -20,23 +20,22 @@ Update reaches every surface at once:
 
 Nothing in the app changed between those two columns.
 
-The left column is not a broken app, which matters for anyone running this on a
-device where the switch is off and out of reach: it degrades to an ordinary
-sticky notification — what an ongoing notification looked like before Live
-Updates existed. Re-checked on the device after the card work landed.
+The left column is not a broken app, which matters on a device where the switch
+is off and out of reach: it degrades to an ordinary sticky notification — what
+an ongoing notification looked like before Live Updates existed.
 
-## Why this took so long to find
+## Why it reads as a missing capability
 
-The failure was **partial**, which is the worst kind. With the toggle off the
+The failure is **partial**, which is the worst kind. With the toggle off the
 notification still earns `FLAG_PROMOTED_ONGOING`, still gets the prominent
-lock-screen card, still outranks everything in the shade. Every diagnostic said
-"promoted". Only two of four surfaces were missing, which reads as a
-capability Samsung withholds rather than a switch nobody flipped.
+lock-screen card, still outranks everything in the shade. Every diagnostic says
+"promoted". Only two of four surfaces are missing, which looks like a capability
+Samsung withholds rather than a switch nobody flipped.
 
-That led to a wrong conclusion being written down as settled: *"One UI does not
-render the AOSP status-bar chip; `setShortCriticalText` reaches the system and
-Samsung simply doesn't draw it; there is no alternative API and this is not
-fixable from the app."* All of it was gated, none of it was true.
+The conclusion that follows naturally from that — *"One UI does not render the
+AOSP status-bar chip; `setShortCriticalText` reaches the system and Samsung
+simply doesn't draw it; there is no alternative API and this is not fixable from
+the app"* — is false in every clause. All of it was the gate.
 
 `setShortCriticalText` is used, incidentally — One UI renders it as the pill's
 second line, not in the status bar. On our card that's the `8%` under
@@ -56,14 +55,14 @@ android.ongoingActivityNoti.chipIcon          = Icon(...)
 android.ongoingActivityNoti.chronometerRemoteViewTag = "stopwatch_ongoing_activity_chronometer"
 ```
 
-So the private pipeline is real. It is simply **not the only way in**, which is
-the part the research got wrong. Proven by posting with those extras provably
-absent — `ongoingActivityNoti keys: 0` — and watching the pill appear anyway.
+So the private pipeline is real. It is simply **not the only way in** — proven by
+posting with those extras provably absent (`ongoingActivityNoti keys: 0`) and
+watching the pill appear anyway.
 
-The decompiled extras and the
-`com.samsung.android.support.ongoing_activity` manifest entry have therefore
-been **deleted**, not kept as a fallback. Shipping reverse-engineered keys that
-demonstrably do nothing is worse than not shipping them.
+The decompiled extras and the `com.samsung.android.support.ongoing_activity`
+manifest entry have therefore been **deleted**, not kept as a fallback. Shipping
+reverse-engineered keys that demonstrably do nothing is worse than not shipping
+them.
 
 ## Also settled
 
@@ -77,10 +76,7 @@ demonstrably do nothing is worse than not shipping them.
 
 ## The toggle: detected, handled
 
-An earlier revision of this file claimed the gate "cannot be detected at
-runtime, so the only honest handling is documentation". That was wrong, and
-wrong for an avoidable reason — test 2 of this file's own checklist (grep the
-settings namespaces) had never been run. It writes a readable key:
+The gate is detectable at runtime, because it writes a readable key:
 
 ```
 secure:  enable_notification_nowbar_test = 1
@@ -105,9 +101,8 @@ from "present and 0", and those mean opposite things.
 
 **Writing it is still impossible** — that needs `WRITE_SECURE_SETTINGS`, which no
 ordinary app can hold. Detection plus a deep link is the whole of what is
-achievable, but it is far better than a paragraph in a README: it appears only
-when true, disappears when fixed, and works for someone who enables the toggle
-months later.
+achievable: it appears only when true, disappears when fixed, and works for
+someone who enables the toggle months later.
 
 Open question worth checking on a second device: whether the key is
 One UI 8.5-specific, and whether One UI 9 / Android 17 defaults it on. If it
@@ -119,8 +114,8 @@ Verified on device by setting distinct markers, not read from documentation.
 One UI's rendering does not match what the field names imply, so guessing here
 is unusually expensive.
 
-There are **three** states, not two, and conflating the first two is what made an
-earlier version of this table wrong:
+There are **three** states, not two, and conflating the first two is the easy
+mistake:
 
 1. **collapsed pill** — the Now Bar capsule sitting above the lock-screen shortcuts
 2. **expanded card** — one surface reached three ways: tap or expand the pill,
@@ -144,33 +139,28 @@ to design rather than three.
 | `setSmallIcon` | filled circle, tinted by `setColor` | filled square, tinted by `setColor` | inside the chip |
 | `setColor` | tints pill and chip. Samsung's Clock uses `0xff5f57d9` and its chip is that purple, which is how this was identified | | |
 
-**`setSubText` and the chronometer coexist.** An earlier revision of this file
-claimed they compete for one slot and that subText wins — and warned that the
-plan tier could therefore silently kill the countdown for anyone whose account
-reports a tier. That was wrong, and a screenshot at `Max 5x` shows why:
+`setLargeIcon` has no single answer to "does the pill render it" — it depends
+entirely on which of the three states is meant, which is why the question kept
+producing contradictory results.
+
+**`setSubText` and the chronometer coexist.** They do not compete for one slot.
+A screenshot at `Max 5x`:
 
     Battery   Max 5x   1:48:52
 
 App name, subText and the ticking chronometer, all three, on the lock screen's
 expanded card.
 
-The observation behind the false claim was real — a probe build did show
-`Battery 3SUB` with no timer — but the cause was misattributed. That build also
-carried a deliberately overlong title that wrapped to two lines. Two variables
-changed at once and only one was credited, which is the whole failure: the
-measurement was sound and the inference from it was not.
+**An overlong title is what kills the chronometer.** A probe build showed
+`Battery 3SUB` with no timer, and the cause was the deliberately overlong title
+wrapping to two lines — not the subText. Keep the title inside one line and both
+survive.
 
 **The badge slot is the system's.** Size and position in the header row are
 fixed; a 192px bitmap came back rescaled to 113px. The only thing an app
 controls is how much of that circle its drawing uses, and widget proportions —
 a 0.11 stroke with a 0.30 numeral — read as a hairline at that scale. See
 `UsageRingRenderer.renderBadge`.
-
-Two of these overturn what this file previously asserted. `setContentText` and
-`ProgressStyle` were recorded as "shade only"; both render in the expanded card.
-And `setLargeIcon` was an open question — the answer is that it depends entirely
-on which of the three states you mean, which is why asking "does the pill render
-it" had no single answer.
 
 `setColorized(true)` and custom `RemoteViews` are **disqualifying** — either one
 costs promotion entirely, so neither can be used to style these surfaces.
@@ -199,10 +189,10 @@ separator.
 
 Which means the string should be sized for the chip (a couple of characters),
 and the pill's second line will always be mostly empty. That is a real cost, but
-a smaller one than it appears, because the title turns out to hold far more than
-was assumed: `9% · wk 28%` is eleven characters against a ~23-character budget.
-**Both windows fit on line 1**, so the second line is not the only place a
-second number can go.
+a smaller one than it appears, because the title holds far more than the pill's
+second line does: `9% · wk 28%` is eleven characters against a ~23-character
+budget. **Both windows fit on line 1**, so the second line is not the only place
+a second number can go.
 
 `UsagePayload.focusWindow` was the previous answer — lead with whichever window
 is closer to its ceiling. It is a poor fit for an account whose weekly runs far
@@ -212,10 +202,8 @@ and the session number never appears at all.
 ### Semantic colouring: real, documented, and Android 17
 
 `ProgressStyle.Point` and `Segment` both carry `setSemanticStyle(int)`, and it is
-**not** an undocumented hook — an earlier note here said the platform declared no
-constants for it, which was wrong and wrong for a lazy reason: the constants are
-on `Notification`, not on `ProgressStyle`, so looking at the wrong class found
-nothing. They are:
+**not** an undocumented hook. The constants live on `Notification`, not on
+`ProgressStyle` — looking on the style class finds nothing:
 
 | Constant | Value | Meaning |
 |---|---|---|
@@ -228,8 +216,8 @@ nothing. They are:
 `androidx.core` re-exports them as `NotificationCompat.SEMANTIC_STYLE_*`.
 
 **They are `since="37.0"` — Android 17.** The test device is Android 16 / API 36,
-which is the whole explanation for the probe result below: five points at styles
-0 through 4 rendered identically because the platform on the device has no
+which is the whole explanation for the probe result: five points at styles 0
+through 4 rendered identically because the platform on the device has no
 implementation, not because Samsung discards it. `compileSdk 37` is what let it
 compile at all.
 
