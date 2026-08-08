@@ -47,7 +47,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.glance.appwidget.updateAll
 import androidx.lifecycle.lifecycleScope
 import com.allthingsclaude.battery.core.BatteryPalette
 import com.allthingsclaude.battery.core.TimeFormatting

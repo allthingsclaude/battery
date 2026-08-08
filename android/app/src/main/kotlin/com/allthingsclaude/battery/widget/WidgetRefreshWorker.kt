@@ -52,14 +52,6 @@ class WidgetRefreshWorker(
         // one took a sixteen-minute wait and an inference from a changed job id.
         Log.i(TAG, "refresh: payload age=${ageSeconds(repository)}s")
 
-        // Repaint first and unconditionally. This is the part that fixes the
-        // reported defect, it needs no network, and it must still happen when
-        // the poll below is skipped or fails — recomposing against the stored
-        // payload is what re-evaluates every "in 2h 13m" against the clock.
-        refreshWidgets()
-
-        if (!repository.isSignedIn()) return Result.success()
-
         // Polling is the *optional* half, and deliberately conditional. This
         // worker runs whether or not anyone is looking, so an unconditional
         // fetch every fifteen minutes would be ninety-six requests a day spent
@@ -74,22 +66,51 @@ class WidgetRefreshWorker(
         // clock jump makes a signed age negative, and a negative age reads as
         // "fresh" and skips the poll indefinitely.
         val age = payload?.let { abs(Instant.now().epochSecond - it.updatedAt.epochSecond) }
-        if (age == null || age >= STALE_AFTER_SECONDS) {
-            when (val result = repository.poll()) {
-                // poll() repaints the widgets itself on success.
-                is UsageRepository.PollResult.Success -> runCatching { postCardIfWarranted(result.payload) }
+        val willPoll = repository.isSignedIn() && (age == null || age >= STALE_AFTER_SECONDS)
+
+        // **Exactly one repaint per run, on every path.** An earlier version
+        // repainted here unconditionally and then polled, and `poll()` repaints
+        // again on success — two `updateAll` bursts about a second apart. Glance
+        // composes in a WorkManager session per widget, so the second burst
+        // cancelled the first mid-composition, and when WorkManager later
+        // restarted those cancelled workers the session was gone:
+        //
+        //   W GlanceSessionWorker: SessionWorker attempted restart but Session
+        //                          is not available for appWidget-115
+        //
+        // Both compositions died and the widgets kept the previous RemoteViews,
+        // so the card read 6% while the home screen still said 4% — the widgets
+        // went stale precisely when the numbers changed, which is the one moment
+        // the repaint existed for. Measured on device, 2026-08-08.
+        if (!willPoll) {
+            // No poll, so nothing else will repaint. Recomposing against the
+            // stored payload is what re-evaluates every "in 2h 13m" against the
+            // clock, and it needs no network.
+            refreshWidgets()
+            return Result.success()
+        }
+
+        return when (val result = repository.poll()) {
+            // poll() has already repainted; a second updateAll here is the race.
+            is UsageRepository.PollResult.Success -> {
+                runCatching { postCardIfWarranted(result.payload) }
                     .onFailure { Log.w(TAG, "card post skipped: $it") }
-                is UsageRepository.PollResult.Failed -> {
-                    // Retry is WorkManager's exponential backoff, which is the
-                    // right shape here — but the widgets are already repainted
-                    // above, so a failure costs freshness and not correctness.
-                    Log.w(TAG, "background poll failed: ${result.message}")
-                    return Result.retry()
-                }
-                else -> Unit
+                Result.success()
+            }
+            is UsageRepository.PollResult.Failed -> {
+                // Retry is WorkManager's exponential backoff, which is the right
+                // shape here. The repaint still has to happen — a failed poll
+                // should cost freshness, not a frozen countdown.
+                Log.w(TAG, "background poll failed: ${result.message}")
+                refreshWidgets()
+                Result.retry()
+            }
+            // Stale or signed out: poll() stored nothing, so it repainted nothing.
+            else -> {
+                refreshWidgets()
+                Result.success()
             }
         }
-        return Result.success()
     }
 
     /**

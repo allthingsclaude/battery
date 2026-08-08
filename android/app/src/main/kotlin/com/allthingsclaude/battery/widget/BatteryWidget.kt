@@ -166,10 +166,16 @@ class ForecastWidgetReceiver : ConfigCleaningReceiver() {
 /**
  * Repaint every widget type.
  *
- * Called from the one place a new payload lands. `updateAll` throws for a widget
- * type that isn't on any home screen, which is the common case rather than an
- * error — so each is attempted independently and a failure on one can't stop the
- * rest from updating.
+ * `updateAll` throws for a widget type that isn't on any home screen, which is
+ * the common case rather than an error — so each is attempted independently and
+ * a failure on one can't stop the rest from updating.
+ *
+ * **Call this at most once per event.** Glance composes each widget in its own
+ * WorkManager session, and a second call while the first is still composing
+ * cancels it; the cancelled workers are later restarted, find no session, and
+ * quietly do nothing, so *both* repaints are lost and the widgets keep their old
+ * `RemoteViews`. Nothing throws, so `runCatching` above will not tell you. See
+ * `WidgetRefreshWorker.doWork`, where that race was found and fixed.
  */
 suspend fun refreshAllWidgets(context: Context) {
     listOf(SessionRowWidget(), SessionRingWidget(), OverviewWidget(), ForecastWidget())
