@@ -266,6 +266,21 @@ Plain AOSP, and that is the whole point:
 - `setCategory(CATEGORY_PROGRESS)` — not required, but honest semantics
 - a `specialUse` foreground service whose notification *is* the card
 
+## A service that stops inside its promote window shows nothing
+
+`startForeground` followed quickly by `stopForeground` does not flash a card.
+The system defers the notification instead of displaying it, which
+`dumpsys activity services` reports as:
+
+```
+notificationWasDeferred=1  notificationShown=0
+```
+
+Measured on the S24 Ultra with a 2 ms service lifetime. This is what makes it
+safe to start the service speculatively and let `SessionPolicy` stand it down on
+the first tick — the alternative would be duplicating the policy at every call
+site to avoid a flicker that does not happen.
+
 ## Dead ends — do not re-litigate
 
 - No public Samsung Now Bar SDK exists.
