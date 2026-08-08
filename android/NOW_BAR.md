@@ -131,7 +131,7 @@ to design rather than three.
 | `setContentTitle` | **line 1**, ellipsised at ~23 chars | wraps to 2 lines, no truncation | — |
 | `setShortCriticalText` | **line 2**, ~22 chars rendered in full | — | **the chip text**, ~10 glyphs (see below) |
 | `setContentText` | — | yes, wraps to 2 lines | — |
-| `setSubText` | — | header — **and it displaces the chronometer**, see below | — |
+| `setSubText` | — | header, beside the app name and the chronometer | — |
 | `setWhen` + `setChronometerCountDown` | — | header, ticking every second with zero updates from us | — |
 | `setLargeIcon` | **ignored** | **yes** — circular badge, top right | — |
 | `addAction` | — | **yes** — full-width buttons | — |
@@ -139,16 +139,21 @@ to design rather than three.
 | `setSmallIcon` | filled circle, tinted by `setColor` | filled square, tinted by `setColor` | inside the chip |
 | `setColor` | tints pill and chip. Samsung's Clock uses `0xff5f57d9` and its chip is that purple, which is how this was identified | | |
 
-**`setSubText` and the chronometer compete for one slot on the lock screen.**
-The probe set a subText and the expanded card's header read `Battery 3SUB` with
-no countdown, which looked like the chronometer simply not reaching the lock
-screen. Removing the subText brought `1:20:50` straight back. The shade has room
-for both and shows `Battery 3SUB 1:31:13`; the lock-screen header does not, and
-subText wins.
+**`setSubText` and the chronometer coexist.** An earlier revision of this file
+claimed they compete for one slot and that subText wins — and warned that the
+plan tier could therefore silently kill the countdown for anyone whose account
+reports a tier. That was wrong, and a screenshot at `Max 5x` shows why:
 
-That matters here because `setSubText` carries the plan tier, which is empty for
-some accounts and not others — so whether the lock screen shows a live countdown
-depends on a field nobody would connect to it.
+    Battery   Max 5x   1:48:52
+
+App name, subText and the ticking chronometer, all three, on the lock screen's
+expanded card.
+
+The observation behind the false claim was real — a probe build did show
+`Battery 3SUB` with no timer — but the cause was misattributed. That build also
+carried a deliberately overlong title that wrapped to two lines. Two variables
+changed at once and only one was credited, which is the whole failure: the
+measurement was sound and the inference from it was not.
 
 **The badge slot is the system's.** Size and position in the header row are
 fixed; a 192px bitmap came back rescaled to 113px. The only thing an app
