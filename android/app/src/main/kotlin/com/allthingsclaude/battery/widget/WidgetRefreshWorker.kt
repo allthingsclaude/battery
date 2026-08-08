@@ -11,6 +11,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.allthingsclaude.battery.data.UsageRepository
 import java.time.Instant
+import kotlin.math.abs
 import java.util.concurrent.TimeUnit
 
 /**
@@ -40,6 +41,12 @@ class WidgetRefreshWorker(
     override suspend fun doWork(): Result {
         val repository = UsageRepository(applicationContext)
 
+        // Kept, not scaffolding. A periodic worker is invisible by nature —
+        // WorkManager refuses to run one early even when JobScheduler is forced,
+        // so the only way to know it fires at all is to say so. Verifying this
+        // one took a sixteen-minute wait and an inference from a changed job id.
+        Log.i(TAG, "refresh: payload age=${'$'}{ageSeconds(repository)}s")
+
         // Repaint first and unconditionally. This is the part that fixes the
         // reported defect, it needs no network, and it must still happen when
         // the poll below is skipped or fails — recomposing against the stored
@@ -58,7 +65,10 @@ class WidgetRefreshWorker(
         // payload older than STALE_AFTER_SECONDS means the service is not
         // running: nothing else is going to refresh these numbers.
         val payload = repository.lastKnownPayload
-        val age = payload?.let { Instant.now().epochSecond - it.updatedAt.epochSecond }
+        // abs for the same reason as the repository's freshness gate: a backward
+        // clock jump makes a signed age negative, and a negative age reads as
+        // "fresh" and skips the poll indefinitely.
+        val age = payload?.let { abs(Instant.now().epochSecond - it.updatedAt.epochSecond) }
         if (age == null || age >= STALE_AFTER_SECONDS) {
             when (val result = repository.poll()) {
                 // poll() repaints the widgets itself on success.
@@ -75,6 +85,9 @@ class WidgetRefreshWorker(
         }
         return Result.success()
     }
+
+    private fun ageSeconds(repository: UsageRepository): Long? =
+        repository.lastKnownPayload?.let { Instant.now().epochSecond - it.updatedAt.epochSecond }
 
     private suspend fun refreshWidgets() {
         runCatching { refreshAllWidgets(applicationContext) }

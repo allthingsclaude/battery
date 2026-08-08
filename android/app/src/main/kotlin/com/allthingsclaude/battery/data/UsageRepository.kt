@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import kotlin.math.abs
 
 /**
  * One poll: fetch, persist any rotated tokens, fold the sample into the
@@ -80,9 +81,15 @@ class UsageRepository(context: Context) {
         //
         // Anything inside this window gets the cached payload, which is what
         // every surface would have rendered anyway.
+        // abs, so the gate measures distance rather than direction. A signed
+        // difference goes negative if the wall clock moves backwards — a manual
+        // change, a timezone-less NTP correction — and every negative value is
+        // below the threshold, so the cache would be served until real time
+        // caught back up. Verification called that unreachable enough not to be
+        // a defect; it is one character to stop it being a question.
         val cached = payloads.load()
         if (!force && cached != null &&
-            Instant.now().epochSecond - cached.updatedAt.epochSecond < MIN_POLL_INTERVAL_SECONDS
+            abs(Instant.now().epochSecond - cached.updatedAt.epochSecond) < MIN_POLL_INTERVAL_SECONDS
         ) {
             return@withContext PollResult.Success(cached)
         }
