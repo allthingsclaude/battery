@@ -45,7 +45,7 @@ class WidgetRefreshWorker(
         // WorkManager refuses to run one early even when JobScheduler is forced,
         // so the only way to know it fires at all is to say so. Verifying this
         // one took a sixteen-minute wait and an inference from a changed job id.
-        Log.i(TAG, "refresh: payload age=${'$'}{ageSeconds(repository)}s")
+        Log.i(TAG, "refresh: payload age=${ageSeconds(repository)}s")
 
         // Repaint first and unconditionally. This is the part that fixes the
         // reported defect, it needs no network, and it must still happen when

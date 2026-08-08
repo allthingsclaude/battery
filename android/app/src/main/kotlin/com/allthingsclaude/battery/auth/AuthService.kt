@@ -1,7 +1,10 @@
 package com.allthingsclaude.battery.auth
 
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
 import com.allthingsclaude.battery.core.AppConfig
 import com.allthingsclaude.battery.core.StoredTokens
@@ -120,15 +123,52 @@ class AuthService(private val context: Context) {
         // would also leak both. The immediately preceding failure (a socket that
         // will not bind) is handled; this one was not.
         val launched = runCatching {
-            CustomTabsIntent.Builder()
-                .setShowTitle(true)
-                .build()
-                .launchUrl(context, authorizeUrl)
+            val tab = CustomTabsIntent.Builder().setShowTitle(true).build()
+            // Pin the request to a real browser where one can be identified.
+            // RFC 8252 asks for this, and the reason is specific to what this
+            // URL carries: `state` is the only thing standing between the
+            // loopback listener and an injected authorization code, and it is a
+            // query parameter — so every app that can resolve the intent reads
+            // it. An unpinned ACTION_VIEW hands that to whatever the system
+            // picks, including a disambiguation dialog the user may mis-tap.
+            browserPackage(context)?.let { tab.intent.setPackage(it) }
+            tab.launchUrl(context, authorizeUrl)
         }
         if (launched.isFailure) {
             cancel()
             onResult(Result.Failure("No browser available to sign in."))
         }
+    }
+
+    /**
+     * A browser to pin the authorization request to, or null to let the system
+     * choose.
+     *
+     * Prefers a Custom Tabs provider, then the user's default browser. Returns
+     * null rather than guessing when neither resolves — pinning to an arbitrary
+     * entry out of a chooser list would be worse than the implicit launch,
+     * because it would silently pick for the user rather than letting them pick.
+     *
+     * The `android` package is the system's own ResolverActivity, which is what
+     * comes back when no default browser is set; treating that as a package to
+     * pin would make the launch fail outright.
+     *
+     * This is not complete protection and should not be described as such: an
+     * app that registers a hostless https filter *is* a browser as far as the
+     * platform is concerned, and if the user makes it the default it will be
+     * chosen here. What this closes is every non-browser interception path and
+     * the mis-tapped chooser.
+     */
+    private fun browserPackage(context: Context): String? {
+        CustomTabsClient.getPackageName(context, null)?.let { return it }
+
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse("https://claude.ai"))
+            .addCategory(Intent.CATEGORY_BROWSABLE)
+        val resolved = context.packageManager
+            .resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo
+            ?.packageName
+        return resolved?.takeUnless { it == "android" || it.isEmpty() }
     }
 
     /** Tear down any in-flight attempt. Safe to call repeatedly. */

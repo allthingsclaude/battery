@@ -12,6 +12,25 @@
       Nothing in the JVM test suite could catch this: every test drives a fake
       HttpTransport, and the manifest isn't involved. It took a real device.
     -->
+    <!--
+      Package visibility. Since API 30 an app cannot see arbitrary installed
+      packages, and this app is minSdk 31 — so without this block
+      CustomTabsClient.getPackageName() returns null and resolveActivity() finds
+      nothing, and the OAuth URL can only be launched as an unrestricted
+      implicit intent. RFC 8252 wants the authorization request pinned to a real
+      browser; these two filters are what make the app able to find one.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
