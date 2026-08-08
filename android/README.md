@@ -16,6 +16,12 @@ makes the foreground service self-justifying in exactly the way Google's Live
 Update guidelines want. It isn't a background poller wearing a notification as a
 disguise; the notification is the product.
 
+That equivalence has one consequence worth stating up front, because it explains
+several design choices further down: **when the card goes, the poller goes with
+it.** Nothing else in the app runs on a schedule, so anything that needs to
+happen while no card is up has to be somebody else's job. That somebody is
+`WidgetRefreshWorker`.
+
 ---
 
 ## Layout
@@ -31,28 +37,50 @@ android/
 `core/` staying Android-free is a rule worth defending, not an accident. It is
 what lets the regression, the forecast wording and the card's state machine run
 as ordinary JVM tests in milliseconds against the fixtures in `../fixtures/` —
-and it is the reason `SessionPolicy` has thirteen tests where the iOS original
-has none.
+and it is the reason `SessionPolicy` has 24 tests where the iOS original has
+none. 89 tests in total, all JVM, all under two seconds.
 
 Glance widgets need no separate module. Unlike iOS, where the widget extension
 is a codesigned `.appex` in its own process, they are a `BroadcastReceiver` in
-this same APK.
+this same APK — so no credential is ever copied anywhere, which removes a whole
+class of exposure the iOS widget has to reason about.
 
 ---
 
 ## The Now Bar
 
-**Solved** — see [`NOW_BAR.md`](NOW_BAR.md). It works on plain AOSP APIs with no
-Samsung-specific code, and reaches the Now Bar pill, the status-bar chip, the
-lock-screen card and the top of the shade at once.
+**Solved** — see [`NOW_BAR.md`](NOW_BAR.md), which is the long version: what
+renders on which surface, how wide each one is, and the dead ends. It works on
+plain AOSP APIs with no Samsung-specific code, and reaches the Now Bar pill, the
+status-bar chip, the lock-screen card and the top of the shade at once.
 
 The one catch is a switch, not an API: **Developer options ▸ "Live notifications
 for all apps" ships OFF in One UI 8.5.** With it off, promotion still succeeds
 and the lock-screen card still appears — only the Now Bar and the chip are
 missing, which is exactly why it looked like a missing capability for so long.
 
-It cannot be detected at runtime (promotion reports success either way) and it
-cannot be set programmatically, so the only handling is telling the user.
+It **can** be detected at runtime. It writes `Settings.Secure`
+`enable_notification_nowbar_test`, which any app can read, so `NowBarGate`
+reports four states and the dashboard shows guidance only when it applies:
+`ENABLED` (say nothing), `DISABLED` (deep-link to Developer options),
+`DEVELOPER_OPTIONS_OFF` ("tap Build number seven times"), and `NOT_APPLICABLE`
+— key absent, so a non-Samsung device is never sent hunting for a Samsung
+setting. Writing it needs `WRITE_SECURE_SETTINGS` and stays impossible.
+
+### What goes where
+
+Three surfaces, fed by three fields, with very different room:
+
+| Field | Renders |
+|---|---|
+| `setContentTitle` | Now Bar pill line 1, and the shade/expanded title. ~23 chars |
+| `setShortCriticalText` | the status-bar chip **and** the pill's line 2 — one string, two surfaces. The chip caps around **10 glyphs**, then ellipsis, then marquee |
+| `setContentText` | the expanded card and the shade only |
+| `setLargeIcon` | the expanded card's badge. Ignored by the collapsed pill |
+| `ProgressStyle` | the expanded card and the shade |
+
+Expanding the chip opens the same expanded card the pill does, so there is one
+detailed layout to design rather than three.
 
 ---
 
@@ -65,10 +93,11 @@ cd android
 ./gradlew :app:installDebug
 ```
 
-Requires **JDK 17+** and **compileSdk 37**
-(`android sdk install platforms/android-37.1`). The build targets 17 bytecode
-without pinning a toolchain, so any modern JDK works locally; CI pins 17
-explicitly rather than inheriting whatever the runner image ships.
+Requires **JDK 17+** and **compileSdk 37**. CI installs `platforms;android-37`
+explicitly when the runner image lacks it; locally, Android Studio or
+`sdkmanager` will fetch it. The build targets 17 bytecode without pinning a
+toolchain, so any modern JDK works locally; CI pins 17 rather than inheriting
+whatever the runner image ships this month.
 
 - `minSdk 31` — the app installs from Android 12.
 - `targetSdk 36` — matches the device.
@@ -77,12 +106,38 @@ explicitly rather than inheriting whatever the runner image ships.
 
 ### Diagnostics
 
-The dashboard's *Diagnostics* button opens the Phase 0 harness: post a card at
-any percentage, toggle the Samsung private extras, read
+Debug builds only: the Settings sheet's *Diagnostics* row opens a harness that
+posts a card at any percentage on demand, reads
 `canPostPromotedNotifications` / `hasPromotableCharacteristics` /
-`FLAG_PROMOTED_ONGOING` / `feature.nowbar`, and jump to the system's
-promoted-notification settings. It's kept because the Now Bar questions are open
-and answering them needs a card at 91% on demand.
+`FLAG_PROMOTED_ONGOING` / `feature.nowbar`, and deep-links to the system's
+promoted-notification settings. Being able to produce a card at 91% without
+waiting for a real session is what made the escalation paths testable at all.
+
+`SpikeActivity` is `exported=false`, so `adb am start` cannot reach it — go
+through the app.
+
+---
+
+## CI
+
+`.github/workflows/android-ci.yml` runs `:core:test` and `:app:assembleDebug` on
+`ubuntu-latest`.
+
+It is a separate file from `ci.yml`, not a job inside it, for two reasons.
+`ci.yml` runs on `macos-26`, which bills at a multiple of an ubuntu runner, so
+widening *its* triggers to cover Android branches would spend macOS minutes on
+pushes that cannot affect the Mac or iOS builds. And it triggers on `main` and
+`android/**`, where `ci.yml` fires only on main and PRs against it — a
+long-lived branch would otherwise get no CI until the moment it is proposed for
+merge, which is the worst possible time to discover the runner cannot resolve
+`compileSdk`.
+
+> **`workflow_dispatch` only appears for workflows on the repository's default
+> branch.** A workflow that exists only on a feature branch has no "Run
+> workflow" button and `gh workflow run` returns 404, because it resolves the
+> workflow by name against the default branch. Push triggers are the exception —
+> including tag pushes, which is why the release workflow works from a tag on a
+> branch that has never been merged.
 
 ---
 
@@ -108,16 +163,34 @@ those use Apple certificates, which cannot sign an APK.
 
 | Secret | What it is |
 |---|---|
-| `ANDROID_KEYSTORE` | base64 of the release `.jks` |
+| `ANDROID_KEYSTORE` | base64 of the release `.jks`, newlines stripped |
 | `ANDROID_KEYSTORE_PASSWORD` | store password |
 | `ANDROID_KEY_ALIAS` | key alias inside the store |
-| `ANDROID_KEY_PASSWORD` | key password |
+| `ANDROID_KEY_PASSWORD` | key password — **see the trap below** |
 
 ```bash
 keytool -genkeypair -v -keystore release.jks -alias battery \
-  -keyalg RSA -keysize 4096 -validity 10000
-base64 -i release.jks | gh secret set ANDROID_KEYSTORE
+  -keyalg RSA -keysize 4096 -validity 10000 \
+  -storepass 'PASS' -keypass 'PASS' -dname "CN=Battery"
+
+# tr -d '\n' matters: macOS base64 wraps lines by default.
+base64 -i release.jks | tr -d '\n' | gh secret set ANDROID_KEYSTORE --repo OWNER/REPO
 ```
+
+> **The store password and the key password must be the same.** keytool's
+> default format since JDK 9 is PKCS12, which has no separate key encryption.
+> Pass a different `-keypass` and it prints `Ignoring user-specified -keypass
+> value` and protects the key with the *store* password instead — so a
+> perfectly reasonable-looking set of four secrets fails at `:app:packageRelease`
+> with `Given final block not properly padded`, two minutes into the build. This
+> is not hypothetical; it is what the first real release run did.
+>
+> Confusingly, `keytool` itself will not catch this: it ignores `-keypass` on
+> read commands too, so a keytool-based check passes with the wrong password.
+> The workflow's `Verify signing credentials` step therefore uses the `KeyStore`
+> API directly — `ks.getKey(alias, keyPassword)` — which is what AGP calls and
+> the only thing that actually exercises the key password. It fails in seconds
+> with an explanation instead of two minutes in with a stack trace.
 
 > **The keystore is permanent.** Android has no key rotation for sideloaded
 > APKs: a build signed with key A can never be updated by one signed with key B —
@@ -157,6 +230,14 @@ being here.
 - **The foreground service is `specialUse`, not `dataSync`.** `dataSync` is capped
   at 6h per 24h on Android 15+ and the system *throws* at the limit rather than
   degrading.
+- **Widgets do not tick.** A Glance widget is a `RemoteViews` tree built once and
+  frozen, so "resets in 2h 13m" is a string sampled at composition. Only
+  `WidgetRefreshWorker` re-renders it, and it is also what brings the card back
+  after `SessionPolicy` has stood the service down — see the note at the top.
+- **Anything about the notification's rendering belongs in `NOW_BAR.md`, and it
+  belongs there measured.** Three separate claims in that file were recorded as
+  settled and later disproved on hardware. Prefer one screenshot to any amount of
+  reasoning about One UI.
 - **Fixtures are the specification.** If `../fixtures/` disagrees with
   `Tests/BatteryTests/`, the fixture is wrong — fix it there first, then fix
   whichever implementation drifted.
