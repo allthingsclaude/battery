@@ -48,6 +48,57 @@ data class UsageBucket(val utilization: Double, val resetsAt: Instant?)
  */
 data class ScopedWeekly(val label: String, val utilization: Double, val resetsAt: Instant?)
 
+/**
+ * Pay-as-you-go credits, when the account has them enabled.
+ *
+ * **The amounts are minor units.** The live response carries
+ * `used_credits: 2080.0` against `monthly_limit: 4000` with
+ * `decimal_places: 2` — that is $20.80 of $40.00, not $2080 of $4000. macOS
+ * calls the same two fields "cents" and divides by 100
+ * (`Views/Components/ExtraUsageView.swift`). Getting this wrong renders a
+ * hundred-fold overcharge on a lock screen, so the scale is read from
+ * `decimal_places` rather than assumed.
+ */
+data class ExtraUsage(
+    val isEnabled: Boolean,
+    val usedMinor: Double?,
+    val limitMinor: Double?,
+    val utilization: Double?,
+    val currency: String,
+    val decimalPlaces: Int,
+) {
+    private fun major(minor: Double?): Double? {
+        if (minor == null) return null
+        var scale = 1.0
+        repeat(decimalPlaces.coerceIn(0, 6)) { scale *= 10 }
+        return minor / scale
+    }
+
+    val used: Double? get() = major(usedMinor)
+    val limit: Double? get() = major(limitMinor)
+    val remaining: Double? get() {
+        val u = used ?: return null
+        val l = limit ?: return null
+        return (l - u).coerceAtLeast(0.0)
+    }
+
+    /** `$20.80`, or `20.80 CHF` when there is no symbol worth guessing. */
+    fun format(amount: Double?): String? {
+        if (amount == null) return null
+        val text = String.format(java.util.Locale.US, "%.${decimalPlaces.coerceIn(0, 6)}f", amount)
+        val symbol = when (currency.uppercase()) {
+            "USD" -> "$"
+            "EUR" -> "€"
+            "GBP" -> "£"
+            else -> null
+        }
+        return symbol?.let { it + text } ?: "$text ${currency.uppercase()}"
+    }
+
+    /** Worth showing only when it is on and has a limit to measure against. */
+    val isPresentable: Boolean get() = isEnabled && (limit ?: 0.0) > 0.0 && used != null
+}
+
 /** The `/api/oauth/usage` response. */
 data class UsageResponse(
     val fiveHour: UsageBucket?,
@@ -55,6 +106,8 @@ data class UsageResponse(
     val sevenDayOpus: UsageBucket?,
     /** The model-scoped weekly window, whatever model it is scoped to. */
     val scopedWeekly: ScopedWeekly?,
+    /** Pay-as-you-go credits, null when the account has none. */
+    val extraUsage: ExtraUsage?,
     val rateLimitTier: String?,
 ) {
     /**
@@ -241,6 +294,7 @@ class UsageApi(
                     ?: throw IllegalArgumentException("response has no seven_day bucket"),
                 sevenDayOpus = bucket(root, "seven_day_opus"),
                 scopedWeekly = scopedWeekly(root),
+                extraUsage = extraUsage(root),
                 rateLimitTier = root["rate_limit_tier"]?.jsonPrimitive?.contentOrNullSafe(),
             )
         }
@@ -254,6 +308,21 @@ class UsageApi(
             val expiresIn = root["expires_in"]?.jsonPrimitive?.contentOrNullSafe()?.toLongOrNull()
                 ?: 3600L
             return StoredTokens.fromExpiresIn(access, refresh, expiresIn)
+        }
+
+        private fun extraUsage(root: kotlinx.serialization.json.JsonObject): ExtraUsage? {
+            val obj = root["extra_usage"] as? kotlinx.serialization.json.JsonObject ?: return null
+            fun num(key: String) =
+                obj[key]?.jsonPrimitive?.contentOrNullSafe()?.toDoubleOrNull()
+            fun text(key: String) = obj[key]?.jsonPrimitive?.contentOrNullSafe()
+            return ExtraUsage(
+                isEnabled = text("is_enabled")?.toBooleanStrictOrNull() ?: false,
+                usedMinor = num("used_credits"),
+                limitMinor = num("monthly_limit"),
+                utilization = num("utilization"),
+                currency = text("currency") ?: "USD",
+                decimalPlaces = num("decimal_places")?.toInt() ?: 2,
+            )
         }
 
         private fun bucket(root: kotlinx.serialization.json.JsonObject, key: String): UsageBucket? {

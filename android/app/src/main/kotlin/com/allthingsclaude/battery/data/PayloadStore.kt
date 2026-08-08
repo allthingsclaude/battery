@@ -2,6 +2,7 @@ package com.allthingsclaude.battery.data
 
 import android.content.Context
 import com.allthingsclaude.battery.core.SnapshotStore
+import com.allthingsclaude.battery.core.ExtraUsage
 import com.allthingsclaude.battery.core.UsagePayload
 import org.json.JSONObject
 import java.time.Instant
@@ -58,6 +59,15 @@ class PayloadStore(context: Context) {
         put("weeklyResetsAt", p.weeklyResetsAt?.toEpochMilli() ?: JSONObject.NULL)
         put("opusUtilization", p.opusUtilization ?: JSONObject.NULL)
         put("scopedLabel", p.scopedLabel)
+        put("extraUsage", p.extraUsage?.let {
+            JSONObject()
+                .put("isEnabled", it.isEnabled)
+                .put("usedMinor", it.usedMinor ?: JSONObject.NULL)
+                .put("limitMinor", it.limitMinor ?: JSONObject.NULL)
+                .put("utilization", it.utilization ?: JSONObject.NULL)
+                .put("currency", it.currency)
+                .put("decimalPlaces", it.decimalPlaces)
+        } ?: JSONObject.NULL)
         put("burnRatePerHour", p.burnRatePerHour)
         put("projectedLimitAt", p.projectedLimitAt?.toEpochMilli() ?: JSONObject.NULL)
         put("isSessionActive", p.isSessionActive)
@@ -77,6 +87,16 @@ class PayloadStore(context: Context) {
         // label falls back to "Opus" at the render site, which is what
         // those payloads meant.
         scopedLabel = o.optString("scopedLabel", ""),
+        extraUsage = o.optJSONObject("extraUsage")?.let { e ->
+            ExtraUsage(
+                isEnabled = e.optBoolean("isEnabled", false),
+                usedMinor = if (e.isNull("usedMinor")) null else e.getDouble("usedMinor"),
+                limitMinor = if (e.isNull("limitMinor")) null else e.getDouble("limitMinor"),
+                utilization = if (e.isNull("utilization")) null else e.getDouble("utilization"),
+                currency = e.optString("currency", "USD"),
+                decimalPlaces = e.optInt("decimalPlaces", 2),
+            )
+        },
         burnRatePerHour = o.optDouble("burnRatePerHour", 0.0),
         projectedLimitAt = o.instantOrNull("projectedLimitAt"),
         isSessionActive = o.optBoolean("isSessionActive", false),

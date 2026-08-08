@@ -39,6 +39,14 @@ data class UsagePayload(
      */
     val scopedLabel: String = "",
 
+    /**
+     * Pay-as-you-go credits, null when the account has none enabled.
+     *
+     * Carried on the payload rather than fetched per surface for the same
+     * reason as everything else here: the app computes, the surfaces present.
+     */
+    val extraUsage: ExtraUsage? = null,
+
     // Precomputed burn-rate projection (see BurnRateCalculator — Phase 1)
     /** Percentage points per hour; 0 when unknown. */
     val burnRatePerHour: Double = 0.0,

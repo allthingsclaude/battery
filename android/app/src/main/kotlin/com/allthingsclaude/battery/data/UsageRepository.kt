@@ -228,6 +228,7 @@ class UsageRepository(context: Context) {
             weeklyResetsAt = usage.sevenDay.resetsAt,
             opusUtilization = usage.scopedWeekly?.utilization,
             scopedLabel = usage.scopedWeekly?.label ?: "",
+            extraUsage = usage.extraUsage?.takeIf { it.isPresentable },
             burnRatePerHour = projection.ratePerHour,
             projectedLimitAt = projection.limitAt,
             isSessionActive = isActive,

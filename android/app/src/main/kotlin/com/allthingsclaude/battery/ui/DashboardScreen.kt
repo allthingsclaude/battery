@@ -77,6 +77,7 @@ fun DashboardScreen(
         SessionCard(payload, now)
         ForecastCard(UsageForecast(payload, now = now))
         WeeklyCard(payload, now)
+        ExtraUsageCard(payload)
         CardNote(cardMode)
     }
 }
@@ -289,6 +290,50 @@ private fun WeeklyCard(payload: UsagePayload, now: Instant) {
         payload.opusUtilization?.let {
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
             BarRow("${payload.scopedTitle} · 7-day", it, null)
+        }
+    }
+}
+
+/**
+ * Pay-as-you-go credits, when the account has them.
+ *
+ * Absent for most accounts, and drawn only when the API says it is enabled and
+ * has a limit — an "Extra usage" heading over an empty bar would imply a billing
+ * arrangement the reader does not have.
+ *
+ * Android was the only client not showing this. macOS has parsed and rendered it
+ * since `ExtraUsageView`, so the money spent past the plan was visible on a Mac
+ * and invisible on the phone that shows everything else about the same account.
+ */
+@Composable
+private fun ExtraUsageCard(payload: UsagePayload) {
+    val extra = payload.extraUsage ?: return
+    if (!extra.isPresentable) return
+
+    val used = extra.format(extra.used) ?: return
+    val limit = extra.format(extra.limit) ?: return
+    val utilization = extra.utilization ?: 0.0
+
+    BatteryCard {
+        BarRow("Extra usage · monthly", utilization, null)
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                "$used of $limit",
+                style = MaterialTheme.typography.labelMedium,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+            extra.format(extra.remaining)?.let {
+                Text(
+                    "$it left",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+                )
+            }
         }
     }
 }

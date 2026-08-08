@@ -331,3 +331,63 @@ class ApiShapeTest {
         assertEquals("", profile.planLabel)
     }
 }
+
+/**
+ * Pay-as-you-go credits.
+ *
+ * The scale is the whole risk here: the API sends minor units, so reading them
+ * as major renders a hundred-fold overcharge.
+ */
+class ExtraUsageTest {
+
+    private val live = """
+        {"seven_day":{"utilization":34.0,"resets_at":null},
+         "extra_usage":{"is_enabled":true,"monthly_limit":4000,"used_credits":2080.0,
+                        "utilization":52.0,"currency":"USD","decimal_places":2}}
+    """.trimIndent()
+
+    @Test
+    fun `minor units become money`() {
+        val e = UsageApi.parseUsage(live).extraUsage
+        assertNotNull(e)
+        assertEquals(20.80, e.used!!, 0.001)
+        assertEquals(40.00, e.limit!!, 0.001)
+        assertEquals(19.20, e.remaining!!, 0.001)
+        assertEquals("$20.80", e.format(e.used))
+        assertEquals("$40.00", e.format(e.limit))
+    }
+
+    @Test
+    fun `a currency without a symbol falls back to its code`() {
+        val e = ExtraUsage(true, 2080.0, 4000.0, 52.0, "CHF", 2)
+        assertEquals("20.80 CHF", e.format(e.used))
+    }
+
+    @Test
+    fun `decimal places drive the scale, they are not assumed`() {
+        // A zero-decimal currency (JPY) would otherwise be divided by 100.
+        val e = ExtraUsage(true, 2080.0, 4000.0, 52.0, "JPY", 0)
+        assertEquals(2080.0, e.used!!, 0.001)
+        assertEquals("2080 JPY", e.format(e.used))
+    }
+
+    @Test
+    fun `spent past the limit never shows negative remaining`() {
+        val e = ExtraUsage(true, 5000.0, 4000.0, 125.0, "USD", 2)
+        assertEquals(0.0, e.remaining!!, 0.001)
+    }
+
+    @Test
+    fun `nothing is presentable without a limit to measure against`() {
+        assertEquals(false, ExtraUsage(true, 2080.0, null, 52.0, "USD", 2).isPresentable)
+        assertEquals(false, ExtraUsage(true, 2080.0, 0.0, 52.0, "USD", 2).isPresentable)
+        assertEquals(false, ExtraUsage(false, 2080.0, 4000.0, 52.0, "USD", 2).isPresentable)
+        assertEquals(true, ExtraUsage(true, 2080.0, 4000.0, 52.0, "USD", 2).isPresentable)
+    }
+
+    @Test
+    fun `an account with no credits has no block at all`() {
+        val body = """{"seven_day":{"utilization":34.0,"resets_at":null}}"""
+        assertNull(UsageApi.parseUsage(body).extraUsage)
+    }
+}
