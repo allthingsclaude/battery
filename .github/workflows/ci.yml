@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual runs. Without this the only triggers are a push to main and a PR
+  # against it, so work on a long-lived branch — which is how the Android port
+  # was built — gets no CI at all until the moment it is proposed for merge.
+  # That is the worst time to discover the runner cannot resolve compileSdk.
+  workflow_dispatch:
 
 jobs:
   build-and-test:
