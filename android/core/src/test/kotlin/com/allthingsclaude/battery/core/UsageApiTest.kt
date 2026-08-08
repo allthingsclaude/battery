@@ -37,8 +37,7 @@ class UsageApiTest {
         {
           "five_hour":      { "utilization": 87.5, "resets_at": "2026-01-01T14:13:00.000Z" },
           "seven_day":      { "utilization": 63.0, "resets_at": "2026-01-04T00:00:00Z" },
-          "seven_day_opus": { "utilization": 21.0, "resets_at": "2026-01-04T00:00:00Z" },
-          "rate_limit_tier": "claude_max_5x"
+          "seven_day_opus": { "utilization": 21.0, "resets_at": "2026-01-04T00:00:00Z" }
         }
     """.trimIndent()
 
@@ -50,7 +49,6 @@ class UsageApiTest {
         assertEquals(87.5, usage.fiveHour?.utilization)
         assertEquals(63.0, usage.sevenDay.utilization)
         assertEquals(21.0, usage.sevenDayOpus?.utilization)
-        assertEquals("Max 5x", usage.planDisplayName)
         assertNotNull(usage.fiveHour?.resetsAt)
     }
 
@@ -75,7 +73,6 @@ class UsageApiTest {
         assertNull(usage.fiveHour)
         assertNull(usage.sevenDayOpus)
         assertNull(usage.sevenDay.resetsAt)
-        assertEquals("", usage.planDisplayName)
     }
 
     @Test
@@ -92,19 +89,14 @@ class UsageApiTest {
     }
 
     @Test
-    fun `plan tier never guesses`() {
-        fun tier(raw: String?) = UsageApi.parseUsage(
-            """{ "seven_day": { "utilization": 1.0 }${raw?.let { ", \"rate_limit_tier\": \"$it\"" } ?: ""} }"""
-        ).planDisplayName
-
-        assertEquals("Pro", tier("claude_pro"))
-        assertEquals("Max", tier("claude_max"))
-        assertEquals("Max 5x", tier("claude_max_5x"))
-        assertEquals("", tier("something_else"))
-        // Absent tier must stay empty rather than being inferred from the
-        // presence of an Opus bucket — a wrong plan label on the lock screen is
-        // a confident lie.
-        assertEquals("", tier(null))
+    fun `a rate_limit_tier, if one ever appears, is ignored rather than parsed`() {
+        // The plan comes from ProfileApi. This endpoint sends no tier at all,
+        // and a second mapping of the same thing is how the two disagree — see
+        // `every tier maps to something a reader recognises` in SessionHistoryTest.
+        val usage = UsageApi.parseUsage(
+            """{ "seven_day": { "utilization": 1.0 }, "rate_limit_tier": "claude_max_5x" }"""
+        )
+        assertEquals(1.0, usage.sevenDay.utilization)
     }
 
     // ── Token refresh ───────────────────────────────────────────────────────

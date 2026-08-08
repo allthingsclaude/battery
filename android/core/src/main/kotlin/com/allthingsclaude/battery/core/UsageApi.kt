@@ -108,26 +108,14 @@ data class UsageResponse(
     val scopedWeekly: ScopedWeekly?,
     /** Pay-as-you-go credits, null when the account has none. */
     val extraUsage: ExtraUsage?,
-    val rateLimitTier: String?,
-) {
-    /**
-     * Display name for the plan, or "" when unknown.
-     *
-     * Never guessed from the presence of an Opus bucket — the iOS and macOS
-     * comments are emphatic about this, and a wrong plan label on a Live Update
-     * is a confident lie on the lock screen.
-     */
-    val planDisplayName: String
-        get() {
-            val t = rateLimitTier?.lowercase() ?: return ""
-            return when {
-                t.contains("max_5x") || t.contains("max5x") -> "Max 5x"
-                t.contains("max") -> "Max"
-                t.contains("pro") -> "Pro"
-                else -> ""
-            }
-        }
-}
+)
+
+/*
+ * No `rateLimitTier`/`planDisplayName`, though `ios/BatteryKit/UsageAPIShared.swift`
+ * has both: this endpoint sends no `rate_limit_tier`, measured on a live account,
+ * so the badge was permanently blank. `ProfileApi.planLabel` is the real source
+ * and can tell Max 20x from Max, which this mapping could not.
+ */
 
 /** Everything that can go wrong talking to the usage API. */
 sealed class UsageApiError(message: String, cause: Throwable? = null) : Exception(message, cause) {
@@ -295,7 +283,6 @@ class UsageApi(
                 sevenDayOpus = bucket(root, "seven_day_opus"),
                 scopedWeekly = scopedWeekly(root),
                 extraUsage = extraUsage(root),
-                rateLimitTier = root["rate_limit_tier"]?.jsonPrimitive?.contentOrNullSafe(),
             )
         }
 
