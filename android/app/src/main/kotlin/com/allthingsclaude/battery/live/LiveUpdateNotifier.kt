@@ -88,6 +88,24 @@ object LiveUpdateNotifier {
 
         style.setProgressPoints(points(payload, percent))
 
+        // The bar has three icon slots — tracker, start and end — and only the
+        // tracker moves, because it is pinned to setProgress(). Points and
+        // Segments take no icon at all, so a custom marker cannot be placed at
+        // an arbitrary position; that is the whole of what the API offers.
+        //
+        // There is deliberately no start icon. Fixed at zero, it would say the
+        // same thing on every card ever posted, and both bookends are drawn
+        // *outside* the bar, so it costs width the segments could use.
+        //
+        // The end icon is conditional for the same reason: at a fixed 100 it is
+        // decoration unless its *presence* is the information. So it appears
+        // only when the burn rate says this window will actually hit the
+        // ceiling — which is also exactly when `points` stops drawing the
+        // projection mark, because the projection has left the bar.
+        if (willBreachCeiling(payload)) {
+            style.setProgressEndIcon(IconCompat.createWithResource(context, R.drawable.ic_bar_end))
+        }
+
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_battery)
             .setContentTitle(if (didReset) "Session reset" else title(payload))
@@ -403,5 +421,18 @@ object LiveUpdateNotifier {
         if (forecast.pace == UsageForecast.Pace.NONE) return null
         val projected = forecast.projectedAtReset.roundToInt()
         return projected.takeIf { it < 100 }
+    }
+
+    /**
+     * Whether this window is forecast to run out before it resets.
+     *
+     * The complement of [projectedAtReset]'s `< 100` guard: where that stops
+     * drawing a mark because the projection has left the bar, this notices the
+     * same thing and puts the icon where the projection went.
+     */
+    private fun willBreachCeiling(payload: UsagePayload): Boolean {
+        val forecast = UsageForecast(payload)
+        return forecast.pace != UsageForecast.Pace.NONE &&
+            forecast.projectedAtReset.roundToInt() >= 100
     }
 }
