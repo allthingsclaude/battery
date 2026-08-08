@@ -201,22 +201,32 @@ private fun Root() {
                         SessionService.stop(context)
                         if (it != SessionPolicy.Mode.OFF) SessionService.start(context)
                     },
+                    // Each of these three refreshes and then asks the *service*
+                    // to repaint. They used to post the Live Update themselves,
+                    // which bypassed all three gates that decide whether a card
+                    // may exist — the card mode, SessionPolicy, and the record
+                    // of a card the user swiped away.
                     onSelectAccount = {
                         repository.selectAccount(it)
                         scope.launch {
                             refresh(context, repository) { p, m -> payload = p; message = m }
+                            repaintCard(context, cardMode)
                         }
                     },
                     onRenameAccount = { id, name ->
                         repository.renameAccount(id, name)
                         scope.launch {
                             refresh(context, repository) { p, m -> payload = p; message = m }
+                            repaintCard(context, cardMode)
                         }
                     },
                     onRemoveAccount = {
                         repository.removeAccount(it)
                         scope.launch {
                             refresh(context, repository) { p, m -> payload = p; message = m }
+                            // No repaint: the account this card described is
+                            // gone. If any remain the next poll brings it back.
+                            SessionService.stop(context)
                         }
                     },
                     onAddAccount = {
@@ -229,6 +239,8 @@ private fun Root() {
                                             refresh(context, repository) { p, m ->
                                                 payload = p; message = m
                                             }
+                                            signedIn = true
+                                            repaintCard(context, cardMode)
                                         } else {
                                             message = "Couldn't store the credential."
                                         }
@@ -306,4 +318,17 @@ private fun SignInGate(message: String?, onSignIn: () -> Unit) {
             )
         }
     }
+}
+
+/**
+ * Ask [SessionService] to repaint, honouring the user's card mode.
+ *
+ * The one place Settings actions are allowed to touch the card. Starting the
+ * service is the whole mechanism: `onStartCommand` promotes from the payload the
+ * poll just stored and wakes the loop, and the loop is where `SessionPolicy` and
+ * the dismissal record get consulted. Posting the notification directly — which
+ * these handlers used to do — skips all of that.
+ */
+private fun repaintCard(context: android.content.Context, mode: SessionPolicy.Mode) {
+    if (mode != SessionPolicy.Mode.OFF) SessionService.start(context)
 }

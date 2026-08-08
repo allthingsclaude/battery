@@ -200,3 +200,43 @@ class ElapsedPercentTest {
         }
     }
 }
+
+/**
+ * `untilReset` — the caller-side gate Android never ported from the Apple apps.
+ */
+class UntilResetTest {
+
+    @Test
+    fun `a session window uses the shared short form`() {
+        assertEquals("2h 13m", TimeFormatting.untilReset(2.0 * 3600 + 13 * 60))
+        assertEquals("47m", TimeFormatting.untilReset(47.0 * 60))
+    }
+
+    @Test
+    fun `a weekly window reads in days, not in three-digit hours`() {
+        // The defect: shortDuration has no day branch, so a weekly reset six
+        // days out rendered "153h 0m" — a number nobody parses as "about a
+        // week", and one iOS never shows.
+        assertEquals("6d 9h", TimeFormatting.untilReset(6.0 * 86_400 + 9 * 3600))
+        assertEquals("7d 0h", TimeFormatting.untilReset(7.0 * 86_400))
+    }
+
+    @Test
+    fun `the boundary belongs to the day form`() {
+        // shortDuration(86400) is pinned to "24h 0m" by the shared fixtures and
+        // must keep returning that; the gate is what changes, not the formatter.
+        assertEquals("1d 0h", TimeFormatting.untilReset(86_400.0))
+        assertEquals("23h 59m", TimeFormatting.untilReset(86_400.0 - 60))
+        assertEquals("24h 0m", TimeFormatting.shortDuration(86_400.0))
+    }
+
+    @Test
+    fun `an expired window has no countdown`() {
+        // Not "0s". shortDuration clamps non-positive intervals, so a stored
+        // payload whose window has passed rendered "resets in 0s" indefinitely
+        // off purely local state — on any system-driven widget rebuild.
+        assertNull(TimeFormatting.untilReset(0.0))
+        assertNull(TimeFormatting.untilReset(-1.0))
+        assertNull(TimeFormatting.untilReset(-99_999.0))
+    }
+}

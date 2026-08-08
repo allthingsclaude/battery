@@ -75,25 +75,6 @@ class GoldenFixtureTest {
         }
     }
 
-    @Test
-    fun `ramp segments match the fixture`() {
-        val segments = load("usage-level.json")["rampSegments"]!!
-            .jsonObject["segments"]!!.jsonArray
-
-        assertEquals(segments.size, USAGE_RAMP_SEGMENTS.size, "segment count")
-        segments.forEachIndexed { i, element ->
-            val obj = element.jsonObject
-            val (length, color) = USAGE_RAMP_SEGMENTS[i]
-            assertEquals(obj["length"]!!.jsonPrimitive.double.toInt(), length, "segment $i length")
-            assertEquals(
-                obj["color"]!!.jsonPrimitive.content.uppercase(),
-                "#%08X".format(color),
-                "segment $i colour",
-            )
-        }
-        assertEquals(100, USAGE_RAMP_SEGMENTS.sumOf { it.first }, "segments must sum to 100")
-    }
-
     // ── TimeFormatting ──────────────────────────────────────────────────────
 
     @Test

@@ -134,7 +134,7 @@ fun EmptyState(palette: WidgetPalette, compact: Boolean) {
 }
 
 fun resetText(resetsAt: Instant?): String? = resetsAt?.let {
-    TimeFormatting.shortDuration((it.epochSecond - Instant.now().epochSecond).toDouble())
+    TimeFormatting.untilReset((it.epochSecond - Instant.now().epochSecond).toDouble())
 }
 
 /** Ports the desktop `ProgressBarView` — the row form iOS's medium widget uses. */

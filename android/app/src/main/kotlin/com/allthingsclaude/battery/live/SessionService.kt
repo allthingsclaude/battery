@@ -72,9 +72,9 @@ class SessionService : Service() {
         // startForeground must happen within a few seconds of the start request
         // or the system kills us with a ForegroundServiceDidNotStartInTimeException.
         // The last-known payload is the honest thing to show while the first poll
-        // is in flight; the placeholder would be an invented number on a lock
-        // screen.
-        val initial = repo.lastKnownPayload ?: UsagePayload.PLACEHOLDER
+        // is in flight. With no last-known payload the obligation is still to
+        // post — but to post that we have nothing, not to invent a number.
+        val initial = repo.lastKnownPayload
 
         // Promote on EVERY start, including one that arrives while the loop is
         // already running, for two independent reasons.
@@ -90,7 +90,10 @@ class SessionService : Service() {
         // widgets, but nothing rebuilt the notification, so the app read 10%
         // while the pill, the chip and the lock-screen card all sat at 9% until
         // the loop happened to wake. `lastKnownPayload` is that fresh number.
-        promote(LiveUpdateNotifier.build(this, initial))
+        promote(
+            if (initial != null) LiveUpdateNotifier.build(this, initial)
+            else LiveUpdateNotifier.buildWaiting(this)
+        )
 
         if (loop?.isActive == true) {
             // Re-evaluate now rather than whenever the current delay expires —
@@ -103,7 +106,7 @@ class SessionService : Service() {
 
         // An already-dismissed window is handled by promoting and immediately
         // standing down rather than by skipping the promote call above.
-        if (dismissal.isDismissed(initial.sessionResetsAt)) {
+        if (initial != null && dismissal.isDismissed(initial.sessionResetsAt)) {
             stopWithoutCard()
             return START_NOT_STICKY
         }

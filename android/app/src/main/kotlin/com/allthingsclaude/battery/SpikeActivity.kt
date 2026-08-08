@@ -143,7 +143,7 @@ private fun SpikeScreen() {
                             is AuthService.Result.Success -> {
                                 if (repository.addAccount(result.tokens)) {
                                     status = "Signed in. Fetching…"
-                                    refresh(context, repository) { p, message ->
+                                    refresh(context, repository, postCard = true) { p, message ->
                                         live = p; status = message
                                     }
                                 } else {
@@ -163,7 +163,7 @@ private fun SpikeScreen() {
             onClick = {
                 status = "Fetching…"
                 scope.launch {
-                    refresh(context, repository) { p, message -> live = p; status = message }
+                    refresh(context, repository, postCard = true) { p, message -> live = p; status = message }
                 }
             },
             modifier = Modifier.fillMaxWidth(),
@@ -261,14 +261,29 @@ private fun SpikeScreen() {
  * hide the one distinction that matters to a user — a dead grant needs a new
  * sign-in, everything else just needs waiting.
  */
+/**
+ * Poll once and report the outcome as a message.
+ *
+ * @param postCard post the Live Update directly, bypassing every gate. **Only
+ *   the diagnostics screen may pass true.** This function is top-level in the
+ *   app package, so living in `SpikeActivity.kt` confines it to the debug
+ *   harness by convention and not at all — it is called from four shipping
+ *   Settings handlers, and it used to post unconditionally. That put a promoted
+ *   card on screen for users who had set the card to Off, and re-posted one the
+ *   user had just swiped away, which `CardDismissal` exists to make impossible
+ *   because reposting a dismissed card is what costs an app its promotion
+ *   permission. The card belongs to [SessionService]; everything else asks the
+ *   service to repaint.
+ */
 internal suspend fun refresh(
     context: android.content.Context,
     repository: UsageRepository,
+    postCard: Boolean = false,
     onResult: (UsagePayload?, String) -> Unit,
 ) {
     when (val result = repository.poll()) {
         is UsageRepository.PollResult.Success -> {
-            LiveUpdateNotifier.post(context, result.payload)
+            if (postCard) LiveUpdateNotifier.post(context, result.payload)
             onResult(result.payload, "Updated ${result.payload.sessionUtilization.toInt()}%.")
         }
         UsageRepository.PollResult.SignedOut ->

@@ -12,7 +12,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import com.allthingsclaude.battery.R
-import com.allthingsclaude.battery.core.USAGE_RAMP_SEGMENTS
 import com.allthingsclaude.battery.core.UsageForecast
 import com.allthingsclaude.battery.core.UsageLevel
 import com.allthingsclaude.battery.core.BatteryPalette
@@ -80,10 +79,25 @@ object LiveUpdateNotifier {
             // The tracker sits at the live value; segments below paint the ramp.
             .setProgress(percent)
             .setProgressTrackerIcon(IconCompat.createWithResource(context, R.drawable.ic_tracker))
+            // One segment spanning the whole bar, coloured by the current level.
+            //
+            // There used to be three, painting the severity ramp at 75 and 90,
+            // and measuring them killed the idea: One UI draws the *unfilled*
+            // track at heavy transparency, which flattened BRAND, BRAND_DARK and
+            // BRAND_DEEP to within two units of each other (#E1CDC6, #E1CFC7,
+            // #DBCBC4), and it paints the *filled* track from the first segment
+            // alone — so at 95% the run past 75 was still segment one's colour.
+            // All three thresholds ever produced was a gap. The bar read as
+            // broken rather than as informative.
+            //
+            // Dropping segments entirely turns the fill black, because the
+            // colour does come from here and nowhere else — `setColor` tints the
+            // pill and the chip, not the bar. So: one segment, and it carries
+            // the level. The escalation the ramp was for now shows as the whole
+            // bar darkening, which is visible where three near-identical washed
+            // pastels were not.
             .setProgressSegments(
-                USAGE_RAMP_SEGMENTS.map { (length, color) ->
-                    NotificationCompat.ProgressStyle.Segment(length).setColor(color)
-                }
+                listOf(NotificationCompat.ProgressStyle.Segment(100).setColor(level.color))
             )
 
         style.setProgressPoints(points(payload, percent))
@@ -188,6 +202,33 @@ object LiveUpdateNotifier {
                 android.app.PendingIntent.FLAG_IMMUTABLE,
         )
     }
+
+    /**
+     * The card for "signed in, nothing fetched yet".
+     *
+     * A foreground service has seconds to call `startForeground` or the system
+     * kills it, so on a fresh install whose first poll has not returned it must
+     * post *something*. That obligation is to post, not to post numbers — and
+     * the previous fallback was [UsagePayload.PLACEHOLDER], demo data reading
+     * 87% with a plan badge and a live countdown, indistinguishable on a lock
+     * screen from a real reading for an account that had used nothing. If that
+     * first poll then failed, the backoff held it there for as long as the
+     * failures lasted.
+     *
+     * No ProgressStyle: a bar at zero is still a claim about usage.
+     */
+    fun buildWaiting(context: Context): Notification =
+        NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_battery)
+            .setContentTitle("Battery")
+            .setContentText("Waiting for the first update…")
+            .setOngoing(true)
+            .setRequestPromotedOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setColor(UsageLevel.LOW.color)
+            .setContentIntent(openAppIntent(context))
+            .build()
 
     fun post(
         context: Context,

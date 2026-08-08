@@ -203,7 +203,18 @@ class UsageApi(
             throw UsageApiError.Server(response.code)
         }
 
-        return parseTokens(response.body, previous)
+        // Wrapped exactly as the usage GET wraps parseUsage, and for a reason
+        // that is worse here: nothing above catches a raw SerializationException.
+        // A token endpoint answering 200 with a body that is empty, truncated,
+        // or missing access_token slips past the code check and throws through
+        // UsageRepository.poll — whose catch list is UsageApiError only — out of
+        // the service's poll loop, which has no CoroutineExceptionHandler. The
+        // process dies, START_STICKY restarts it, and it dies again.
+        return try {
+            parseTokens(response.body, previous)
+        } catch (e: Exception) {
+            throw UsageApiError.Decoding(e)
+        }
     }
 
     companion object {

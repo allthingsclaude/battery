@@ -60,25 +60,3 @@ object BatteryPalette {
     const val SURFACE_LIGHT = 0xFFFAF8F4.toInt()
     const val SURFACE_DARK = 0xFF191814.toInt()
 }
-
-/**
- * The segments that paint the whole severity ramp inside a ProgressStyle bar.
- *
- * Lengths sum to 100 so a segment boundary lands exactly on a `UsageLevel`
- * threshold, which is what makes the escalation visible *before* you reach it —
- * the thing the iOS ring can't show, because a ring only ever renders the colour
- * of where you already are.
- *
- * **Three segments, not four.** The obvious encoding is one segment per
- * UsageLevel (50/25/15/10), but the device disproves it: One UI draws a visible
- * gap between every segment, and LOW and MODERATE are both BRAND — so a 50/25
- * split renders a hard break at the halfway mark between two identically
- * coloured runs. It reads as a meaningful boundary and there isn't one. Merging
- * them means every gap in the bar coincides with an actual colour change, which
- * is the only thing a gap should ever mean here.
- */
-val USAGE_RAMP_SEGMENTS: List<Pair<Int, Int>> = listOf(
-    75 to BatteryPalette.BRAND,       // 0–75   low + moderate (same colour)
-    15 to BatteryPalette.BRAND_DARK,  // 75–90  high
-    10 to BatteryPalette.BRAND_DEEP,  // 90–100 critical
-)

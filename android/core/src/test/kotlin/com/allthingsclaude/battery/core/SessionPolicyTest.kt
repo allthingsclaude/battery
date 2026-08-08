@@ -234,6 +234,67 @@ class SessionPolicyTest {
         assertEquals(UsageLevel.HIGH, outcome.state.alertedLevel)
     }
 
+    @Test
+    fun `a rollover does not take down a WHENEVER_OPEN card`() {
+        // The mode's contract is that it never dismisses while a window is open,
+        // and ShowReset ends in dismissal with nothing scheduled to bring the
+        // card back — so a rollover used to cost the whole fresh five hours.
+        // None of the other WHENEVER_OPEN tests sets previousUtilization above
+        // RESET_FROM, which is why this went unnoticed.
+        val outcome = SessionPolicy.evaluate(
+            SessionPolicy.State(previousUtilization = 87.0, isShowing = true),
+            payload(2.0),
+            mode = SessionPolicy.Mode.WHENEVER_OPEN,
+            now = now,
+        )
+        assertIs<SessionPolicy.Decision.Show>(outcome.decision)
+    }
+
+    @Test
+    fun `a rollover still shows the reset card in SMART`() {
+        val outcome = SessionPolicy.evaluate(
+            SessionPolicy.State(previousUtilization = 87.0, isShowing = true),
+            payload(2.0),
+            mode = SessionPolicy.Mode.SMART,
+            now = now,
+        )
+        assertIs<SessionPolicy.Decision.ShowReset>(outcome.decision)
+    }
+
+    @Test
+    fun `falling to a lower alarming level does not alert`() {
+        // `!=` was direction-blind. The reachable case is an account switch:
+        // policyState is a field on the service and nothing resets it, so
+        // account B at 78% inherits account A's alertedLevel of CRITICAL and
+        // would make a noise about a number that just fell fourteen points.
+        val outcome = SessionPolicy.evaluate(
+            SessionPolicy.State(
+                previousUtilization = 92.0,
+                alertedLevel = UsageLevel.CRITICAL,
+                isShowing = true,
+            ),
+            payload(78.0, active = true),
+            now = now,
+        )
+        val decision = assertIs<SessionPolicy.Decision.Show>(outcome.decision)
+        assertNull(decision.alertLevel, "a drop from CRITICAL to HIGH must be silent")
+    }
+
+    @Test
+    fun `climbing to a higher level still alerts`() {
+        val outcome = SessionPolicy.evaluate(
+            SessionPolicy.State(
+                previousUtilization = 80.0,
+                alertedLevel = UsageLevel.HIGH,
+                isShowing = true,
+            ),
+            payload(95.0, active = true),
+            now = now,
+        )
+        val decision = assertIs<SessionPolicy.Decision.Show>(outcome.decision)
+        assertEquals(UsageLevel.CRITICAL, decision.alertLevel)
+    }
+
     // ── Cadence ─────────────────────────────────────────────────────────────
 
     @Test

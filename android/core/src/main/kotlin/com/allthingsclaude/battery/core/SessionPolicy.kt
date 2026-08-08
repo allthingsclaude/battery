@@ -143,8 +143,15 @@ object SessionPolicy {
         // else: the new window's utilization is low, so every other rule below
         // would read it as "idle" and dismiss silently, losing the one moment
         // the user most wants to see.
+        // SMART only. iOS guards this the same way — `if didReset && !alwaysOn`
+        // in LiveActivityController.sync — because ShowReset ends with the card
+        // being taken down, and nothing schedules its return. In WHENEVER_OPEN
+        // that turns a rollover into "no card for the whole fresh five-hour
+        // window", which is the exact opposite of what the mode promises. The
+        // reasoning below still holds for SMART, where the rules that follow
+        // would read a freshly-reset window as idle and dismiss it silently.
         val didReset = (state.previousUtilization ?: 0.0) > RESET_FROM && utilization < RESET_TO
-        if (didReset) {
+        if (didReset && mode == Mode.SMART) {
             return Outcome(Decision.ShowReset, State(previousUtilization = utilization))
         }
 
@@ -195,7 +202,14 @@ object SessionPolicy {
         // entirely.
         val level = UsageLevel.from(utilization)
         // Only ever alert on an *escalation*, never on first appearance.
-        val shouldAlert = state.isShowing && level.isAlarming && level != state.alertedLevel
+        // `>`, not `!=`. Inequality is direction-blind: CRITICAL -> HIGH
+        // satisfied it just as readily as HIGH -> CRITICAL, so a card that had
+        // alerted at 92% would alert again on a number that had *fallen* to 78 —
+        // reachable because policyState survives an account switch, and account
+        // B at 78% inherits account A's alertedLevel of CRITICAL. Enum
+        // declaration order is the severity order, so ordinal is the comparison.
+        val shouldAlert = state.isShowing && level.isAlarming &&
+            level.ordinal > (state.alertedLevel?.ordinal ?: -1)
         val alertedLevel = when {
             // Seeded on first appearance too, so the card that shows up at 91%
             // doesn't then alert on its second poll.

@@ -12,6 +12,8 @@ import com.allthingsclaude.battery.core.UsagePayload
 import com.allthingsclaude.battery.core.UsageResponse
 import com.allthingsclaude.battery.widget.refreshAllWidgets
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.time.Instant
 
@@ -40,7 +42,6 @@ class UsageRepository(context: Context) {
     }
 
     private val api by lazy { UsageApi(userAgent) }
-
     val lastKnownPayload: UsagePayload? get() = payloads.load()
 
     fun isSignedIn(): Boolean = accounts.load().isNotEmpty()
@@ -64,7 +65,11 @@ class UsageRepository(context: Context) {
      * @param force skip the freshness gate. Only for an explicit user action —
      *   never for a lifecycle event, which is what caused the problem below.
      */
-    suspend fun poll(force: Boolean = false): PollResult = withContext(Dispatchers.IO) {
+    suspend fun poll(force: Boolean = false): PollResult = pollLock.withLock {
+        pollLocked(force)
+    }
+
+    private suspend fun pollLocked(force: Boolean): PollResult = withContext(Dispatchers.IO) {
         // Rate-limit guard, at the single choke point every caller goes through.
         //
         // Learned the hard way: the app polls on every resume, the service polls
@@ -92,7 +97,13 @@ class UsageRepository(context: Context) {
             // see the comment there. Saving after the GET loses a rotated token
             // whenever the GET fails.
             val (usage, _) = api.fetchUsage(stored) { refreshed ->
-                if (!tokens.save(account.id, refreshed)) {
+                // Checked again here, not only after the GET: a rotated token
+                // written back after sign-out recreates a credential file for an
+                // account that no longer exists, and nothing ever cleans it up
+                // because removeAccount is only called for ids still in the list.
+                if (!stillCurrent(account.id)) {
+                    Log.w(TAG, "discarding refreshed tokens for departed account ${account.id}")
+                } else if (!tokens.save(account.id, refreshed)) {
                     // Same consequence as not saving at all, so it must not be
                     // swallowed: the old refresh token is already dead server-side.
                     Log.e(TAG, "failed to persist refreshed tokens for ${account.id}")
@@ -103,7 +114,7 @@ class UsageRepository(context: Context) {
             // guards this twice, deliberately — a late response must never
             // overwrite the newly-selected account's data, poison its regression
             // buffer, or relabel its card.
-            if (accounts.selectedId != null && accounts.selectedId != account.id) {
+            if (!stillCurrent(account.id)) {
                 return@withContext PollResult.Stale
             }
 
@@ -122,6 +133,28 @@ class UsageRepository(context: Context) {
         } catch (e: UsageApiError) {
             PollResult.Failed(e.message ?: "Couldn't refresh usage.", null)
         }
+    }
+
+    /**
+     * Whether a poll that started against [id] may still write anything.
+     *
+     * The previous test was `selectedId != null && selectedId != id`, which was
+     * written for account *switching* and is silently disabled by the two states
+     * that need it most: `signOutAll` and removing the last account both set
+     * `selectedId = null`, making the first clause false and the whole guard
+     * pass. An in-flight poll finishing after sign-out would then rewrite the
+     * payload that was just cleared and — via the refresh callback — recreate a
+     * live credential file for an account that no longer exists.
+     *
+     * Membership is checked as well as selection, because "still selected" is
+     * meaningless once the list is empty. `fetchUsage` is a blocking
+     * `HttpURLConnection` call with no suspension point before the writes, so
+     * cancellation cannot be relied on to do this.
+     */
+    private fun stillCurrent(id: String): Boolean {
+        if (accounts.load().none { it.id == id }) return false
+        val selected = accounts.selectedId ?: return true
+        return selected == id
     }
 
     /**
@@ -206,7 +239,6 @@ class UsageRepository(context: Context) {
         val remaining = accounts.load().filterNot { it.id == id }
         accounts.save(remaining)
         if (accounts.selectedId == id) accounts.selectedId = remaining.firstOrNull()?.id
-        if (remaining.isEmpty()) payloads.clear()
         resetInference()
     }
 
@@ -214,7 +246,6 @@ class UsageRepository(context: Context) {
         tokens.deleteAll()
         accounts.save(emptyList())
         accounts.selectedId = null
-        payloads.clear()
         resetInference()
     }
 
@@ -244,9 +275,35 @@ class UsageRepository(context: Context) {
      * lives — activity inference reads it too, so clearing it clears both the
      * burn-rate regression and any lingering idea that a session is live.
      */
-    private fun resetInference() = history.reset()
+    private fun resetInference() {
+        history.reset()
+        // The payload cache is one global key, not one per account, so it
+        // carries the outgoing account's name, percentages and burn rate. Left
+        // in place, the freshness gate serves it as the *incoming* account's
+        // data for the next sixty seconds — the dashboard header, the card and
+        // all four widgets showing account A under account B's radio button.
+        payloads.clear()
+    }
 
     private companion object {
+        /**
+         * One poll at a time, process-wide.
+         *
+         * On the companion, not the instance, because the hazard *is* multiple
+         * instances: the dashboard builds a repository and so does the
+         * foreground service, and both poll. The freshness gate looks like it
+         * serialises them and does not — it is a check-then-act over
+         * SharedPreferences with an entire network round trip in between.
+         *
+         * The expensive collision is the refresh token. Two pollers inside the
+         * 300s expiry leeway both load RT1 and both POST it; the server rotates,
+         * the first gets RT2, the second gets a 400 that this code maps to
+         * Unauthorized and reports as SignedOut — stranding the user on the
+         * sign-in gate while a perfectly good RT2 sits on disk. Serialising
+         * means the second caller arrives after the first has written, so it
+         * either reads RT2 or is served from the cache.
+         */
+        val pollLock = Mutex()
         const val TAG = "UsageRepository"
         const val ACTIVE_WINDOW_SECONDS = 10 * 60
 

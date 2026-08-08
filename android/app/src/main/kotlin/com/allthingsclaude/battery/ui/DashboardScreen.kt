@@ -217,7 +217,8 @@ private fun SessionCard(payload: UsagePayload, now: Instant) {
         }
         Text(
             payload.sessionResetsAt
-                ?.let { "Resets in ${TimeFormatting.shortDuration((it.epochSecond - now.epochSecond).toDouble())}" }
+                ?.let { TimeFormatting.untilReset((it.epochSecond - now.epochSecond).toDouble()) }
+                ?.let { "Resets in $it" }
                 ?: "No active session",
             Modifier.fillMaxWidth(),
             textAlign = TextAlign.Center,
@@ -279,7 +280,7 @@ private fun WeeklyCard(payload: UsagePayload, now: Instant) {
             "Weekly · 7-day",
             payload.weeklyUtilization,
             payload.weeklyResetsAt?.let {
-                TimeFormatting.shortDuration((it.epochSecond - now.epochSecond).toDouble())
+                TimeFormatting.untilReset((it.epochSecond - now.epochSecond).toDouble())
             },
         )
         // Most accounts have no Opus bucket; an empty row would imply a limit

@@ -40,6 +40,39 @@ object TimeFormatting {
         }
     }
 
+    /**
+     * Time left until a window resets, or null when there is nothing to say.
+     *
+     * [shortDuration] is the wrong formatter to call directly here and must not
+     * be changed to fix it — it is a cross-platform golden, pinned by
+     * `fixtures/time-formatting.json` at `{"seconds": 86400, "expect": "24h 0m"}`.
+     * It has hour, minute and second branches and no day branch, which is
+     * correct for a five-hour session and absurd for a seven-day one: a weekly
+     * window six days out renders "153h 0m", and nobody reads that as "about a
+     * week". Every Apple surface branches before reaching it (`CountdownLabel`,
+     * `BatteryDesign`, `WidgetCountdown`); Android had the formatter but never
+     * ported the caller-side gate.
+     *
+     * Days are shown as `6d 9h` rather than iOS's absolute date. Deliberate:
+     * a date needs a zone and a locale-appropriate format, which would make this
+     * impure and unpinnable by the shared fixtures. The defect being fixed is
+     * unreadability, and `6d 9h` is readable.
+     *
+     * Null below zero, because an expired window has no countdown — the caller
+     * should drop the caption rather than render `shortDuration`'s "0s" clamp,
+     * which reads as "resets right now" forever.
+     */
+    fun untilReset(interval: Double): String? {
+        if (interval <= 0) return null
+        val totalSeconds = interval.toLong()
+        if (totalSeconds < DAY_SECONDS) return shortDuration(interval)
+        val days = totalSeconds / DAY_SECONDS
+        val hours = (totalSeconds % DAY_SECONDS) / 3600
+        return "${days}d ${hours}h"
+    }
+
+    private const val DAY_SECONDS = 24 * 60 * 60L
+
     /** Format a past instant as relative time. Examples: "just now", "2m ago". */
     fun relativeTime(date: Instant, now: Instant = Instant.now()): String {
         val interval = (now.toEpochMilli() - date.toEpochMilli()) / 1000.0

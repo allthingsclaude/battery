@@ -68,6 +68,7 @@ class AuthService(private val context: Context) {
         val oauthState = randomUrlSafe()
 
         val server = LoopbackListener(
+            expectedState = oauthState,
             onCode = { code, returnedState, port ->
                 // Note the absence of a null check. An earlier version read
                 // `returnedState != null && returnedState != oauthState`, which
@@ -79,6 +80,11 @@ class AuthService(private val context: Context) {
                 // PKCE does not cover it — PKCE binds the code to *our*
                 // verifier, which is precisely what makes an attacker's code
                 // exchangeable by us.
+                //
+                // Redundant by construction now that the listener holds
+                // `expectedState` and will not call this on a mismatch. Kept
+                // anyway: it costs one comparison, and the failure it prevents
+                // is binding the install to somebody else's account.
                 if (returnedState != oauthState) {
                     onResult(Result.Failure("Sign-in failed: state mismatch."))
                     return@LoopbackListener
@@ -105,10 +111,24 @@ class AuthService(private val context: Context) {
             .appendQueryParameter("state", oauthState)
             .build()
 
-        CustomTabsIntent.Builder()
-            .setShowTitle(true)
-            .build()
-            .launchUrl(context, authorizeUrl)
+        // launchUrl is a bare implicit ACTION_VIEW that catches nothing, so on a
+        // device where no browser resolves https — a work profile, a managed
+        // device with the browser disabled, an AOSP build — this throws
+        // ActivityNotFoundException straight out of a Compose onClick and takes
+        // the process with it. The listener is already bound and its thread
+        // already running by this point, so failing without tearing that down
+        // would also leak both. The immediately preceding failure (a socket that
+        // will not bind) is handled; this one was not.
+        val launched = runCatching {
+            CustomTabsIntent.Builder()
+                .setShowTitle(true)
+                .build()
+                .launchUrl(context, authorizeUrl)
+        }
+        if (launched.isFailure) {
+            cancel()
+            onResult(Result.Failure("No browser available to sign in."))
+        }
     }
 
     /** Tear down any in-flight attempt. Safe to call repeatedly. */
@@ -198,6 +218,18 @@ class AuthService(private val context: Context) {
  * network for as long as sign-in is open.
  */
 private class LoopbackListener(
+    /**
+     * The `state` this attempt will accept, checked *before* the attempt is
+     * consumed. Held here rather than only in the caller because the caller runs
+     * too late to matter: the listener used to commit on the mere presence of a
+     * `code`, setting its one-shot flag and closing the socket, and only then
+     * hand the state up to be rejected. A local app that guessed the port could
+     * therefore kill every sign-in attempt with `GET /callback?code=x` — the
+     * user's browser then hit a closed socket, and the error blamed a state
+     * mismatch. The listener is trivially findable, too: it answers every other
+     * path with a fixed string.
+     */
+    private val expectedState: String,
     private val onCode: (code: String, state: String?, port: Int) -> Unit,
     private val onTimeout: () -> Unit,
 ) : Closeable {
@@ -239,7 +271,15 @@ private class LoopbackListener(
                     // out, leaking both sockets and the thread.
                     it.soTimeout = CLIENT_READ_TIMEOUT_MS
                     val reader = it.getInputStream().bufferedReader()
-                    val requestLine = reader.readLine().orEmpty()
+                    // Scoped to this connection. Letting a read timeout reach
+                    // the outer handler turns "one local app connected and said
+                    // nothing" into "the sign-in was cancelled" — a second way
+                    // for a stranger to end the attempt with one socket.
+                    val requestLine = try {
+                        reader.readLine().orEmpty()
+                    } catch (_: java.net.SocketTimeoutException) {
+                        return@use
+                    }
                     val target = requestLine.split(" ").getOrNull(1).orEmpty()
 
                     // Exact path, not a prefix: `startsWith` also matches
@@ -253,16 +293,25 @@ private class LoopbackListener(
 
                     val params = queryParams(target)
                     val code = params["code"]
-                    it.getOutputStream().write(
-                        response(if (code != null) SUCCESS_HTML else "No authorization code received.")
-                            .toByteArray()
-                    )
+                    val returnedState = params["state"]
+
+                    // Anything that is not *our* redirect is answered and
+                    // ignored, exactly like an unknown path — it must not
+                    // consume the attempt. A missing state counts as wrong.
+                    if (code == null || returnedState != expectedState) {
+                        it.getOutputStream()
+                            .write(response("Waiting for sign-in…").toByteArray())
+                        it.getOutputStream().flush()
+                        return@use
+                    }
+
+                    it.getOutputStream().write(response(SUCCESS_HTML).toByteArray())
                     it.getOutputStream().flush()
 
-                    if (code != null && finished.compareAndSet(false, true)) {
+                    if (finished.compareAndSet(false, true)) {
                         val port = socket.localPort
                         close()
-                        onCode(code, params["state"], port)
+                        onCode(code, returnedState, port)
                         return
                     }
                 }

@@ -132,6 +132,33 @@ data class UsagePayload(
          * `opusUtilization` stays null on purpose — most accounts have no Opus
          * bucket, and a preview shouldn't imply one.
          */
+        /**
+         * A payload that claims nothing.
+         *
+         * For the one moment a surface must render before any data exists: a
+         * foreground service has a few seconds to call `startForeground` or the
+         * system kills it, so it *must* post something on a fresh install whose
+         * first poll has not returned. [PLACEHOLDER] is the wrong thing to post
+         * there — it is demo data, and 87% with a live countdown and a "Max 5x"
+         * badge is indistinguishable from a real reading on a lock screen. This
+         * one is distinguishable: zeros, no window, no plan.
+         */
+        val EMPTY: UsagePayload
+            get() = UsagePayload(
+                sessionUtilization = 0.0,
+                sessionResetsAt = null,
+                weeklyUtilization = 0.0,
+                weeklyResetsAt = null,
+                opusUtilization = null,
+                burnRatePerHour = 0.0,
+                projectedLimitAt = null,
+                isSessionActive = false,
+                planTier = "",
+                accountName = "",
+                isConnected = false,
+                updatedAt = Instant.now(),
+            )
+
         val PLACEHOLDER: UsagePayload
             get() = UsagePayload(
                 sessionUtilization = 87.0,
