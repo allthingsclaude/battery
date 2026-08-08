@@ -9,7 +9,11 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.allthingsclaude.battery.core.SessionPolicy
+import com.allthingsclaude.battery.core.UsagePayload
+import com.allthingsclaude.battery.data.Settings
 import com.allthingsclaude.battery.data.UsageRepository
+import com.allthingsclaude.battery.live.SessionService
 import java.time.Instant
 import kotlin.math.abs
 import java.util.concurrent.TimeUnit
@@ -72,7 +76,7 @@ class WidgetRefreshWorker(
         if (age == null || age >= STALE_AFTER_SECONDS) {
             when (val result = repository.poll()) {
                 // poll() repaints the widgets itself on success.
-                is UsageRepository.PollResult.Success -> Unit
+                is UsageRepository.PollResult.Success -> reviveCardIfWarranted(result.payload)
                 is UsageRepository.PollResult.Failed -> {
                     // Retry is WorkManager's exponential backoff, which is the
                     // right shape here — but the widgets are already repainted
@@ -84,6 +88,34 @@ class WidgetRefreshWorker(
             }
         }
         return Result.success()
+    }
+
+    /**
+     * Bring the lock-screen card back when a window has opened since it went.
+     *
+     * Closes the one structural hole left by the card's own design: the card is
+     * the foreground service's notification, so when `SessionPolicy` says Hide
+     * the service stops — and with it the only thing that polls. Nothing then
+     * notices that a new five-hour window has opened, so the card cannot return
+     * until the app is opened by hand. Watched that happen live: a session
+     * ended, the API began reporting `sessionResetsAt: null`, the service
+     * stopped, and starting work again would have produced no card at all.
+     *
+     * Only the cheap, certain preconditions are checked here — the mode, and
+     * whether a window is even open. The real decision stays in `SessionPolicy`,
+     * which the service applies on its first tick and which will stop it again
+     * within seconds if a card is not warranted. Duplicating that logic in a
+     * second place is how the two would come to disagree.
+     *
+     * Stopping that fast is not a flicker: a foreground service that stops
+     * inside its promote window never shows its notification at all — the system
+     * defers it, measured as `notificationWasDeferred=1, notificationShown=0`.
+     */
+    private fun reviveCardIfWarranted(payload: UsagePayload) {
+        if (Settings(applicationContext).cardMode == SessionPolicy.Mode.OFF) return
+        if (payload.sessionResetsAt == null) return
+        Log.i(TAG, "open window found; asking the service to re-evaluate")
+        SessionService.start(applicationContext)
     }
 
     private fun ageSeconds(repository: UsageRepository): Long? =
