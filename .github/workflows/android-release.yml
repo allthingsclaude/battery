@@ -70,6 +70,44 @@ jobs:
       - name: Decode keystore
         run: echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > "$RUNNER_TEMP/release.jks"
 
+      # Prove the credentials before spending two minutes building with them.
+      # The step above this one checks the secrets are *present*; that is not the
+      # same as correct, and the first real run of this workflow proved the
+      # difference — it failed at `:app:packageRelease`, 108 seconds in, with
+      # "Given final block not properly padded".
+      #
+      # Two checks, because they fail differently and the distinction is the
+      # whole diagnosis. `-list` opens the store and finds the alias, so it
+      # catches a bad base64 round-trip, a wrong store password, or a typo'd
+      # alias. `-certreq` needs the private key itself, so it is the only one
+      # that proves the *key* password — and it is non-destructive, the CSR is
+      # discarded.
+      - name: Verify keystore
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          KS="$RUNNER_TEMP/release.jks"
+          if ! keytool -list -keystore "$KS" -storepass "$KEYSTORE_PASSWORD" \
+                 -alias "$KEY_ALIAS" > /dev/null 2>&1; then
+            echo "::error::Cannot open the keystore or find the alias. Check that"
+            echo "::error::ANDROID_KEYSTORE is valid base64 of the .jks (no wrapped"
+            echo "::error::lines), ANDROID_KEYSTORE_PASSWORD is right, and"
+            echo "::error::ANDROID_KEY_ALIAS matches. Aliases are case-sensitive."
+            exit 1
+          fi
+          if ! keytool -certreq -keystore "$KS" -storepass "$KEYSTORE_PASSWORD" \
+                 -alias "$KEY_ALIAS" -keypass "$KEY_PASSWORD" > /dev/null 2>&1; then
+            echo "::error::The store opens but the private key will not decrypt, so"
+            echo "::error::ANDROID_KEY_PASSWORD is wrong. Note that PKCS12 keystores —"
+            echo "::error::keytool's default since JDK 9 — do not support a key"
+            echo "::error::password different from the store password, so it is"
+            echo "::error::almost always the same value as ANDROID_KEYSTORE_PASSWORD."
+            exit 1
+          fi
+          echo "Keystore, alias and key password all verified."
+
       - name: Build signed APK
         working-directory: android
         env:
