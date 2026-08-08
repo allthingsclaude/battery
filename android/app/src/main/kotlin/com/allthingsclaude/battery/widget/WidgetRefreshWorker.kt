@@ -13,7 +13,8 @@ import com.allthingsclaude.battery.core.SessionPolicy
 import com.allthingsclaude.battery.core.UsagePayload
 import com.allthingsclaude.battery.data.Settings
 import com.allthingsclaude.battery.data.UsageRepository
-import com.allthingsclaude.battery.live.SessionService
+import com.allthingsclaude.battery.live.CardDismissal
+import com.allthingsclaude.battery.live.LiveUpdateNotifier
 import java.time.Instant
 import kotlin.math.abs
 import java.util.concurrent.TimeUnit
@@ -76,7 +77,8 @@ class WidgetRefreshWorker(
         if (age == null || age >= STALE_AFTER_SECONDS) {
             when (val result = repository.poll()) {
                 // poll() repaints the widgets itself on success.
-                is UsageRepository.PollResult.Success -> reviveCardIfWarranted(result.payload)
+                is UsageRepository.PollResult.Success -> runCatching { postCardIfWarranted(result.payload) }
+                    .onFailure { Log.w(TAG, "card post skipped: $it") }
                 is UsageRepository.PollResult.Failed -> {
                     // Retry is WorkManager's exponential backoff, which is the
                     // right shape here — but the widgets are already repainted
@@ -91,31 +93,49 @@ class WidgetRefreshWorker(
     }
 
     /**
-     * Bring the lock-screen card back when a window has opened since it went.
+     * Bring the card back when a window has opened since it went.
      *
-     * Closes the one structural hole left by the card's own design: the card is
-     * the foreground service's notification, so when `SessionPolicy` says Hide
-     * the service stops — and with it the only thing that polls. Nothing then
-     * notices that a new five-hour window has opened, so the card cannot return
-     * until the app is opened by hand. Watched that happen live: a session
-     * ended, the API began reporting `sessionResetsAt: null`, the service
-     * stopped, and starting work again would have produced no card at all.
+     * Closes the hole left by `card ⟺ service ⟺ polling`: when SessionPolicy
+     * says Hide the service stops, and with it the only thing that polls, so
+     * nothing notices a new five-hour window and the card cannot return until
+     * the app is opened by hand.
      *
-     * Only the cheap, certain preconditions are checked here — the mode, and
-     * whether a window is even open. The real decision stays in `SessionPolicy`,
-     * which the service applies on its first tick and which will stop it again
-     * within seconds if a card is not warranted. Duplicating that logic in a
-     * second place is how the two would come to disagree.
+     * **This posts the notification directly and must not start the service.**
+     * The first version called `SessionService.start` and threw
+     * `ForegroundServiceStartNotAllowedException` on the first real run — an app
+     * in the background cannot start a foreground service on Android 12+, and a
+     * WorkManager worker is background by definition. That was a design error,
+     * not an oversight in the call.
      *
-     * Stopping that fast is not a flicker: a foreground service that stops
-     * inside its promote window never shows its notification at all — the system
-     * defers it, measured as `notificationWasDeferred=1, notificationShown=0`.
+     * Posting directly is not a workaround for that; it is the correct shape.
+     * A foreground service is required to justify *continuous polling*, never to
+     * earn promotion — `setOngoing` plus `setRequestPromotedOngoing` is what
+     * earns promotion, and an ordinary notification can carry both. The card and
+     * the service share one notification id, so when the service does start
+     * legitimately — the user opens the app, or taps the card — `startForeground`
+     * adopts this very notification rather than replacing it.
+     *
+     * The real policy is applied rather than approximated. A fresh
+     * [SessionPolicy.State] is deliberate: with no previous utilization there is
+     * no rollover to detect, and with `isShowing = false` the escalation rule
+     * cannot fire — so a background repost can never make a sound. Alerting is
+     * for a service watching a session, not for a worker that woke up.
      */
-    private fun reviveCardIfWarranted(payload: UsagePayload) {
-        if (Settings(applicationContext).cardMode == SessionPolicy.Mode.OFF) return
-        if (payload.sessionResetsAt == null) return
-        Log.i(TAG, "open window found; asking the service to re-evaluate")
-        SessionService.start(applicationContext)
+    private fun postCardIfWarranted(payload: UsagePayload) {
+        val context = applicationContext
+        val mode = Settings(context).cardMode
+        if (mode == SessionPolicy.Mode.OFF) return
+
+        val decision = SessionPolicy.evaluate(SessionPolicy.State(), payload, mode).decision
+        if (decision !is SessionPolicy.Decision.Show) return
+
+        // The user swiped this window's card away. Reposting it is the single
+        // action that costs an app its promotion permission, and the worker is
+        // not exempt from that just because it is a background job.
+        if (CardDismissal(context).isDismissed(payload.sessionResetsAt)) return
+
+        Log.i(TAG, "posting card from the background; window open at ${payload.sessionUtilization.toInt()}%")
+        LiveUpdateNotifier.post(context, payload)
     }
 
     private fun ageSeconds(repository: UsageRepository): Long? =
