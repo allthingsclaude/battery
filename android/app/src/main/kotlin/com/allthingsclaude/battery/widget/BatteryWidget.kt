@@ -109,12 +109,9 @@ class ForecastWidget : BasePayloadWidget() {
  * Android reuses appWidgetIds, so without the cleanup a newly placed widget
  * would silently inherit the opacity and colours of a deleted one.
  *
- * The schedule is tied to `onEnabled`/`onDisabled` rather than started at app
- * launch because those are per-provider: the framework calls them for the first
- * and last widget *of each type*. [WidgetRefreshWorker.schedule] is idempotent
- * (`KEEP`), so four providers enabling it is the same as one — and the cancel is
- * guarded on there being no widgets of any type left, since "the last Overview
- * widget was removed" says nothing about the Session Row still on screen.
+ * Placing the first widget also syncs the refresh schedule, which is idempotent
+ * (`KEEP`), so four providers doing it is the same as one. Removing the last one
+ * does *not* cancel it — see [WidgetRefreshWorker.syncSchedule].
  */
 abstract class ConfigCleaningReceiver : GlanceAppWidgetReceiver() {
 
@@ -125,25 +122,14 @@ abstract class ConfigCleaningReceiver : GlanceAppWidgetReceiver() {
 
     override fun onEnabled(context: Context) {
         super.onEnabled(context)
-        WidgetRefreshWorker.schedule(context)
+        WidgetRefreshWorker.syncSchedule(context)
     }
 
+    // Deliberately does not cancel. The worker is also how the lock-screen card
+    // comes back after the service stands down, and that has nothing to do with
+    // whether a widget is on a home screen. Signing out is what cancels it.
     override fun onDisabled(context: Context) {
         super.onDisabled(context)
-        if (!hasAnyWidget(context)) WidgetRefreshWorker.cancel(context)
-    }
-}
-
-/** Whether any Battery widget of any type is still placed. */
-internal fun hasAnyWidget(context: Context): Boolean {
-    val manager = android.appwidget.AppWidgetManager.getInstance(context) ?: return false
-    return listOf(
-        SessionRowWidgetReceiver::class.java,
-        SessionRingWidgetReceiver::class.java,
-        OverviewWidgetReceiver::class.java,
-        ForecastWidgetReceiver::class.java,
-    ).any {
-        manager.getAppWidgetIds(android.content.ComponentName(context, it)).isNotEmpty()
     }
 }
 

@@ -2,10 +2,8 @@ package com.allthingsclaude.battery.widget
 
 import android.content.Context
 import android.util.Log
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -46,71 +44,44 @@ class WidgetRefreshWorker(
     override suspend fun doWork(): Result {
         val repository = UsageRepository(applicationContext)
 
-        // Kept, not scaffolding. A periodic worker is invisible by nature —
-        // WorkManager refuses to run one early even when JobScheduler is forced,
-        // so the only way to know it fires at all is to say so. Verifying this
-        // one took a sixteen-minute wait and an inference from a changed job id.
+        // A periodic worker is invisible by nature, so the only way to know it
+        // fires at all is to say so. This line is what showed the worker sitting
+        // out three consecutive windows while the app was frozen.
         Log.i(TAG, "refresh: payload age=${ageSeconds(repository)}s")
 
-        // Polling is the *optional* half, and deliberately conditional. This
-        // worker runs whether or not anyone is looking, so an unconditional
-        // fetch every fifteen minutes would be ninety-six requests a day spent
-        // largely on an idle account — and this account has already been
-        // rate-limited by nothing worse than an app being reopened repeatedly.
-        //
-        // The service polls every three minutes while a card is up, so any
-        // payload older than STALE_AFTER_SECONDS means the service is not
-        // running: nothing else is going to refresh these numbers.
-        val payload = repository.lastKnownPayload
+        val stored = repository.lastKnownPayload
         // abs for the same reason as the repository's freshness gate: a backward
         // clock jump makes a signed age negative, and a negative age reads as
         // "fresh" and skips the poll indefinitely.
-        val age = payload?.let { abs(Instant.now().epochSecond - it.updatedAt.epochSecond) }
+        val age = stored?.let { abs(Instant.now().epochSecond - it.updatedAt.epochSecond) }
         val willPoll = repository.isSignedIn() && (age == null || age >= STALE_AFTER_SECONDS)
 
-        // **Exactly one repaint per run, on every path.** An earlier version
-        // repainted here unconditionally and then polled, and `poll()` repaints
-        // again on success — two `updateAll` bursts about a second apart. Glance
-        // composes in a WorkManager session per widget, so the second burst
-        // cancelled the first mid-composition, and when WorkManager later
-        // restarted those cancelled workers the session was gone:
-        //
-        //   W GlanceSessionWorker: SessionWorker attempted restart but Session
-        //                          is not available for appWidget-115
-        //
-        // Both compositions died and the widgets kept the previous RemoteViews,
-        // so the card read 6% while the home screen still said 4% — the widgets
-        // went stale precisely when the numbers changed, which is the one moment
-        // the repaint existed for. Measured on device, 2026-08-08.
-        if (!willPoll) {
-            // No poll, so nothing else will repaint. Recomposing against the
-            // stored payload is what re-evaluates every "in 2h 13m" against the
-            // clock, and it needs no network.
-            refreshWidgets()
-            return Result.success()
+        val result = if (willPoll) repository.poll() else null
+        val fresh = (result as? UsageRepository.PollResult.Success)?.payload
+
+        // **Exactly one repaint per run, on every path.** `poll()` repaints
+        // itself on success; every other path stored nothing, so the repaint has
+        // to happen here. Two `updateAll` bursts cancel each other's Glance
+        // sessions and *both* compositions are lost — see `refreshAllWidgets`.
+        if (fresh == null) refreshWidgets()
+
+        // The card is a render of whatever payload we have, so it needs no
+        // network and must not be gated behind a successful poll. It used to be,
+        // which left a wide-open window showing no card at all for as long as the
+        // poll was skipped or failing.
+        (fresh ?: stored)?.let {
+            runCatching { postCardIfWarranted(it) }
+                .onFailure { e -> Log.w(TAG, "card post skipped: $e") }
         }
 
-        return when (val result = repository.poll()) {
-            // poll() has already repainted; a second updateAll here is the race.
-            is UsageRepository.PollResult.Success -> {
-                runCatching { postCardIfWarranted(result.payload) }
-                    .onFailure { Log.w(TAG, "card post skipped: $it") }
-                Result.success()
-            }
-            is UsageRepository.PollResult.Failed -> {
-                // Retry is WorkManager's exponential backoff, which is the right
-                // shape here. The repaint still has to happen — a failed poll
-                // should cost freshness, not a frozen countdown.
-                Log.w(TAG, "background poll failed: ${result.message}")
-                refreshWidgets()
-                Result.retry()
-            }
-            // Stale or signed out: poll() stored nothing, so it repainted nothing.
-            else -> {
-                refreshWidgets()
-                Result.success()
-            }
+        if (result is UsageRepository.PollResult.Failed) {
+            // Exponential backoff is the right shape for a failed fetch, and it
+            // costs only freshness now that the repaint and the card have both
+            // already happened above.
+            Log.w(TAG, "background poll failed: ${result.message}")
+            return Result.retry()
         }
+        return Result.success()
     }
 
     /**
@@ -169,22 +140,40 @@ class WidgetRefreshWorker(
 
     companion object {
         private const val TAG = "WidgetRefreshWorker"
-        private const val WORK_NAME = "widget-refresh"
+
+        /**
+         * Versioned because the work's constraints changed, and `KEEP` would
+         * otherwise leave every existing install on the old network-constrained
+         * schedule forever. A new name enqueues fresh; [LEGACY_WORK_NAME] is
+         * cancelled once so the old one does not linger.
+         */
+        private const val WORK_NAME = "widget-refresh-v2"
+        private const val LEGACY_WORK_NAME = "widget-refresh"
 
         /**
          * Fifteen minutes is not a choice — it is `PeriodicWorkRequest`'s
          * floor. Anything smaller is silently clamped to it.
+         *
+         * It also matters less than it looks. On One UI the app is frozen with
+         * the screen off and this worker does not run at all — measured at 44
+         * minutes idle across three missed windows — so what actually schedules
+         * a run is the screen coming on, which releases the overdue job
+         * immediately. The period sets the floor on how *often* that can happen,
+         * not when.
          */
         private const val INTERVAL_MINUTES = 15L
 
         /**
          * How old a payload must be before this worker spends a request on it.
          *
-         * Just over the interval, so a worker that fires slightly early (Doze
-         * batching moves these around by minutes) does not poll twice in a row
-         * for the same window.
+         * Three minutes, matching the service's own cadence, because this gate —
+         * not the interval — is what decides whether waking the phone shows a
+         * current number. At fourteen it routinely re-rendered a figure the Mac
+         * had already moved past. The original worry was ninety-six requests a
+         * day from an unattended worker, which does not apply to a worker that
+         * only runs when someone turns the screen on.
          */
-        private const val STALE_AFTER_SECONDS = 14L * 60
+        private const val STALE_AFTER_SECONDS = 3L * 60
 
         /**
          * Schedule the refresh, or leave the existing schedule alone.
@@ -195,22 +184,23 @@ class WidgetRefreshWorker(
          * refresh at all.
          */
         fun schedule(context: Context) {
+            val manager = WorkManager.getInstance(context)
+            manager.cancelUniqueWork(LEGACY_WORK_NAME)
+
+            // **No network constraint, deliberately.** It used to require
+            // `NetworkType.CONNECTED` on the grounds that a worker which cannot
+            // poll may as well not wake — which had it exactly backwards. A
+            // frozen app's network is blocked (`blocked=APP_BACKGROUND`), so the
+            // constraint could never be satisfied, so the job never became
+            // runnable, so nothing ever thawed the app to run it. The repaint
+            // and the card post need no network; the poll fails on its own and
+            // retries.
             val request = PeriodicWorkRequestBuilder<WidgetRefreshWorker>(
                 INTERVAL_MINUTES,
                 TimeUnit.MINUTES,
-            )
-                // Only the poll needs a network; the repaint does not, and it is
-                // the repaint that matters. But a worker that runs offline can
-                // only ever repaint, so requiring connectivity costs nothing a
-                // reader would notice and saves the wakeup.
-                .setConstraints(
-                    Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.CONNECTED)
-                        .build()
-                )
-                .build()
+            ).build()
 
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+            manager.enqueueUniquePeriodicWork(
                 WORK_NAME,
                 ExistingPeriodicWorkPolicy.KEEP,
                 request,
@@ -220,19 +210,27 @@ class WidgetRefreshWorker(
         /**
          * Bring the schedule in line with reality.
          *
-         * `onEnabled` fires only for the *first* widget of a type, so it never
-         * fires for anyone who already had widgets before this worker existed —
-         * their countdowns would stay frozen forever. Called on every app
-         * resume, this also picks up the reverse case, where a schedule outlived
-         * the widgets because `onDisabled` was missed.
+         * **Signed in, not widget-placed.** This used to key off `hasAnyWidget`,
+         * which was right while the worker only repainted widgets and wrong the
+         * moment it also became the card's way back: someone who wants the
+         * lock-screen card and no widgets would have had nothing scheduled at
+         * all, so a window opening while the app was closed could never produce
+         * a card. The widgets are optional; the card is the app.
+         *
+         * Called on every app resume, so it self-heals in both directions — a
+         * schedule that outlived a sign-out, or an install that predates this.
          */
         fun syncSchedule(context: Context) {
-            if (hasAnyWidget(context)) schedule(context) else cancel(context)
+            if (UsageRepository(context).isSignedIn()) schedule(context) else cancel(context)
         }
 
         /** Stop refreshing. Called when the last widget is removed. */
         fun cancel(context: Context) {
-            WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+            val manager = WorkManager.getInstance(context)
+            manager.cancelUniqueWork(WORK_NAME)
+            // Upgrades that never call schedule() — no widget placed — would
+            // otherwise leave the pre-v2 schedule running untouched.
+            manager.cancelUniqueWork(LEGACY_WORK_NAME)
         }
     }
 }
