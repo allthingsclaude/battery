@@ -119,6 +119,15 @@ class SessionService : Service() {
         while (scope.isActive) {
             val result = repo.poll()
 
+            // Drop any wake that arrived *during* the poll. The channel is
+            // conflated, so a signal raised while the loop was busy sits in the
+            // buffer and makes the next waitOrWake return instantly — including
+            // the one that implements the backoff. A failed poll followed by an
+            // app resume would therefore retry with no delay at all, which is
+            // exactly how the rate limit was earned in the first place. A wake
+            // means "look again", and this poll already is the looking.
+            wake.tryReceive()
+
             val payload = when (result) {
                 is UsageRepository.PollResult.Success -> result.payload
                 UsageRepository.PollResult.SignedOut,

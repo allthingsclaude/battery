@@ -7,7 +7,6 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import com.allthingsclaude.battery.core.UsageLevel
-import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -21,10 +20,11 @@ import kotlin.math.roundToInt
  * paying: the alternative is a linear bar in the widgets and a ring everywhere
  * else, which would make the two platforms visibly different products.
  *
- * Rendered fresh per widget update rather than cached. At these sizes the draw
- * is well under a millisecond, and caching would need invalidation on
- * utilization, size bucket, *and* theme — three keys to get wrong in exchange
- * for nothing measurable.
+ * Widget rings are rendered fresh per update rather than cached: at those sizes
+ * the draw is well under a millisecond, and a cache would need invalidation on
+ * utilization, size bucket *and* theme — three keys to get wrong in exchange for
+ * nothing measurable. The notification badge is the exception, and [renderBadge]
+ * explains why.
  */
 object UsageRingRenderer {
 
@@ -121,8 +121,22 @@ object UsageRingRenderer {
      * level colour at low alpha is legible on both, where a black-on-light or
      * white-on-dark track vanishes on one of them.
      */
-    fun renderBadge(utilization: Double, sizePx: Int = BADGE_SIZE_PX): Bitmap =
-        render(
+    fun renderBadge(utilization: Double, sizePx: Int = BADGE_SIZE_PX): Bitmap {
+        // Cached, unlike the widget rings, because this one is on a hot path the
+        // widgets are not: the notification is rebuilt on every poll *and* on
+        // every service start, which now means every app resume, and each rebuild
+        // was allocating 196 KiB on the main thread inside onStartCommand —
+        // before startForeground, whose deadline is the thing most likely to kill
+        // the process.
+        //
+        // One key, and it is exact rather than approximate: the ring only ever
+        // changes when the rounded percentage does, since that is both the arc's
+        // resolution and the numeral. The bitmap is handed to setLargeIcon and
+        // never mutated, so sharing one instance across notifications is safe.
+        val key = utilization.roundToInt() to sizePx
+        badgeCache?.let { (cachedKey, bitmap) -> if (cachedKey == key) return bitmap }
+
+        val bitmap = render(
             utilization = utilization,
             sizePx = sizePx,
             // Unused: trackColor is supplied, and the arc and numeral take the
@@ -133,6 +147,12 @@ object UsageRingRenderer {
             textRatio = BADGE_TEXT_RATIO,
             trackColor = (UsageLevel.from(utilization).color and 0x00FFFFFF) or (56 shl 24),
         )
+        badgeCache = key to bitmap
+        return bitmap
+    }
+
+    @Volatile
+    private var badgeCache: Pair<Pair<Int, Int>, Bitmap>? = null
 
     /** A ring sized for a widget cell, given dp and display density. */
     fun renderForDp(
@@ -162,7 +182,4 @@ object UsageRingRenderer {
      * something misleading.
      */
     private const val MIN_SIZE_PX = 48
-
-    /** Exposed for tests and callers that need to keep layout in step. */
-    fun strokeWidthPx(sizePx: Int): Float = min(sizePx, sizePx) * STROKE_RATIO
 }
