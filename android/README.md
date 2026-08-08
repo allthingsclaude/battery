@@ -22,6 +22,24 @@ it.** Nothing else in the app runs on a schedule, so anything that needs to
 happen while no card is up has to be somebody else's job. That somebody is
 `WidgetRefreshWorker`.
 
+![The lock-screen card, expanded](../assets/android-lockscreen-card.webp)
+
+Six surfaces, one posted notification, no Samsung-specific code: the Now Bar
+pill, the status-bar chip, the chip's floating peek, the expanded card above,
+the shade entry, and the always-on display.
+
+| | |
+|:--|:--|
+| ![Now Bar pill](../assets/android-nowbar-pill.webp) | ![Status-bar chip](../assets/android-statusbar-chip.webp) |
+
+![The app](../assets/android-dashboard.webp)
+
+![Widgets](../assets/android-widgets.webp)
+
+> Numbers in these shots are staged — a five-hour window sitting at 3% shows an
+> empty ring and a forecast nobody worries about. Only the values are synthetic;
+> every pixel is the app rendering them.
+
 ---
 
 ## Layout
@@ -38,7 +56,7 @@ android/
 what lets the regression, the forecast wording and the card's state machine run
 as ordinary JVM tests in milliseconds against the fixtures in `../fixtures/` —
 and it is the reason `SessionPolicy` has 24 tests where the iOS original has
-none. 89 tests in total, all JVM, all under two seconds.
+none. 101 tests in total, all JVM, all under two seconds.
 
 Glance widgets need no separate module. Unlike iOS, where the widget extension
 is a codesigned `.appex` in its own process, they are a `BroadcastReceiver` in
