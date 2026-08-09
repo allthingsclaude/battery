@@ -63,6 +63,14 @@ android {
     }
 
     buildTypes {
+        debug {
+            // So a debug build installs beside a release-signed one instead of
+            // being refused for a key mismatch. Without it, testing anything on a
+            // device means uninstalling the real app and its Keystore-backed
+            // credentials first. Sign-in still works here: the OAuth redirect is
+            // loopback, not a scheme tied to the applicationId.
+            applicationIdSuffix = ".debug"
+        }
         release {
             // Left off deliberately for now: R8 would need keep rules for the
             // Glance/Compose runtime and for the reflective notification extras,

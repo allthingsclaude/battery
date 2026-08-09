@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-variant overrides, so a debug build is distinguishable from a release one
+  now that the two install side by side (see applicationIdSuffix in build.gradle.kts).
+
+  The widget names are here for the same reason as the app name, and not as an
+  afterthought: this app ships four widgets and they are tested on a device. With
+  only app_name suffixed, the widget picker lists eight entries under four
+  identical names, which is exactly the moment you would place the wrong one and
+  then wonder why it never updates.
+-->
+<resources>
+    <string name="app_name">Battery (dev)</string>
+    <string name="widget_name_session_row">Claude — Session (dev)</string>
+    <string name="widget_name_session_ring">Claude — Ring (dev)</string>
+    <string name="widget_name_overview">Claude — Overview (dev)</string>
+    <string name="widget_name_forecast">Claude — Forecast (dev)</string>
+</resources>
