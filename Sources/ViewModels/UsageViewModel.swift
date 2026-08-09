@@ -309,8 +309,8 @@ class UsageViewModel: ObservableObject {
     private func configurePollingForSelectedAccount() {
         guard accountManager.selectedAccount != nil else { return }
         pollingService.configure(tokenProvider: { [weak self] in
-            guard let self = self, let account = self.accountManager.selectedAccount else { return nil }
-            return self.accountManager.getTokens(for: account.id)
+            guard let self = self, let account = self.accountManager.selectedAccount else { return .missing }
+            return self.accountManager.tokenLookup(for: account.id)
         }, onTokensRefreshed: { [weak self] updatedTokens in
             guard let self = self, let account = self.accountManager.selectedAccount else { return false }
             return self.accountManager.saveTokens(updatedTokens, for: account.id)
