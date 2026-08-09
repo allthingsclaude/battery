@@ -5,9 +5,23 @@ import com.allthingsclaude.battery.core.ReleaseFeed
 import com.allthingsclaude.battery.core.SessionPolicy
 
 /**
- * User preferences. Mirrors `ios/BatteryApp/Settings.swift`, minus the app-icon
- * picker — Android's only mechanism for that is `activity-alias` swapping, which
- * drops the user's home-screen shortcut on One UI.
+ * User preferences. Mirrors `ios/BatteryApp/Settings.swift`.
+ *
+ * The app-icon choice is deliberately not here. It is not a preference the app
+ * stores — it is which `activity-alias` is enabled, which PackageManager already
+ * persists and which the launcher reads directly. A copy in these prefs could
+ * only ever disagree with the icon actually on the home screen. See
+ * [com.allthingsclaude.battery.icon.AppIcon].
+ *
+ * This comment used to say a picker was impossible, because alias swapping
+ * "drops the user's home-screen shortcut on One UI". That is not true. Measured
+ * on One UI 8.5: a shortcut survives MainActivity giving up its LAUNCHER filter
+ * to an alias, and survives repeated swaps between aliases afterwards.
+ *
+ * Why the original note said otherwise is unknown — an older One UI, or a
+ * different swap order, or something else. `AppIcon.select` enables before it
+ * disables, which would avoid the failure if ordering was the cause, but that is
+ * a precaution rather than a diagnosis: nobody has reproduced the drop.
  */
 class Settings(context: Context) {
 

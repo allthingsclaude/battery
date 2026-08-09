@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.allthingsclaude.battery.auth.AuthService
@@ -50,6 +52,7 @@ import com.allthingsclaude.battery.core.ReleaseFeed
 import com.allthingsclaude.battery.core.UsagePayload
 import com.allthingsclaude.battery.data.Settings
 import com.allthingsclaude.battery.data.UsageRepository
+import com.allthingsclaude.battery.icon.AppIcon
 import com.allthingsclaude.battery.live.SessionService
 import com.allthingsclaude.battery.update.UpdateChecker
 import com.allthingsclaude.battery.widget.WidgetRefreshWorker
@@ -112,6 +115,34 @@ private fun Root() {
     var message by remember { mutableStateOf<String?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     var cardMode by remember { mutableStateOf(settings.cardMode) }
+
+    // The launcher icon, chosen now and applied on the way out.
+    //
+    // Applying it immediately kills the app, and DONT_KILL_APP cannot prevent
+    // that: the flag spares the *process*, but disabling the alias this task was
+    // launched from leaves the task rooted at a disabled component, and
+    // ActivityManager clears it. Measured on One UI 8.5 — tap a tile, the app
+    // closes. So the swap waits for ON_STOP, by which point the user is on their
+    // way to the home screen where the new icon is what they wanted to see.
+    //
+    // Held here rather than in the sheet because it has to outlive it: close
+    // Settings and then background the app, and a value owned by the sheet would
+    // already have been disposed with nothing applied.
+    val installedIcon = remember { AppIcon.current(context) }
+    var pendingIcon by remember { mutableStateOf<AppIcon?>(null) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        // Never cleared once applied: `pendingIcon` then *is* the installed icon,
+        // and clearing it would fall back to a stale `installedIcon` read at
+        // composition. Re-applying the same choice is a no-op.
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                pendingIcon?.let { AppIcon.select(context, it) }
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
 
     // The second writer of the status line, kept apart from `message` on purpose.
     // One slot shared with the error channel would not survive contact with the
@@ -415,6 +446,8 @@ private fun Root() {
                         },
                         onOpen = updates::openRelease,
                     ),
+                    appIcon = pendingIcon ?: installedIcon,
+                    onAppIconChange = { pendingIcon = it },
                 )
                 payload != null -> DashboardScreen(payload!!, cardMode)
                 else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

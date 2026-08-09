@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher icon, light, regardless of system theme. Selected through the
+  .IconLight alias; also the light half of "Automatic".
+
+  `mipmap`, not `drawable`: density splits strip unused `drawable-*dpi` buckets
+  and a launcher may ask for a density the installed split no longer carries.
+
+  The foreground puts the mark at 55dp on the 108dp canvas — the largest box of
+  its 0.654 aspect that fits inside the 66dp circle every mask is guaranteed to
+  leave visible. That is 77% of the 72dp a launcher actually draws, where iOS
+  puts it too; the outer 18dp per side is bleed for mask animation and parallax
+  and is never shown.
+
+  `<monochrome>` is read from API 33 and minSdk is 31. The two versions that
+  ignore it skip the tag rather than failing to inflate, so it lives here rather
+  than in a duplicated v33 copy.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background_light" />
+    <foreground android:drawable="@mipmap/ic_launcher_fg_light" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>

@@ -1,17 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The adaptive icon's background layer. A flat colour rather than a drawable,
-  because that is all it is — the mark itself lives entirely in the foreground.
+  The two launcher-icon backgrounds. #FAF8F4 and #191814 are the shared surface
+  colours — `BatteryColors.surface` on iOS, `ColorTheme.background` on macOS,
+  `UsageLevel.SURFACE_LIGHT`/`SURFACE_DARK` in core/.
 
-  #FAF8F4 is the shared surface colour: `BatteryColors.surface` on iOS,
-  `ColorTheme.background` on macOS, `UsageLevel.SURFACE_LIGHT` in core/. The
-  source artwork rounds it to #FAF9F5, one step per channel, which nothing can
-  see and which the black outline keeps off the seam regardless.
-
-  There is no dark variant, and Android has no mechanism for one: an adaptive
-  icon's background is fixed, and the platform's answer to theming is the
-  monochrome layer.
+  Fixed, with no night qualifier. Following the system theme is expressed by the
+  night-qualified *icon* (mipmap-night-anydpi-v26/ic_launcher.xml), not by a
+  colour that changes underneath all three variants — the whole point of the
+  Light and Dark options is that they do not move.
 -->
 <resources>
-    <color name="ic_launcher_background">#FAF8F4</color>
+    <color name="ic_launcher_background_light">#FAF8F4</color>
+    <color name="ic_launcher_background_dark">#191814</color>
 </resources>
