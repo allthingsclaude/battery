@@ -46,6 +46,12 @@ jobs:
             VERSION="${GITHUB_REF_NAME#android-v}"
           fi
           echo "name=$VERSION" >> "$GITHUB_OUTPUT"
+          # Derived, never `github.ref_name`. On a tag push the two agree, but on
+          # workflow_dispatch ref_name is the branch — so the dispatch path, which
+          # exists precisely to cut a release without a tag, published one tagged
+          # `main`. ReleaseFeed filters on the `android-v` prefix, so that release
+          # would also have been invisible to every installed app.
+          echo "tag=android-v$VERSION" >> "$GITHUB_OUTPUT"
           # Like the iOS build, versionCode is the commit count: it only has to
           # increase, and deriving it removes a second place to remember to bump.
           echo "code=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
@@ -182,7 +188,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: ${{ steps.artifact.outputs.path }}
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.version.outputs.tag }}
           name: Battery for Android ${{ steps.version.outputs.name }}
           body: |
             Sideload build. Download the APK below and open it on the device.

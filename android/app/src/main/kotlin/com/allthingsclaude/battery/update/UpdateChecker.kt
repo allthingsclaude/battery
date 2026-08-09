@@ -30,22 +30,46 @@ class UpdateChecker(private val context: Context) {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrNull() ?: "0"
 
-    /** @return the newer release, or null when up to date or the check fails. */
+    /**
+     * @return the newer release, or null when up to date or the check fails.
+     *
+     * Pages until it finds an Android release rather than reading one page and
+     * giving up. Three tag namespaces share this feed and the other two ship far
+     * more often — at the time of writing there were forty `v*` and `ios-v*`
+     * releases and no `android-v*` at all. A single page of thirty would have
+     * gone blind the moment that many newer releases stacked on top of the
+     * current Android one, and the symptom is silence: every install says it is
+     * up to date, which is exactly what it says when it genuinely is.
+     */
     fun check(transport: UsageApi.HttpTransport = UrlConnectionTransport()): ReleaseFeed.Release? {
-        val response = runCatching {
-            transport.request(
-                url = RELEASES_URL,
-                method = "GET",
-                headers = mapOf(
-                    "Accept" to "application/vnd.github+json",
-                    "User-Agent" to "Battery-Android",
-                ),
-                body = null,
-            )
-        }.getOrNull() ?: return null
+        for (page in 1..MAX_PAGES) {
+            val response = runCatching {
+                transport.request(
+                    url = releasesUrl(page),
+                    method = "GET",
+                    headers = mapOf(
+                        "Accept" to "application/vnd.github+json",
+                        "User-Agent" to "Battery-Android",
+                    ),
+                    body = null,
+                )
+            }.getOrNull() ?: return null
 
-        if (response.code != 200) return null
-        return ReleaseFeed.newestRelease(response.body, currentVersion)
+            if (response.code != 200) return null
+
+            ReleaseFeed.newestOnPage(response.body)?.let { newest ->
+                // The first Android release found is the newest one, because the
+                // feed is ordered newest-first. Whether it is an *update* is a
+                // separate question, and either way there is no reason to page on.
+                return newest.takeIf {
+                    ReleaseFeed.compareVersions(it.version, currentVersion) > 0
+                }
+            }
+
+            // A short page is the end of the feed, so there is nothing further back.
+            if (ReleaseFeed.itemCount(response.body) < PER_PAGE) return null
+        }
+        return null
     }
 
     fun openRelease(available: ReleaseFeed.Release) {
@@ -56,7 +80,17 @@ class UpdateChecker(private val context: Context) {
     }
 
     private companion object {
-        const val RELEASES_URL =
-            "https://api.github.com/repos/allthingsclaude/battery/releases?per_page=30"
+        /** 100 is the GitHub API's maximum; asking for less only costs more requests. */
+        const val PER_PAGE = 100
+
+        /**
+         * 500 releases back. Far enough that reaching the limit means something
+         * else is wrong, and bounded so a malformed feed cannot loop the check.
+         */
+        const val MAX_PAGES = 5
+
+        fun releasesUrl(page: Int) =
+            "https://api.github.com/repos/allthingsclaude/battery/releases" +
+                "?per_page=$PER_PAGE&page=$page"
     }
 }
