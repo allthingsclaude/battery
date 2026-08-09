@@ -106,4 +106,39 @@ class VersionCompareTest {
         assertNull(ReleaseFeed.newestRelease("not json", "0.1.0"))
         assertNull(ReleaseFeed.newestRelease("""[{"no_tag":1}]""", "0.1.0"))
     }
+
+    // ── Paging ──────────────────────────────────────────────────────────────
+
+    @Test
+    fun `a page of only other-platform releases is not the same as no update`() {
+        // The distinction the paging caller turns on. Both of these return null
+        // from newestRelease, but they mean opposite things: the first says keep
+        // looking, the second says stop. Collapsing them is what let the newest
+        // Android release fall off the end of the window unnoticed.
+        val otherPlatformsOnly = feed(release("v0.9.0"), release("ios-v0.5.0"))
+        assertNull(ReleaseFeed.newestOnPage(otherPlatformsOnly))
+
+        val androidButOlder = feed(release("android-v0.1.0"))
+        assertEquals("0.1.0", ReleaseFeed.newestOnPage(androidButOlder)?.version)
+        assertNull(ReleaseFeed.newestRelease(androidButOlder, currentVersion = "0.1.0"))
+    }
+
+    @Test
+    fun `itemCount reports the page size so a short page ends the walk`() {
+        assertEquals(2, ReleaseFeed.itemCount(feed(release("v1.0.0"), release("v0.9.0"))))
+        assertEquals(0, ReleaseFeed.itemCount("[]"))
+        // Unreadable counts as empty, which stops the walk rather than looping
+        // to the page limit against an endpoint that is clearly not helping.
+        assertEquals(0, ReleaseFeed.itemCount("not json"))
+    }
+
+    @Test
+    fun `newestOnPage ignores drafts and prereleases like newestRelease does`() {
+        val body = feed(
+            release("android-v0.9.0", draft = true),
+            release("android-v0.8.0", prerelease = true),
+            release("android-v0.3.0"),
+        )
+        assertEquals("0.3.0", ReleaseFeed.newestOnPage(body)?.version)
+    }
 }
