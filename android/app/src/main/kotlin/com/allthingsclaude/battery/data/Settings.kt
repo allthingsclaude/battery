@@ -11,7 +11,7 @@ import com.allthingsclaude.battery.core.SessionPolicy
  * stores — it is which `activity-alias` is enabled, which PackageManager already
  * persists and which the launcher reads directly. A copy in these prefs could
  * only ever disagree with the icon actually on the home screen. See
- * [com.allthingsclaude.battery.icon.AppIcon].
+ * [com.allthingsclaude.battery.launcher.AppIcon].
  *
  * This comment used to say a picker was impossible, because alias swapping
  * "drops the user's home-screen shortcut on One UI". That is not true. Measured

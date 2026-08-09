@@ -48,7 +48,7 @@ import com.allthingsclaude.battery.data.Account
 import com.allthingsclaude.battery.data.Settings
 import com.allthingsclaude.battery.data.subtitle
 import com.allthingsclaude.battery.data.title
-import com.allthingsclaude.battery.icon.AppIcon
+import com.allthingsclaude.battery.launcher.AppIcon
 import com.allthingsclaude.battery.live.NowBarGate
 
 /**

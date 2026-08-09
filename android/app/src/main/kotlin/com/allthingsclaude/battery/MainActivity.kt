@@ -52,7 +52,7 @@ import com.allthingsclaude.battery.core.ReleaseFeed
 import com.allthingsclaude.battery.core.UsagePayload
 import com.allthingsclaude.battery.data.Settings
 import com.allthingsclaude.battery.data.UsageRepository
-import com.allthingsclaude.battery.icon.AppIcon
+import com.allthingsclaude.battery.launcher.AppIcon
 import com.allthingsclaude.battery.live.SessionService
 import com.allthingsclaude.battery.update.UpdateChecker
 import com.allthingsclaude.battery.widget.WidgetRefreshWorker
