@@ -149,14 +149,31 @@ private fun Root() {
         // Settings on wifi to change the card mode and read "couldn't reach
         // GitHub" about a plane journey that ended hours ago.
         if (userAsked) updateCheck = result
+        // A silent check that reached a conclusion disproves an older manual
+        // report, and must be allowed to retract it — otherwise "couldn't reach
+        // GitHub" outlives the successful check that answered it, and the row
+        // keeps saying it until the user thinks to tap again. Clearing is not
+        // reporting, so a silent *failure* still says nothing.
+        else if (result !is ReleaseFeed.Check.Failed) updateCheck = null
+
         when (result) {
             is ReleaseFeed.Check.Available -> {
                 update = result.release
-                // Not announced to someone who just read the answer in Settings —
-                // closing the sheet would immediately re-tell them, and the line's
-                // only dismissal is a tap that reopens the sheet they just left.
-                // The next launch still announces it, seeded from pendingUpdate.
-                if (!userAsked) {
+                // Suppressed only for someone still looking at the sheet as the
+                // answer lands, who is reading it in the About row — for them,
+                // closing the sheet must not immediately re-tell them.
+                //
+                // Not suppressed merely because they *asked*. The walk is up to
+                // five sequential requests, which is why it runs on Root's scope
+                // at all; tap Check and back out and the answer arrives to an
+                // empty room. `userAsked` cannot tell those apart, and the
+                // difference matters because nothing recovers the notice
+                // afterwards: the resume re-seed is gated on `update == null`,
+                // the manual stamp holds the throttle for a day, and this
+                // variable's initializer is a `remember` that a singleTask warm
+                // resume never re-runs. The line would be owed and never paid
+                // until a cold launch.
+                if (!userAsked || !showSettings) {
                     announceUpdate =
                         ReleaseFeed.shouldAnnounce(result.release, settings.skippedVersion)
                 }

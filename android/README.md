@@ -283,10 +283,22 @@ not share is reporting or throttling, and both asymmetries are load-bearing:
   counting it would silence the automatic one for a day over a moment of no
   signal.
 - **Only the manual check writes `updateCheck`**, the About row's subtitle.
-  Otherwise a silent resume failure resurfaces hours later, out of context.
-- **Only the resume check sets `announceUpdate`.** Announcing a result the user
-  is currently reading in Settings would re-tell them the moment they close it,
-  and the line's only dismissal reopens the sheet they just left.
+  Otherwise a silent resume failure resurfaces hours later, out of context. A
+  silent check that *reaches a conclusion* may still clear it, because clearing
+  is not reporting and "couldn't reach GitHub" must not outlive the successful
+  check that answered it.
+- **`announceUpdate` is suppressed only for someone reading the answer as it
+  lands** — sheet open, manual check. Not for anyone who merely asked: the walk
+  is up to five requests, so tapping Check and backing out delivers the answer to
+  an empty room, and nothing recovers the notice afterwards. The resume re-seed
+  is gated on `update == null`, the manual stamp holds the throttle for a day,
+  and the variable's initializer is a `remember` that a singleTask warm resume
+  never re-runs.
+
+  Known and deliberate: if you *did* read it in Settings and take no action, the
+  status line waits for a cold launch rather than reminding you on the next warm
+  resume. Telling those apart properly needs a timestamp, which this does not
+  earn — the About row still shows the release the whole time.
 
 The manual check runs on the *root* scope, not the sheet's, so closing Settings
 cannot throw away an answer. And the resume block re-seeds `update` from
