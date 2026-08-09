@@ -96,4 +96,57 @@ final class UsagePollingServiceTests: XCTestCase {
         )
         XCTAssertFalse(UsagePollingService.isRateLimited(error))
     }
+
+    // MARK: - Rotated tokens that could not be written
+
+    private func tokens(_ access: String, _ refresh: String?) -> StoredTokens {
+        StoredTokens(accessToken: access, refreshToken: refresh, expiresAt: 0)
+    }
+
+    /// A rotation the store rejects must stay in memory. The refresh token it
+    /// replaced is already spent server-side, so falling back to the provider
+    /// would send a dead token, earn a 400, and strand the account behind a
+    /// sign-in prompt for a reason the user cannot see.
+    func testRefreshedTokensSurviveAFailedWrite() {
+        let service = UsagePollingService()
+        let onDisk = tokens("old", "rt1")
+
+        service.configure(tokenProvider: { onDisk }, onTokensRefreshed: { _ in false })
+        service.persist(tokens("new", "rt2"))
+
+        XCTAssertEqual(service.currentTokens()?.refreshToken, "rt2")
+        XCTAssertEqual(service.currentTokens()?.accessToken, "new")
+    }
+
+    /// Once a write lands, the provider is authoritative again — otherwise the
+    /// in-memory copy would shadow credentials refreshed outside the app.
+    func testProviderResumesAfterASuccessfulWrite() {
+        let service = UsagePollingService()
+        var onDisk = tokens("old", "rt1")
+
+        service.configure(
+            tokenProvider: { onDisk },
+            onTokensRefreshed: { updated in
+                onDisk = updated
+                return true
+            }
+        )
+        service.persist(tokens("new", "rt2"))
+        onDisk = tokens("external", "rt3")
+
+        XCTAssertEqual(service.currentTokens()?.refreshToken, "rt3")
+    }
+
+    /// Switching accounts must not carry the previous account's stranded
+    /// rotation across — those tokens belong to a different grant entirely.
+    func testConfigureClearsAStrandedRotation() {
+        let service = UsagePollingService()
+
+        service.configure(tokenProvider: { self.tokens("a", "rt-a") }, onTokensRefreshed: { _ in false })
+        service.persist(tokens("a-rotated", "rt-a2"))
+
+        service.configure(tokenProvider: { self.tokens("b", "rt-b") }, onTokensRefreshed: { _ in true })
+
+        XCTAssertEqual(service.currentTokens()?.refreshToken, "rt-b")
+    }
 }

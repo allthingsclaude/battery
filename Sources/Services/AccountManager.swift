@@ -169,15 +169,21 @@ class AccountManager: ObservableObject {
         }
     }
 
-    func saveTokens(_ tokens: StoredTokens, for accountId: UUID) {
+    /// - Returns: whether the tokens reached disk. Callers holding a rotated
+    ///   refresh token must not discard it on `false`: the old one is already
+    ///   spent server-side, so a silently dropped write strands the account.
+    @discardableResult
+    func saveTokens(_ tokens: StoredTokens, for accountId: UUID) -> Bool {
         do {
             try fileManager.createDirectory(at: tokensDir, withIntermediateDirectories: true)
             try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: tokensDir.path)
             let data = try JSONEncoder().encode(tokens)
             try data.write(to: tokenFile(for: accountId), options: .atomic)
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tokenFile(for: accountId).path)
+            return true
         } catch {
             print("Failed to save tokens for \(accountId): \(error.localizedDescription)")
+            return false
         }
     }
 

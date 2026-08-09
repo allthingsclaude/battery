@@ -13,7 +13,14 @@ class UsagePollingService: ObservableObject {
     private var pollingTask: Task<Void, Never>?
     private var currentInterval: TimeInterval
     private var tokenProvider: (() -> StoredTokens?)?
-    private var onTokensRefreshed: ((StoredTokens) -> Void)?
+    private var onTokensRefreshed: ((StoredTokens) -> Bool)?
+
+    /// A refreshed pair the store would not accept. Refresh tokens are
+    /// single-use, so once a rotation lands the previous one is dead
+    /// server-side: falling back to the provider would re-read that dead token
+    /// and strand the account behind a sign-in prompt. Held here so the session
+    /// keeps working, and cleared as soon as a write succeeds.
+    private var unpersistedTokens: StoredTokens?
 
     /// Exponential backoff state for rate limiting
     private var consecutiveRateLimits: Int = 0
@@ -28,10 +35,26 @@ class UsagePollingService: ObservableObject {
     /// when tokens are refreshed. The provider is consulted on EVERY poll so
     /// tokens updated on disk (or Claude Code live credentials) are picked up
     /// without reconfiguring.
-    func configure(tokenProvider: @escaping () -> StoredTokens?, onTokensRefreshed: @escaping (StoredTokens) -> Void) {
+    func configure(tokenProvider: @escaping () -> StoredTokens?, onTokensRefreshed: @escaping (StoredTokens) -> Bool) {
         self.tokenProvider = tokenProvider
         self.onTokensRefreshed = onTokensRefreshed
+        // A new account's tokens have nothing to do with the outgoing one's.
+        self.unpersistedTokens = nil
         self.needsReauth = (tokenProvider() == nil)
+    }
+
+    /// The tokens this poll should use: whatever the provider reports, unless a
+    /// rotation is stranded in memory because the store rejected it.
+    ///
+    /// Internal rather than private only so the tests can reach it — `pollNow`
+    /// is the sole caller and it takes the network with it.
+    func currentTokens() -> StoredTokens? {
+        unpersistedTokens ?? tokenProvider?()
+    }
+
+    /// Hand refreshed tokens to the store, keeping them in memory if it fails.
+    func persist(_ tokens: StoredTokens) {
+        unpersistedTokens = (onTokensRefreshed?(tokens) == true) ? nil : tokens
     }
 
     func startPolling() {
@@ -109,7 +132,7 @@ class UsagePollingService: ObservableObject {
 
     @MainActor
     func pollNow() async {
-        guard let tokens = tokenProvider?() else {
+        guard let tokens = currentTokens() else {
             needsReauth = true
             return
         }
@@ -124,7 +147,7 @@ class UsagePollingService: ObservableObject {
                 let (token, updatedTokens) = try await tokenRefreshService.refreshIfNeeded(tokens: tokens)
                 accessToken = token
                 if let updated = updatedTokens {
-                    onTokensRefreshed?(updated)
+                    persist(updated)
                 }
             }
 
@@ -173,7 +196,7 @@ class UsagePollingService: ObservableObject {
                 refreshToken: response.refreshToken ?? tokens.refreshToken,
                 expiresIn: response.expiresIn
             )
-            onTokensRefreshed?(updated)
+            persist(updated)
 
             let usage = try await api.fetchUsage(accessToken: response.accessToken)
             self.latestUsage = usage
