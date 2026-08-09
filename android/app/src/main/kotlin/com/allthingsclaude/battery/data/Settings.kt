@@ -1,6 +1,7 @@
 package com.allthingsclaude.battery.data
 
 import android.content.Context
+import com.allthingsclaude.battery.core.ReleaseFeed
 import com.allthingsclaude.battery.core.SessionPolicy
 
 /**
@@ -24,8 +25,68 @@ class Settings(context: Context) {
             ?: SessionPolicy.Mode.SMART
         set(value) = prefs.edit().putString(KEY_CARD_MODE, value.name).apply()
 
+    /** When the automatic update check last ran, epoch millis. 0 means never. */
+    var lastUpdateCheckAt: Long
+        get() = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0L)
+        set(value) = prefs.edit().putLong(KEY_LAST_UPDATE_CHECK, value).apply()
+
+    /**
+     * The release the last check found, remembered across launches.
+     *
+     * Without this the notice is a lottery. The check runs once a day, so whether
+     * the user ever sees it depends on which launch they happen to make — open the
+     * app on a resume where the throttle says "not due" and there is nothing to
+     * show, with the next chance tomorrow. Storing it makes "an update exists" a
+     * fact about the install rather than a fact about one particular resume.
+     *
+     * Cleared when a check comes back [ReleaseFeed.Check.UpToDate], which is how
+     * the notice disappears after the user actually updates. Deliberately NOT
+     * cleared on a failure — a GitHub outage is no reason to forget a release we
+     * already know about.
+     */
+    var pendingUpdate: ReleaseFeed.Release?
+        get() {
+            val version = prefs.getString(KEY_PENDING_VERSION, null) ?: return null
+            val url = prefs.getString(KEY_PENDING_URL, null) ?: return null
+            return ReleaseFeed.Release(version, url)
+        }
+        set(value) = prefs.edit()
+            .putString(KEY_PENDING_VERSION, value?.version)
+            .putString(KEY_PENDING_URL, value?.url)
+            .apply()
+
+    /**
+     * The newest version the user has dismissed from the status line, so the
+     * notice stops nagging without also hiding the release after it.
+     */
+    var skippedVersion: String?
+        get() = prefs.getString(KEY_SKIPPED_VERSION, null)
+        set(value) = prefs.edit().putString(KEY_SKIPPED_VERSION, value).apply()
+
+    /**
+     * Once a day, not once a resume.
+     *
+     * The launch check hangs off `repeatOnLifecycle(RESUMED)`, which fires every
+     * time the app comes back from the background — dozens of times a day for an
+     * app whose whole job is a quick glance at a number. Unthrottled that is
+     * dozens of GitHub requests against an unauthenticated quota of sixty an hour
+     * per IP, spent on an answer that changes a few times a year.
+     *
+     * `abs`, for the reason `UsageRepository.pollLocked` uses it: a device whose
+     * clock jumps backwards leaves a stored timestamp in the future, and a signed
+     * comparison would then read as "checked recently" until real time caught up.
+     */
+    fun isUpdateCheckDue(now: Long = System.currentTimeMillis()): Boolean =
+        kotlin.math.abs(now - lastUpdateCheckAt) >= UPDATE_CHECK_INTERVAL_MS
+
     private companion object {
         const val KEY_CARD_MODE = "card_mode"
+        const val KEY_LAST_UPDATE_CHECK = "last_update_check_at"
+        const val KEY_SKIPPED_VERSION = "skipped_version"
+        const val KEY_PENDING_VERSION = "pending_update_version"
+        const val KEY_PENDING_URL = "pending_update_url"
+
+        const val UPDATE_CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000
     }
 }
 

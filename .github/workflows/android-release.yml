@@ -163,9 +163,16 @@ jobs:
           VERSION_NAME: ${{ steps.version.outputs.name }}
           VERSION_CODE: ${{ steps.version.outputs.code }}
         run: |
+          # releaseRepo is where this APK will look for its own updates. Derived
+          # from the repository being built, not hardcoded, so a fork's build
+          # finds the fork's releases. Hardcoded upstream, a fork build polls
+          # allthingsclaude/battery, compares its newest tag against its own
+          # version, and reports "up to date" forever — which is indistinguishable
+          # from a working updater, and the reason this is derived at all.
           ./gradlew :app:assembleRelease \
             -PversionName="$VERSION_NAME" \
-            -PversionCode="$VERSION_CODE"
+            -PversionCode="$VERSION_CODE" \
+            -PreleaseRepo="$GITHUB_REPOSITORY"
 
       - name: Rename artifact
         id: artifact

@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.allthingsclaude.battery.BuildConfig
+import com.allthingsclaude.battery.core.ReleaseFeed
 import com.allthingsclaude.battery.core.SessionPolicy
 import com.allthingsclaude.battery.data.Account
 import com.allthingsclaude.battery.data.Settings
@@ -57,6 +58,7 @@ fun SettingsSheet(
     onAddAccount: () -> Unit,
     onSignOut: () -> Unit,
     onOpenDiagnostics: () -> Unit,
+    updateState: UpdateUiState,
 ) {
     val context = LocalContext.current
     val settings = remember { Settings(context) }
@@ -137,6 +139,9 @@ fun SettingsSheet(
             SectionHeader("Developer")
             ActionRow("Diagnostics", "Post a test card, inspect promotion state", onOpenDiagnostics)
         }
+
+        SectionHeader("About")
+        UpdateRow(updateState)
 
         SectionHeader("Account")
         ActionRow(
@@ -263,6 +268,77 @@ private fun ActionRow(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         )
+    }
+}
+
+/**
+ * Everything the About row needs, owned by the caller.
+ *
+ * Not held inside the row, which is where it started. A `rememberCoroutineScope`
+ * in this sheet dies when the sheet closes, so closing Settings while a check was
+ * in flight threw the answer away; and a result kept in the row's own state
+ * reached neither the status line nor the next opening of Settings. Both are
+ * things a check exists to feed, so the state belongs to something that outlives
+ * one sheet.
+ *
+ * [known] is an update the app is already sure of, from any earlier check.
+ * [check] is the last outcome, which is what the row reports when there is no
+ * update to offer.
+ */
+class UpdateUiState(
+    val currentVersion: String,
+    val known: ReleaseFeed.Release?,
+    val check: ReleaseFeed.Check?,
+    val checking: Boolean,
+    val onCheck: () -> Unit,
+    val onOpen: (ReleaseFeed.Release) -> Unit,
+)
+
+/**
+ * The manual half of the updater.
+ *
+ * Loud where the launch check is silent. The user asked, so every outcome gets
+ * an answer here — including the failures the automatic check swallows, because
+ * rendering "couldn't reach GitHub" as "up to date" would rebuild, one layer up,
+ * the exact silence [ReleaseFeed.findNewer] returns four distinct answers to
+ * avoid.
+ */
+@Composable
+private fun UpdateRow(state: UpdateUiState) {
+    val available = state.known
+
+    ActionRow(
+        title = when {
+            state.checking -> "Checking…"
+            available != null -> "Update to ${available.version}"
+            else -> "Check for updates"
+        },
+        subtitle = when {
+            state.checking -> "Version ${state.currentVersion}"
+            available != null -> "Tap to open the release page"
+            else -> "Version ${state.currentVersion}" + outcomeSuffix(state.check)
+        },
+        onClick = {
+            when {
+                available != null -> state.onOpen(available)
+                // Guarded: five sequential requests are slow enough to tap twice.
+                state.checking -> Unit
+                else -> state.onCheck()
+            }
+        },
+    )
+}
+
+/** The tail of the subtitle. Empty when there is nothing to report yet. */
+private fun outcomeSuffix(state: ReleaseFeed.Check?): String = when (state) {
+    null, is ReleaseFeed.Check.Available -> ""
+    ReleaseFeed.Check.UpToDate -> " — up to date"
+    // Not "up to date": the feed said nothing about this build either way.
+    ReleaseFeed.Check.NoRelease -> " — no Android release published yet"
+    is ReleaseFeed.Check.Failed -> when (state.reason) {
+        ReleaseFeed.Check.Reason.OFFLINE -> " — couldn't reach GitHub, tap to retry"
+        ReleaseFeed.Check.Reason.RATE_LIMITED -> " — GitHub rate limit reached, try again later"
+        ReleaseFeed.Check.Reason.SERVER -> " — GitHub returned an error, tap to retry"
     }
 }
 

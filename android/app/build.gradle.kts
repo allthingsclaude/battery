@@ -28,6 +28,21 @@ android {
         // remember to bump. The literals are only the local-build defaults.
         versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
         versionName = (findProperty("versionName") as String?) ?: "0.1.0"
+
+        // Which repository this build checks for its own updates. The release
+        // workflow passes `-PreleaseRepo=$GITHUB_REPOSITORY`, so an APK looks for
+        // updates where it was published from — a fork's build finds the fork's
+        // releases instead of polling upstream, comparing upstream's newest tag
+        // against its own version and concluding it is up to date.
+        //
+        // Empty rather than a literal default: the canonical value is
+        // ReleaseFeed.DEFAULT_REPO, and repeating it here would be a second place
+        // for it to be wrong. Blank means "no override".
+        buildConfigField(
+            "String",
+            "RELEASE_REPO",
+            "\"${(findProperty("releaseRepo") as String?).orEmpty()}\"",
+        )
     }
 
     signingConfigs {
