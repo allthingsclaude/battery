@@ -91,10 +91,24 @@ class SecureStore(context: Context) {
         dir.listFiles()?.forEach { it.delete() }
     }
 
-    @Synchronized
-    private fun key(): SecretKey {
+    /**
+     * The Keystore key, generated on first use.
+     *
+     * **The lock is on the companion, not the instance.** A [SecureStore] is
+     * built per `TokenStore`, which is built per `UsageRepository` — and
+     * `MainActivity`, `SessionService`, `WidgetRefreshWorker` and
+     * `SpikeActivity` each construct their own. An instance lock therefore
+     * serialises nothing between them, which is precisely the case that
+     * matters: two threads that both miss `getEntry` will both call
+     * `generateKey()` on the same alias, and the second silently replaces the
+     * first. Ciphertext written under the replaced key then fails its GCM tag,
+     * which [read] classifies as permanently undecryptable and deletes — a
+     * silent sign-out with no way back.
+     */
+    private fun key(): SecretKey = synchronized(KEY_LOCK) {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        (keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+        val existing = (keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey
+        if (existing != null) return@synchronized existing
 
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         generator.init(
@@ -108,10 +122,13 @@ class SecureStore(context: Context) {
                 .setUserAuthenticationRequired(false)
                 .build()
         )
-        return generator.generateKey()
+        generator.generateKey()
     }
 
     private companion object {
+        /** Process-wide, for the reason spelled out on [key]. */
+        val KEY_LOCK = Any()
+
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val KEY_ALIAS = "battery_tokens"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
