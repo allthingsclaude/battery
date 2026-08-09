@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The adaptive icon's background layer. A flat colour rather than a drawable,
+  because that is all it is — the mark itself lives entirely in the foreground.
+
+  #FAF8F4 is the shared surface colour: `BatteryColors.surface` on iOS,
+  `ColorTheme.background` on macOS, `UsageLevel.SURFACE_LIGHT` in core/. The
+  source artwork rounds it to #FAF9F5, one step per channel, which nothing can
+  see and which the black outline keeps off the seam regardless.
+
+  There is no dark variant, and Android has no mechanism for one: an adaptive
+  icon's background is fixed, and the platform's answer to theming is the
+  monochrome layer.
+-->
+<resources>
+    <color name="ic_launcher_background">#FAF8F4</color>
+</resources>
