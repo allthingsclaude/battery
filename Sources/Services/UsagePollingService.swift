@@ -12,7 +12,7 @@ class UsagePollingService: ObservableObject {
     private let api = AnthropicAPI()
     private var pollingTask: Task<Void, Never>?
     private var currentInterval: TimeInterval
-    private var tokenProvider: (() -> StoredTokens?)?
+    private var tokenProvider: (() -> AccountManager.TokenLookup)?
     private var onTokensRefreshed: ((StoredTokens) -> Bool)?
 
     /// A refreshed pair the store would not accept. Refresh tokens are
@@ -35,12 +35,15 @@ class UsagePollingService: ObservableObject {
     /// when tokens are refreshed. The provider is consulted on EVERY poll so
     /// tokens updated on disk (or Claude Code live credentials) are picked up
     /// without reconfiguring.
-    func configure(tokenProvider: @escaping () -> StoredTokens?, onTokensRefreshed: @escaping (StoredTokens) -> Bool) {
+    func configure(
+        tokenProvider: @escaping () -> AccountManager.TokenLookup,
+        onTokensRefreshed: @escaping (StoredTokens) -> Bool
+    ) {
         self.tokenProvider = tokenProvider
         self.onTokensRefreshed = onTokensRefreshed
         // A new account's tokens have nothing to do with the outgoing one's.
         self.unpersistedTokens = nil
-        self.needsReauth = (tokenProvider() == nil)
+        if case .missing = tokenProvider() { self.needsReauth = true } else { self.needsReauth = false }
     }
 
     /// The tokens this poll should use: whatever the provider reports, unless a
@@ -48,8 +51,9 @@ class UsagePollingService: ObservableObject {
     ///
     /// Internal rather than private only so the tests can reach it — `pollNow`
     /// is the sole caller and it takes the network with it.
-    func currentTokens() -> StoredTokens? {
-        unpersistedTokens ?? tokenProvider?()
+    func currentTokens() -> AccountManager.TokenLookup {
+        if let held = unpersistedTokens { return .tokens(held) }
+        return tokenProvider?() ?? .missing
     }
 
     /// Hand refreshed tokens to the store, keeping them in memory if it fails.
@@ -132,8 +136,19 @@ class UsagePollingService: ObservableObject {
 
     @MainActor
     func pollNow() async {
-        guard let tokens = currentTokens() else {
+        let tokens: StoredTokens
+        switch currentTokens() {
+        case .tokens(let found):
+            tokens = found
+        case .missing:
             needsReauth = true
+            return
+        case .liveUnavailable:
+            // Mapped to Claude Code but unreadable right now. Surfaced as an
+            // error, never as a sign-in prompt: signing in here would create a
+            // second refresh chain for an account that already has a working
+            // one, which is the failure this bridge exists to avoid.
+            lastError = LiveCredentialError.unreadable
             return
         }
 

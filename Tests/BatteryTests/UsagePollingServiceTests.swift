@@ -111,11 +111,11 @@ final class UsagePollingServiceTests: XCTestCase {
         let service = UsagePollingService()
         let onDisk = tokens("old", "rt1")
 
-        service.configure(tokenProvider: { onDisk }, onTokensRefreshed: { _ in false })
+        service.configure(tokenProvider: { .tokens(onDisk) }, onTokensRefreshed: { _ in false })
         service.persist(tokens("new", "rt2"))
 
-        XCTAssertEqual(service.currentTokens()?.refreshToken, "rt2")
-        XCTAssertEqual(service.currentTokens()?.accessToken, "new")
+        XCTAssertEqual(service.currentTokens().stored?.refreshToken, "rt2")
+        XCTAssertEqual(service.currentTokens().stored?.accessToken, "new")
     }
 
     /// Once a write lands, the provider is authoritative again — otherwise the
@@ -125,7 +125,7 @@ final class UsagePollingServiceTests: XCTestCase {
         var onDisk = tokens("old", "rt1")
 
         service.configure(
-            tokenProvider: { onDisk },
+            tokenProvider: { .tokens(onDisk) },
             onTokensRefreshed: { updated in
                 onDisk = updated
                 return true
@@ -134,7 +134,7 @@ final class UsagePollingServiceTests: XCTestCase {
         service.persist(tokens("new", "rt2"))
         onDisk = tokens("external", "rt3")
 
-        XCTAssertEqual(service.currentTokens()?.refreshToken, "rt3")
+        XCTAssertEqual(service.currentTokens().stored?.refreshToken, "rt3")
     }
 
     /// Switching accounts must not carry the previous account's stranded
@@ -142,11 +142,53 @@ final class UsagePollingServiceTests: XCTestCase {
     func testConfigureClearsAStrandedRotation() {
         let service = UsagePollingService()
 
-        service.configure(tokenProvider: { self.tokens("a", "rt-a") }, onTokensRefreshed: { _ in false })
+        service.configure(tokenProvider: { .tokens(self.tokens("a", "rt-a")) }, onTokensRefreshed: { _ in false })
         service.persist(tokens("a-rotated", "rt-a2"))
 
-        service.configure(tokenProvider: { self.tokens("b", "rt-b") }, onTokensRefreshed: { _ in true })
+        service.configure(tokenProvider: { .tokens(self.tokens("b", "rt-b")) }, onTokensRefreshed: { _ in true })
 
-        XCTAssertEqual(service.currentTokens()?.refreshToken, "rt-b")
+        XCTAssertEqual(service.currentTokens().stored?.refreshToken, "rt-b")
+    }
+
+    // MARK: - Live credentials must never route to sign-in
+
+    /// The whole point of the bridge. An account mapped to a Claude Code config
+    /// dir whose credential cannot be read right now — a denied keychain
+    /// prompt, a renamed directory — must not be treated as signed out.
+    /// `needsReauth` is what drives `attemptSilentReauth`, which opens a browser
+    /// and mints a second refresh chain for an account that already has a
+    /// working one, stranding whichever copy loses the race.
+    func testUnreadableLiveCredentialDoesNotRequestSignIn() {
+        let service = UsagePollingService()
+        service.configure(tokenProvider: { .liveUnavailable }, onTokensRefreshed: { _ in true })
+        XCTAssertFalse(service.needsReauth)
+    }
+
+    /// The genuinely-signed-out case still must reach sign-in, or an account
+    /// with no credential at all would sit there showing an error forever.
+    func testMissingCredentialStillRequestsSignIn() {
+        let service = UsagePollingService()
+        service.configure(tokenProvider: { .missing }, onTokensRefreshed: { _ in true })
+        XCTAssertTrue(service.needsReauth)
+    }
+
+    /// Reconfiguring onto a healthy account must clear a previous account's
+    /// sign-in demand rather than leaving the prompt armed.
+    func testConfiguringOntoAValidAccountClearsReauth() {
+        let service = UsagePollingService()
+        service.configure(tokenProvider: { .missing }, onTokensRefreshed: { _ in true })
+        XCTAssertTrue(service.needsReauth)
+
+        service.configure(tokenProvider: { .tokens(self.tokens("a", "rt")) }, onTokensRefreshed: { _ in true })
+        XCTAssertFalse(service.needsReauth)
+    }
+}
+
+private extension AccountManager.TokenLookup {
+    /// The tokens, or nil for either non-token outcome. Test-only sugar so the
+    /// assertions stay about behaviour rather than pattern matching.
+    var stored: StoredTokens? {
+        if case .tokens(let t) = self { return t }
+        return nil
     }
 }
