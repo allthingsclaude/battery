@@ -131,6 +131,11 @@ class AccountManager: ObservableObject {
     }
 
     func getTokens(for accountId: UUID) -> StoredTokens? {
+        // 0. Live Claude Code credentials (accounts mapped in ~/.battery/live-creds.json)
+        if let live = LiveCredentials.tokens(for: accountId) {
+            return live
+        }
+
         // 1. File-based storage (primary)
         let file = tokenFile(for: accountId)
         if fileManager.fileExists(atPath: file.path) {
