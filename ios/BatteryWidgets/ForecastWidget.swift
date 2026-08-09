@@ -83,6 +83,9 @@ struct LargeForecastView: View {
                 if let opus = payload.opusUtilization {
                     windowRow(title: "Opus", util: opus, reset: nil)
                 }
+                if let fable = payload.fableUtilization {
+                    windowRow(title: "Fable", util: fable, reset: nil)
+                }
             }
         }
     }

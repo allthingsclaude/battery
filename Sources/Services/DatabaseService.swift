@@ -16,6 +16,7 @@ actor DatabaseService {
     private let colWeeklyResets = SQLite.Expression<Double>("weekly_resets_at")
     private let colSonnetUtil = SQLite.Expression<Double?>("sonnet_utilization")
     private let colOpusUtil = SQLite.Expression<Double?>("opus_utilization")
+    private let colFableUtil = SQLite.Expression<Double?>("fable_utilization")
     private let colPlanTier = SQLite.Expression<String>("plan_tier")
     private let colAccountId = SQLite.Expression<String?>("account_id")
 
@@ -46,6 +47,7 @@ actor DatabaseService {
             t.column(colWeeklyResets)
             t.column(colSonnetUtil)
             t.column(colOpusUtil)
+            t.column(colFableUtil)
             t.column(colPlanTier)
             t.column(colAccountId)
         })
@@ -53,8 +55,9 @@ actor DatabaseService {
         // Create index on timestamp for efficient range queries
         try db?.run(snapshots.createIndex(colTimestamp, ifNotExists: true))
 
-        // Migration: add account_id column if missing
+        // Migrations: add columns missing from databases created by older builds
         migrateAddAccountId()
+        migrateAddFableUtilization()
     }
 
     func saveSnapshot(_ snapshot: UsageSnapshot) throws {
@@ -68,6 +71,7 @@ actor DatabaseService {
             colWeeklyResets <- snapshot.weeklyResetsAt.timeIntervalSince1970,
             colSonnetUtil <- snapshot.sonnetUtilization,
             colOpusUtil <- snapshot.opusUtilization,
+            colFableUtil <- snapshot.fableUtilization,
             colPlanTier <- snapshot.planTier,
             colAccountId <- snapshot.accountId?.uuidString
         ))
@@ -109,6 +113,7 @@ actor DatabaseService {
             weeklyResetsAt: Date(timeIntervalSince1970: row[colWeeklyResets]),
             sonnetUtilization: row[colSonnetUtil],
             opusUtilization: row[colOpusUtil],
+            fableUtilization: row[colFableUtil],
             planTier: row[colPlanTier],
             accountId: row[colAccountId].flatMap { UUID(uuidString: $0) }
         )
@@ -136,6 +141,23 @@ actor DatabaseService {
             try db.run(snapshots.addColumn(colAccountId))
         } catch {
             print("Migration: failed to add account_id column: \(error.localizedDescription)")
+        }
+    }
+
+    /// `create(ifNotExists:)` leaves an existing table alone, so a database from
+    /// a build that predates Fable tracking needs the column added explicitly —
+    /// otherwise every `saveSnapshot` insert references a column that isn't
+    /// there and history stops accumulating. Detected via PRAGMA for the same
+    /// reason as `account_id` above.
+    private func migrateAddFableUtilization() {
+        guard let db = db else { return }
+        do {
+            let columns = try db.prepare("PRAGMA table_info(usage_snapshots)")
+                .compactMap { $0[1] as? String }
+            guard !columns.contains("fable_utilization") else { return }
+            try db.run(snapshots.addColumn(colFableUtil))
+        } catch {
+            print("Migration: failed to add fable_utilization column: \(error.localizedDescription)")
         }
     }
 }
