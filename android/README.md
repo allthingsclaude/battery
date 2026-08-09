@@ -106,6 +106,75 @@ detailed layout to design rather than three.
 
 ---
 
+## The app icon
+
+The shared mark, from the same `assets/icon.png` that macOS and iOS render —
+there is no vector source anywhere in the repository, so this ships PNG buckets
+rather than a `VectorDrawable`.
+
+**Sizing is the part that isn't obvious.** The mark is 55dp on the 108dp adaptive
+canvas: the largest box of its 0.654 aspect ratio that fits inside the 66dp
+circle every launcher mask is guaranteed to leave visible. That sounds small
+against a 108dp canvas, but the outer 18dp per side is bleed for mask animation
+and parallax and is *never drawn*. Against the 72dp a launcher actually shows,
+the mark is at 77% — which is where iOS puts it too (78%). Sizing against the
+full canvas would shrink it for no reason.
+
+`mipmap`, not `drawable`: density splits strip unused `drawable-*dpi` buckets,
+and a launcher can ask for a density the installed split no longer carries.
+
+The `<monochrome>` layer for themed icons is cut from the artwork by dropping the
+cream faces. A plain silhouette of this mark is a featureless blob, and its
+outline alone is a 1px wireframe at launcher size; keeping the outline *and* the
+orange sides leaves a shape that still reads as a stack when the system tints it.
+
+### Auto, Light and Dark
+
+Settings → App icon. Three `activity-alias` entries, exactly one enabled — the
+only way to change an icon at runtime, since an adaptive icon's layers are fixed.
+
+`MainActivity` therefore has no LAUNCHER filter of its own. It cannot both be the
+entry for Auto and be switched away from, because a disabled activity cannot be
+an alias target. Nothing else moves: widgets (`WidgetParts`) and the card, pill
+and chip (`LiveUpdateNotifier`) start it by explicit component name, which
+ignores intent filters, and `singleTask` belongs to the target rather than the
+alias.
+
+**Auto is not a third piece of artwork.** It is the icon whose adaptive XML is
+night-qualified (`mipmap-night-anydpi-v26/`), so the system theme picks the
+layers; Light and Dark point at the same two foregrounds, fixed. Dark matches
+what iOS ships as `AppIcon-Dark` — the `#191814` surface with the slab tops
+warmed to `#FFE8D5`, because black outlines vanish against a dark field and stark
+white tops glare.
+
+Following the system theme is **undocumented behaviour**. Android has no
+first-class dark app icon; the documented answer to theming is the monochrome
+layer. This works because a launcher resolves the icon in a configuration
+carrying the UI mode and re-resolves when it changes — verified on One UI 8.5
+from both a cold and a warm icon cache. It does not need to be guaranteed: a
+launcher that ignores the qualifier shows the light icon, which is what shipping
+without it would give everyone.
+
+**The switch applies on `ON_STOP`, not on tap.** `DONT_KILL_APP` spares the
+process but not the task — disabling the alias the task was launched from leaves
+it rooted at a disabled component, and ActivityManager clears it, so tapping a
+tile closed the app. Deferred, the tile fills in and the home screen has already
+changed by the time the user gets there. The cost is an edge: force-stop the app
+between tapping and backgrounding and the choice is lost, because it lives only
+in memory until applied.
+
+There is no stored preference. The enabled component *is* the state — it is what
+the launcher reads, and a copy in `Settings` could only ever disagree with the
+icon actually on the home screen.
+
+> A long-standing note in `Settings.kt` said a picker was impossible because
+> alias swapping "drops the user's home-screen shortcut on One UI". It does not.
+> Measured on One UI 8.5, a shortcut survives both `MainActivity` giving up its
+> LAUNCHER filter and repeated swaps afterwards. Why the original note said
+> otherwise was never reproduced, so no replacement cause is claimed.
+
+---
+
 ## Build and run
 
 ```bash
