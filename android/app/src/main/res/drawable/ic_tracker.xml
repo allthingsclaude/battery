@@ -1,0 +1,16 @@
+<!--
+  The icon that rides the ProgressStyle bar at the current value. Unlike the small
+  icon this keeps its colour, so it carries the brand terracotta.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFD97757"
+        android:pathData="M12,2L12,2c5.52,0 10,4.48 10,10v0c0,5.52 -4.48,10 -10,10h0C6.48,22 2,17.52 2,12v0C2,6.48 6.48,2 12,2z" />
+    <path
+        android:fillColor="#FFFAF8F4"
+        android:pathData="M13,6l-5,7h3l-1,5l5,-7h-3z" />
+</vector>

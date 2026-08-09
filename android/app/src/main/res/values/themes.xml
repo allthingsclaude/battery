@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      A platform theme, not an AppCompat one: the app uses ComponentActivity +
+      Compose, so pulling in appcompat would add a dependency for nothing.
+
+      There is no `android:Theme.Material.DayNight` — DayNight is an AppCompat
+      concept. The platform equivalent is two themes and a values-night/ override,
+      which is what values-night/themes.xml next to this file does. Compose paints
+      its own colours either way; this only governs the window background before
+      the first frame.
+    -->
+    <style name="Theme.Battery" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

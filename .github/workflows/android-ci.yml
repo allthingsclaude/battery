@@ -1,0 +1,92 @@
+name: Android CI
+
+# A file of its own rather than a job inside ci.yml, for the same reason
+# `android-release.yml` sits beside `release.yml` and `ios-release.yml`: the
+# three platforms build on different runners, at different costs, and on
+# different cadences.
+#
+# The cost part is not incidental. `ci.yml` runs on `macos-26`, which bills at a
+# multiple of an ubuntu runner, so widening *its* triggers to cover Android
+# branches would spend macOS minutes on every push that cannot affect the Mac or
+# iOS builds at all.
+on:
+  push:
+    # Feature branches included deliberately. `ci.yml` fires only on main and on
+    # pull requests against it, which means a long-lived branch gets no CI until
+    # the moment it is proposed for merge — the worst possible time to discover
+    # the runner cannot resolve compileSdk. The Android port was built on such a
+    # branch and went through CI zero times.
+    branches: [main, 'android/**']
+    paths:
+      - 'android/**'
+      - 'fixtures/**'
+      - '.github/workflows/android-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'fixtures/**'
+      - '.github/workflows/android-ci.yml'
+  # Note this only surfaces a "Run workflow" button once the file is on the
+  # repository's *default* branch — GitHub does not offer manual dispatch for a
+  # workflow that exists only on a feature branch. The push trigger above is
+  # what covers that case, because push events use the workflow file from the
+  # ref being pushed.
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # JDK 17 explicitly. A dev machine may have 26 and the build targets 17
+      # bytecode without pinning a toolchain, but CI should not inherit whatever
+      # the runner image ships this month.
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+
+      # compileSdk 37 may be newer than the runner image ships. Check before
+      # fetching: the first version of this step ran sdkmanager unconditionally
+      # and printed "::warning::platforms;android-37 unavailable" on a run that
+      # then built perfectly — the image already had the platform, and
+      # sdkmanager was reporting that the *package* is absent from the remote
+      # index it loads, which is a different thing. A warning on every green run
+      # is how real warnings get ignored.
+      - name: Ensure compileSdk platform
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "Installed platforms: $(ls "$SDK/platforms" 2>/dev/null | tr '\n' ' ')"
+          if [ -d "$SDK/platforms/android-37" ]; then
+            echo "android-37 already present"
+            exit 0
+          fi
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          if ! "$SDK/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37"; then
+            echo "::warning::platforms;android-37 not installable — leaving it to AGP auto-download"
+          fi
+
+      # core/ first and on its own: it is pure JVM, it holds the golden fixtures
+      # shared with the Swift suite, and it fails fast. A break here means the
+      # Kotlin port has drifted from ios/BatteryKit/, which is worth surfacing
+      # before spending three minutes on an APK.
+      - name: Test core (golden fixtures)
+        working-directory: android
+        run: ./gradlew :core:test
+
+      - name: Build (unsigned)
+        working-directory: android
+        run: ./gradlew :app:assembleDebug
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-test-report
+          path: android/core/build/reports/tests/test

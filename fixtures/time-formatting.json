@@ -1,0 +1,38 @@
+{
+  "spec": "TimeFormatting.shortDuration / relativeTime",
+  "source": "Tests/BatteryTests/TimeFormattingTests.swift",
+
+  "shortDuration": {
+    "$comment": "Input is seconds. Note the truncation: Swift does Int(interval), so 119.9 is '1m'. Rounding instead would tick a second early against the other platforms.",
+    "cases": [
+      { "seconds": 7980, "expect": "2h 13m", "from": "testShortDurationHoursAndMinutes" },
+      { "seconds": 2700, "expect": "45m",    "from": "testShortDurationMinutesOnly" },
+      { "seconds": 30,   "expect": "30s",    "from": "testShortDurationSeconds" },
+      { "seconds": 0,    "expect": "0s",     "from": "testShortDurationZero" },
+      { "seconds": -10,  "expect": "0s",     "from": "testShortDurationNegative" },
+
+      { "seconds": 3600,  "expect": "1h 0m", "derived": "hour boundary — minutes component is kept even at zero" },
+      { "seconds": 119.9, "expect": "1m",    "derived": "truncation, not rounding" },
+      { "seconds": 59,    "expect": "59s",   "derived": "just under a minute" },
+      { "seconds": 60,    "expect": "1m",    "derived": "exactly a minute" },
+      { "seconds": 86400, "expect": "24h 0m","derived": "no day component exists; hours keep accumulating" }
+    ]
+  },
+
+  "relativeTime": {
+    "$comment": "Input is seconds in the past.",
+    "cases": [
+      { "secondsAgo": 5,    "expect": "just now", "from": "testRelativeTimeJustNow" },
+      { "secondsAgo": 120,  "expect": "2m ago",   "from": "testRelativeTimeMinutesAgo" },
+      { "secondsAgo": 3600, "expect": "1h ago",   "from": "testRelativeTimeHoursAgo" },
+
+      { "secondsAgo": 59,     "expect": "just now", "derived": "boundary: < 60 is 'just now'" },
+      { "secondsAgo": 60,     "expect": "1m ago",   "derived": "boundary: 60 is the first minute" },
+      { "secondsAgo": 3599,   "expect": "59m ago",  "derived": "boundary: just under an hour" },
+      { "secondsAgo": 86399,  "expect": "23h ago",  "derived": "boundary: just under a day" },
+      { "secondsAgo": 86400,  "expect": "1d ago",   "derived": "boundary: exactly a day" }
+    ]
+  },
+
+  "$derivedNote": "Cases tagged `derived` are not in the Swift suite. They were read off the Swift implementation (ios/BatteryKit/TimeFormatting.swift), not off the Kotlin, and pin boundaries the original tests left open. They are the cases most likely to drift silently, which is why they're here."
+}

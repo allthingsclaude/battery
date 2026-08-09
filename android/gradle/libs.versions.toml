@@ -1,0 +1,43 @@
+[versions]
+# Resolved against the live Maven metadata rather than guessed — all stable.
+agp = "9.3.1"
+kotlin = "2.4.10"
+androidxCore = "1.19.0"          # ProgressStyle + setRequestPromotedOngoing landed
+                                 # in 1.17.0-alpha01; long stable by now, so the
+                                 # project takes no alpha dependency for the Now Bar.
+composeBom = "2026.06.01"
+activityCompose = "1.13.0"
+lifecycle = "2.11.0"
+browser = "1.10.0"
+glance = "1.1.1"                 # 1.2.0 is still rc — widgets are Phase 5, revisit then.
+work = "2.11.2"                  # declared rather than inherited: it arrives
+                                 # transitively through Glance, and a Glance upgrade
+                                 # that dropped it would take the widget refresh
+                                 # with it. 2.12 is beta.
+kotlinxSerialization = "1.11.0"  # test-only, for reading the shared golden fixtures
+
+[libraries]
+androidx-browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "androidxCore" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
+
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+compose-ui = { group = "androidx.compose.ui", name = "ui" }
+compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+
+glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
+glance-material3 = { group = "androidx.glance", name = "glance-material3", version.ref = "glance" }
+
+androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
+
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

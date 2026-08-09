@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Battery</string>
+    <string name="widget_name_session_row">Claude — Session</string>
+    <string name="widget_name_session_ring">Claude — Ring</string>
+    <string name="widget_name_overview">Claude — Overview</string>
+    <string name="widget_name_forecast">Claude — Forecast</string>
+    <string name="widget_desc_session_row">Session percentage and time to reset, in one row.</string>
+    <string name="widget_desc_session_ring">The 5-hour session window as a ring.</string>
+    <string name="widget_desc_overview">Session, weekly and Opus windows together.</string>
+    <string name="widget_desc_forecast">Where this session is heading before it resets.</string>
+    <string name="widget_description">Your Claude Code session and weekly limits.</string>
+</resources>

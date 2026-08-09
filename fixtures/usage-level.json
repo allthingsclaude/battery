@@ -1,0 +1,73 @@
+{
+  "spec": "UsageLevel.from(utilization) \u2014 severity thresholds at 50 / 75 / 90",
+  "source": "Tests/BatteryTests/ColorThresholdsTests.swift",
+  "cases": [
+    {
+      "utilization": 0,
+      "level": "LOW",
+      "from": "testLowUtilization"
+    },
+    {
+      "utilization": 25,
+      "level": "LOW",
+      "from": "testLowUtilization"
+    },
+    {
+      "utilization": 49.9,
+      "level": "LOW",
+      "from": "testLowUtilization"
+    },
+    {
+      "utilization": 50,
+      "level": "MODERATE",
+      "from": "testModerateUtilization"
+    },
+    {
+      "utilization": 65,
+      "level": "MODERATE",
+      "from": "testModerateUtilization"
+    },
+    {
+      "utilization": 74.9,
+      "level": "MODERATE",
+      "from": "testModerateUtilization"
+    },
+    {
+      "utilization": 75,
+      "level": "HIGH",
+      "from": "testHighUtilization"
+    },
+    {
+      "utilization": 85,
+      "level": "HIGH",
+      "from": "testHighUtilization"
+    },
+    {
+      "utilization": 89.9,
+      "level": "HIGH",
+      "from": "testHighUtilization"
+    },
+    {
+      "utilization": 90,
+      "level": "CRITICAL",
+      "from": "testCriticalUtilization"
+    },
+    {
+      "utilization": 95,
+      "level": "CRITICAL",
+      "from": "testCriticalUtilization"
+    },
+    {
+      "utilization": 100,
+      "level": "CRITICAL",
+      "from": "testCriticalUtilization"
+    }
+  ],
+  "colors": {
+    "$comment": "ARGB, from ios/BatteryKit/BatteryColors.swift. Severity escalates by darkening within the terracotta brand, never by turning red.",
+    "LOW": "#FFD97757",
+    "MODERATE": "#FFD97757",
+    "HIGH": "#FFB85A3A",
+    "CRITICAL": "#FF9A4A2C"
+  }
+}

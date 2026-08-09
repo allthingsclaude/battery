@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Runtime permission on API 33+; without it nothing posts at all. -->
+    <!--
+      Everything this app does needs it: the usage API, the token refresh, the
+      GitHub release check, and — less obviously — binding the loopback
+      ServerSocket that catches the OAuth redirect. Without it that bind throws
+      and sign-in fails with "Couldn't start the local sign-in listener", which
+      names the symptom and not the cause.
+
+      Nothing in the JVM test suite could catch this: every test drives a fake
+      HttpTransport, and the manifest isn't involved. It took a real device.
+    -->
+    <!--
+      Package visibility. Since API 30 an app cannot see arbitrary installed
+      packages, and this app is minSdk 31 — so without this block
+      CustomTabsClient.getPackageName() returns null and resolveActivity() finds
+      nothing, and the OAuth URL can only be launched as an unrestricted
+      implicit intent. RFC 8252 wants the authorization request pinned to a real
+      browser; these two filters are what make the app able to find one.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+      The one that makes a notification eligible for the Now Bar, the lock screen,
+      the AOD and the status-bar chip. Non-runtime: it is granted at install, but
+      the user can revoke promotion per-app in Settings, which is why the app has
+      to check canPostPromotedNotifications() rather than assume.
+    -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+
+    <!--
+      The service exists exactly as long as its notification is on the lock
+      screen, so the notification is the user-visible justification for it.
+
+      specialUse rather than dataSync: dataSync is capped at 6h per 24h on
+      Android 15+, which a back-to-back coding day would exhaust, and there is no
+      graceful degradation — the system throws. specialUse carries no timeout,
+      and distribution is off-Play so its Play Console justification doesn't
+      apply.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Battery">
+
+        <service
+            android:name=".live.SessionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the live Claude Code session card on the lock screen current while a session is active." />
+        </service>
+
+        <receiver
+            android:name=".live.CardDismissedReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".widget.SessionRowWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_name_session_row">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_session_row" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.SessionRingWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_name_session_ring">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_session_ring" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.OverviewWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_name_overview">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_overview" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.ForecastWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_name_forecast">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_forecast" />
+        </receiver>
+
+        <!--
+          Named by android:configure in every widget_*.xml. exported=true is
+          required: the launcher starts it, not us.
+        -->
+        <activity
+            android:name=".widget.WidgetConfigActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:label="Widget settings"
+            android:theme="@style/Theme.Battery">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          The Phase 0 harness, kept and reachable from the dashboard's
+          Diagnostics button rather than deleted: the Now Bar questions in
+          android/NOW_BAR.md are still open, and answering them needs the
+          ability to post a card at an arbitrary percentage on demand.
+          Not exported — nothing outside the app should be able to launch it.
+        -->
+        <activity
+            android:name=".SpikeActivity"
+            android:exported="false"
+            android:label="Battery diagnostics" />
+    </application>
+</manifest>
