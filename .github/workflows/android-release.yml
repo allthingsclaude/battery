@@ -30,11 +30,18 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
 
+      # The dispatch input arrives through `env`, not `${{ }}` inside the script.
+      # Interpolated directly it is pasted into the shell before bash sees it, so
+      # a version of `x"; curl … | sh; "` runs as a command — in a job that holds
+      # the release signing key and `contents: write`. Dispatching needs write
+      # access already, which caps the severity, not the blast radius.
       - name: Resolve version
         id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            VERSION="${{ github.event.inputs.version }}"
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
           else
             VERSION="${GITHUB_REF_NAME#android-v}"
           fi
@@ -67,8 +74,12 @@ jobs:
         working-directory: android
         run: ./gradlew :core:test
 
+      # printf, not echo: echo mangles a payload that happens to start with -n or
+      # -e, and base64 of a .jks can. Through env for the same reason as above.
       - name: Decode keystore
-        run: echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+        run: printf '%s' "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
 
       # Prove the credentials before spending two minutes building with them.
       # The step above checks the secrets are *present*; present is not correct,
@@ -142,16 +153,21 @@ jobs:
           BATTERY_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           BATTERY_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           BATTERY_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          # Derived from the dispatch input, so it carries the same taint.
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
         run: |
           ./gradlew :app:assembleRelease \
-            -PversionName="${{ steps.version.outputs.name }}" \
-            -PversionCode="${{ steps.version.outputs.code }}"
+            -PversionName="$VERSION_NAME" \
+            -PversionCode="$VERSION_CODE"
 
       - name: Rename artifact
         id: artifact
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.name }}
         run: |
           SRC=android/app/build/outputs/apk/release/app-release.apk
-          DST="battery-${{ steps.version.outputs.name }}.apk"
+          DST="battery-$VERSION_NAME.apk"
           mv "$SRC" "$DST"
           echo "path=$DST" >> "$GITHUB_OUTPUT"
 
