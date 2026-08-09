@@ -47,6 +47,10 @@ the shade entry, and the always-on display.
 |:--|:--|
 | ![The app](../assets/android-dashboard.webp) | ![Widgets](../assets/android-widgets.webp) |
 
+| App icon | About |
+|:--|:--|
+| ![App icon](../assets/android-app-icon.webp) | ![About](../assets/android-app-info.webp) |
+
 ---
 
 ## Layout
