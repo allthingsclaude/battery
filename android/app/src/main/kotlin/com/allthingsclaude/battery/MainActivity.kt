@@ -461,7 +461,15 @@ private suspend fun runUpdateCheck(
             // this there is no way — on a device, in the field — to tell a check
             // that ran and found nothing from one that was throttled, cancelled, or
             // failed. All three look identical: an app that says nothing.
-            Log.i(TAG, "update check: $result (installed ${updates.currentVersion})")
+            //
+            // The feed is in the line because the answer alone does not identify
+            // it. A build polling the wrong repository reports "up to date" in the
+            // same words as one polling the right one, and without this the only
+            // way to tell was to pull the APK and read the slug out of its dex.
+            Log.i(
+                TAG,
+                "update check: $result (installed ${updates.currentVersion}, feed ${updates.repo})",
+            )
             when (result) {
                 is ReleaseFeed.Check.Available -> settings.pendingUpdate = result.release
                 // The one outcome that proves a remembered release is spent.

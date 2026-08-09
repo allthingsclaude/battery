@@ -40,8 +40,13 @@ class UpdateChecker(private val context: Context) {
      * Where this build looks for its updates — stamped in at build time by the
      * release workflow, so an APK checks the repository it was published from.
      * Blank on a hand-made build, which falls back to the canonical default.
+     *
+     * Public so the check can log it. Which feed answered is not a detail: "up to
+     * date" is the same sentence whether the right repository said it or the wrong
+     * one did, and telling those apart otherwise means pulling the APK and reading
+     * its dex.
      */
-    private val repo: String
+    val repo: String
         get() = BuildConfig.RELEASE_REPO.ifBlank { ReleaseFeed.DEFAULT_REPO }
 
     /** Blocking — up to five sequential requests. Call it off the main thread. */
