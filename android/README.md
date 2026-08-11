@@ -235,7 +235,7 @@ proposed for merge.
 ## Releasing
 
 ```bash
-git tag android-v0.1.0 && git push origin android-v0.1.0
+./Scripts/release-android.sh patch      # or minor / major / an explicit 0.2.0
 ```
 
 `.github/workflows/android-release.yml` builds, signs, and publishes the APK to
@@ -246,6 +246,21 @@ cadences.
 `versionName` comes from the tag and `versionCode` from the commit count, so
 there is no second place to remember to bump. Local builds fall back to the
 literals in `app/build.gradle.kts`.
+
+That is also why the script is thinner than its Mac and iOS siblings: with no
+version in a file there is nothing to bump and nothing to commit, so the release
+really is just a tag and you can equally cut one by hand.
+
+```bash
+git tag android-v0.2.0 && git push origin android-v0.2.0
+```
+
+What the script adds is the preflight — clean tree, unused tag, all four signing
+secrets present — plus a check the other two don't need, because Android is the
+only one of the three where a mistake here is silent: `UpdateChecker` only
+offers a *newer* version, so tagging one older than the last release publishes
+an APK no installed app will ever surface. Like the iOS script it asks before
+pushing, and `--yes` skips the prompt.
 
 ### Secrets
 
