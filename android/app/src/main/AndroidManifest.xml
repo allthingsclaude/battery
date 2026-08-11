@@ -59,7 +59,7 @@
 
     <application
         android:allowBackup="false"
-        android:icon="@drawable/ic_launcher"
+        android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Battery">
@@ -144,12 +144,61 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:launchMode="singleTask">
+            android:launchMode="singleTask" />
+
+        <!--
+          The launcher entry, one alias per icon, exactly one enabled — see
+          AppIcon. An icon cannot be changed at runtime any other way: an
+          adaptive icon's layers are fixed, so the only lever is which component
+          carries MAIN/LAUNCHER.
+
+          This is why MainActivity above has no intent-filter of its own. It
+          cannot both be the launcher entry for "Automatic" and be switched
+          away from, because a disabled activity cannot be an alias target.
+          Moving the filter out costs nothing that was checked: widgets
+          (WidgetParts) and the card, pill and chip (LiveUpdateNotifier) all
+          start MainActivity by explicit component name, which ignores intent
+          filters, and singleTask is a property of the target, not the alias.
+          Verified on One UI 8.5 that installing this over a build where
+          MainActivity held the filter keeps an existing home-screen shortcut.
+        -->
+        <activity-alias
+            android:name=".IconAuto"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".IconLight"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_light"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".IconDark"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_dark"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <!--
           The Phase 0 harness, kept and reachable from the dashboard's

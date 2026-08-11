@@ -47,6 +47,10 @@ the shade entry, and the always-on display.
 |:--|:--|
 | ![The app](../assets/android-dashboard.webp) | ![Widgets](../assets/android-widgets.webp) |
 
+| App icon | About |
+|:--|:--|
+| ![App icon](../assets/android-app-icon.webp) | ![About](../assets/android-app-info.webp) |
+
 ---
 
 ## Layout
@@ -103,6 +107,75 @@ Three surfaces, fed by three fields, with very different room:
 
 Expanding the chip opens the same expanded card the pill does, so there is one
 detailed layout to design rather than three.
+
+---
+
+## The app icon
+
+The shared mark, from the same `assets/icon.png` that macOS and iOS render —
+there is no vector source anywhere in the repository, so this ships PNG buckets
+rather than a `VectorDrawable`.
+
+**Sizing is the part that isn't obvious.** The mark is 55dp on the 108dp adaptive
+canvas: the largest box of its 0.654 aspect ratio that fits inside the 66dp
+circle every launcher mask is guaranteed to leave visible. That sounds small
+against a 108dp canvas, but the outer 18dp per side is bleed for mask animation
+and parallax and is *never drawn*. Against the 72dp a launcher actually shows,
+the mark is at 77% — which is where iOS puts it too (78%). Sizing against the
+full canvas would shrink it for no reason.
+
+`mipmap`, not `drawable`: density splits strip unused `drawable-*dpi` buckets,
+and a launcher can ask for a density the installed split no longer carries.
+
+The `<monochrome>` layer for themed icons is cut from the artwork by dropping the
+cream faces. A plain silhouette of this mark is a featureless blob, and its
+outline alone is a 1px wireframe at launcher size; keeping the outline *and* the
+orange sides leaves a shape that still reads as a stack when the system tints it.
+
+### Auto, Light and Dark
+
+Settings → App icon. Three `activity-alias` entries, exactly one enabled — the
+only way to change an icon at runtime, since an adaptive icon's layers are fixed.
+
+`MainActivity` therefore has no LAUNCHER filter of its own. It cannot both be the
+entry for Auto and be switched away from, because a disabled activity cannot be
+an alias target. Nothing else moves: widgets (`WidgetParts`) and the card, pill
+and chip (`LiveUpdateNotifier`) start it by explicit component name, which
+ignores intent filters, and `singleTask` belongs to the target rather than the
+alias.
+
+**Auto is not a third piece of artwork.** It is the icon whose adaptive XML is
+night-qualified (`mipmap-night-anydpi-v26/`), so the system theme picks the
+layers; Light and Dark point at the same two foregrounds, fixed. Dark matches
+what iOS ships as `AppIcon-Dark` — the `#191814` surface with the slab tops
+warmed to `#FFE8D5`, because black outlines vanish against a dark field and stark
+white tops glare.
+
+Following the system theme is **undocumented behaviour**. Android has no
+first-class dark app icon; the documented answer to theming is the monochrome
+layer. This works because a launcher resolves the icon in a configuration
+carrying the UI mode and re-resolves when it changes — verified on One UI 8.5
+from both a cold and a warm icon cache. It does not need to be guaranteed: a
+launcher that ignores the qualifier shows the light icon, which is what shipping
+without it would give everyone.
+
+**The switch applies on `ON_STOP`, not on tap.** `DONT_KILL_APP` spares the
+process but not the task — disabling the alias the task was launched from leaves
+it rooted at a disabled component, and ActivityManager clears it, so tapping a
+tile closed the app. Deferred, the tile fills in and the home screen has already
+changed by the time the user gets there. The cost is an edge: force-stop the app
+between tapping and backgrounding and the choice is lost, because it lives only
+in memory until applied.
+
+There is no stored preference. The enabled component *is* the state — it is what
+the launcher reads, and a copy in `Settings` could only ever disagree with the
+icon actually on the home screen.
+
+> A long-standing note in `Settings.kt` said a picker was impossible because
+> alias swapping "drops the user's home-screen shortcut on One UI". It does not.
+> Measured on One UI 8.5, a shortcut survives both `MainActivity` giving up its
+> LAUNCHER filter and repeated swaps afterwards. Why the original note said
+> otherwise was never reproduced, so no replacement cause is claimed.
 
 ---
 
@@ -228,6 +301,91 @@ GitHub releases feed. It is deliberately **check-and-hand-off**: it opens the
 release page rather than downloading and installing, because installing would
 mean holding `REQUEST_INSTALL_PACKAGES` — a permission that lets an app install
 arbitrary software.
+
+**An APK checks the repository it was published from.** The release workflow
+passes `-PreleaseRepo=$GITHUB_REPOSITORY`, which lands in `BuildConfig` and is
+handed to `ReleaseFeed.findNewer`; a hand-made build leaves it blank and falls
+back to `ReleaseFeed.DEFAULT_REPO`. Hardcoded upstream instead, a fork's release
+would poll `allthingsclaude/battery`, compare its newest tag against the fork's
+own version and report "up to date" indefinitely — the fork's releases invisible
+to it, and the failure shaped exactly like a working updater. Deriving it also
+means a fork can cut real signed releases and watch its own builds update from
+them, which is the only way to exercise the download-and-install half end to end.
+
+The walk itself is `ReleaseFeed.findNewer`, in `core/` so it can be tested
+without a `Context`. It pages the feed — three tag namespaces share it and the
+other two ship far more often — and answers with one of four cases rather than a
+nullable release: `Available`, `UpToDate`, `NoRelease` (the feed said nothing
+about this build) and `Failed`. Those are separate because collapsing them is the
+failure mode this updater keeps finding: an updater that wrongly reports "up to
+date" is indistinguishable from one that works.
+
+Two entry points, and they report differently:
+
+| | When | Reports |
+|---|---|---|
+| **On resume** | Throttled to once a day, in its own coroutine so it can't delay the usage poll | Only `Available`, on the status line. Silence otherwise |
+| **Settings → About** | Whenever tapped, ignoring the throttle | Every outcome, including failures |
+
+The launch check is silent because an unreachable GitHub is not the user's
+problem, and a red line under their usage ring about a service they never asked
+this app to contact is noise reporting noise. The Settings row is the loud
+version, for when they did ask.
+
+A found release is stored in `pendingUpdate` and the status line is seeded from
+it on launch. Without that the notice is a lottery: the check runs once a day, so
+whether a user ever sees it depends on which resume they happen to make. It is
+cleared by a check returning `UpToDate`, and filtered against the installed
+version when read back — installing is exactly what a remembered release does not
+survive, and it happens well inside the 24h throttle, so nothing else would clear
+it. A failure never clears it; a GitHub outage is no reason to forget a release we
+already know about.
+
+Both entry points share `runUpdateCheck`, which persists the result from *inside*
+the IO block, and `applyCheck`, which decides what an outcome means. What they do
+not share is reporting or throttling, and both asymmetries are load-bearing:
+
+- **The resume check stamps the throttle before the walk.** It is a child of
+  `repeatOnLifecycle(RESUMED)` and dies the moment the app is backgrounded — a
+  second or two after launch, for an app built around a glance. Stamped
+  afterwards, it is never stamped at all on the resumes that matter, while the
+  abandoned walk still goes out on the wire, since `Dispatchers.IO` does not
+  interrupt a blocking `HttpURLConnection`.
+- **The manual check stamps after, and only on an answer.** It has no
+  cancellation to defend against, and a check that failed learned nothing —
+  counting it would silence the automatic one for a day over a moment of no
+  signal.
+- **Only the manual check writes `updateCheck`**, the About row's subtitle.
+  Otherwise a silent resume failure resurfaces hours later, out of context. A
+  silent check that *reaches a conclusion* may still clear it, because clearing
+  is not reporting and "couldn't reach GitHub" must not outlive the successful
+  check that answered it.
+- **`announceUpdate` is suppressed only for someone reading the answer as it
+  lands** — sheet open, manual check. Not for anyone who merely asked: the walk
+  is up to five requests, so tapping Check and backing out delivers the answer to
+  an empty room, and nothing recovers the notice afterwards. The resume re-seed
+  is gated on `update == null`, the manual stamp holds the throttle for a day,
+  and the variable's initializer is a `remember` that a singleTask warm resume
+  never re-runs.
+
+  Known and deliberate: if you *did* read it in Settings and take no action, the
+  status line waits for a cold launch rather than reminding you on the next warm
+  resume. Telling those apart properly needs a timestamp, which this does not
+  earn — the About row still shows the release the whole time.
+
+The manual check runs on the *root* scope, not the sheet's, so closing Settings
+cannot throw away an answer. And the resume block re-seeds `update` from
+`pendingUpdate` before checking, to recover a previous check that was cancelled
+after persisting what it found but before it could report it.
+
+`runUpdateCheck` logs every outcome unconditionally, like `WidgetRefreshWorker`
+and `SessionService` do. The automatic path reports nothing to the user by design,
+so without the log there is no way on a device to tell a check that ran and found
+nothing from one that was throttled, cancelled, or failed.
+
+The notice is dismissed by tapping it, which opens Settings on the release and
+records the version in `skippedVersion`. A *newer* release still gets through —
+`shouldAnnounce` compares rather than testing inequality.
 
 ---
 

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The "Automatic" icon: this file is the light half, and
+  mipmap-night-anydpi-v26/ic_launcher.xml is the dark one. Expressing the
+  system-theme choice as a night-qualified icon, rather than night-qualified
+  colours, is what lets ic_launcher_light and ic_launcher_dark stay fixed.
+
+  Sizing, layer choices and the -night caveat: see ic_launcher_light.xml.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background_light" />
+    <foreground android:drawable="@mipmap/ic_launcher_fg_light" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>

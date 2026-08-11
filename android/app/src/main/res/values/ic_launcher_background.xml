@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The two launcher-icon backgrounds. #FAF8F4 and #191814 are the shared surface
+  colours — `BatteryColors.surface` on iOS, `ColorTheme.background` on macOS,
+  `UsageLevel.SURFACE_LIGHT`/`SURFACE_DARK` in core/.
+
+  Fixed, with no night qualifier. Following the system theme is expressed by the
+  night-qualified *icon* (mipmap-night-anydpi-v26/ic_launcher.xml), not by a
+  colour that changes underneath all three variants — the whole point of the
+  Light and Dark options is that they do not move.
+-->
+<resources>
+    <color name="ic_launcher_background_light">#FAF8F4</color>
+    <color name="ic_launcher_background_dark">#191814</color>
+</resources>

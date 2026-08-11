@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher icon, dark, regardless of system theme. Selected through the
+  .IconDark alias; also the dark half of "Automatic".
+
+  Matches what iOS ships as AppIcon-Dark: the #191814 surface, with the slab
+  tops warmed from #FAF9F5 to #FFE8D5 in the dark foreground so they read as
+  warm off-white instead of glaring out of the dark field.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background_dark" />
+    <foreground android:drawable="@mipmap/ic_launcher_fg_dark" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>

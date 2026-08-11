@@ -28,6 +28,21 @@ android {
         // remember to bump. The literals are only the local-build defaults.
         versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
         versionName = (findProperty("versionName") as String?) ?: "0.1.0"
+
+        // Which repository this build checks for its own updates. The release
+        // workflow passes `-PreleaseRepo=$GITHUB_REPOSITORY`, so an APK looks for
+        // updates where it was published from — a fork's build finds the fork's
+        // releases instead of polling upstream, comparing upstream's newest tag
+        // against its own version and concluding it is up to date.
+        //
+        // Empty rather than a literal default: the canonical value is
+        // ReleaseFeed.DEFAULT_REPO, and repeating it here would be a second place
+        // for it to be wrong. Blank means "no override".
+        buildConfigField(
+            "String",
+            "RELEASE_REPO",
+            "\"${(findProperty("releaseRepo") as String?).orEmpty()}\"",
+        )
     }
 
     signingConfigs {
@@ -48,6 +63,14 @@ android {
     }
 
     buildTypes {
+        debug {
+            // So a debug build installs beside a release-signed one instead of
+            // being refused for a key mismatch. Without it, testing anything on a
+            // device means uninstalling the real app and its Keystore-backed
+            // credentials first. Sign-in still works here: the OAuth redirect is
+            // loopback, not a scheme tied to the applicationId.
+            applicationIdSuffix = ".debug"
+        }
         release {
             // Left off deliberately for now: R8 would need keep rules for the
             // Glance/Compose runtime and for the reflective notification extras,
