@@ -16,7 +16,7 @@ Battery lives in your menu bar and shows how much of your Claude Code rate limit
 - **Burn rate projections** - Linear regression on recent snapshots predicts when you'll hit your limit and what your utilization will be at reset
 - **Usage streaks & heatmap** - See your daily activity patterns, current streak, and a GitHub-style contribution heatmap
 - **7-day usage chart** - Area chart showing your daily usage trends over the past week
-- **Multi-account support** - Manage up to 5 Claude accounts and switch between them
+- **Multi-account support** - Manage up to 5 Claude accounts and switch between them, with [per-account history](#per-account-history)
 - **Color themes** - Choose between a default claude theme and a classic multi-color theme
 - **Configurable notifications** - Get alerted at 80%, 90%, and 95% thresholds (customizable)
 - **Session detection** - Integrates with Claude Code hooks to detect active coding sessions and poll more frequently
@@ -64,6 +64,40 @@ For smarter polling (faster updates during active coding, slower when idle), you
 ```
 
 The hook script is at `Hooks/battery-hook.sh` in this repo.
+
+## Per-Account History
+
+Gauges are always per-account — they come straight from the API using that
+account's own credentials. History (streak, heatmap, 7-day chart, project
+breakdown) is a different matter, because it is read from Claude Code's local
+session files and those record no marker saying which account ran a session.
+
+With one account, that history is unambiguous and Battery uses it as-is. With
+several accounts, it depends on how you run Claude Code:
+
+**Separate config directories (recommended).** Run each account with its own
+`CLAUDE_CONFIG_DIR`, then point Battery at each folder in Settings → Accounts →
+the folder row under each account:
+
+```bash
+alias claude-work='CLAUDE_CONFIG_DIR=~/.claude-work claude'
+alias claude-personal='CLAUDE_CONFIG_DIR=~/.claude-personal claude'
+```
+
+Run `/login` once inside each. Every account then gets its own streak, heatmap,
+chart and project breakdown, read from disk — so they stay complete whether or
+not that account is the one selected in Battery.
+
+Note that a config directory is a whole environment, not just history: settings,
+MCP servers, skills, plugins and command history are all separate. Symlink
+`skills/`, `commands/` and `agents/` into each folder to share them.
+
+**One shared directory.** If several accounts use the same folder, their sessions
+are interleaved with nothing distinguishing them, so local history cannot be
+split. Battery falls back to the usage snapshots it recorded against each account
+itself. That is genuinely per-account, but only covers days Battery was running
+and polling that account, and it cannot separate the project breakdown at all.
+Settings flags accounts sharing a folder.
 
 ## Building from Source
 

@@ -72,10 +72,23 @@ sed -i '' "s/version \"[^\"]*\"/version \"$VERSION\"/" Casks/claude-battery.rb
 sed -i '' "s|download/v[^/]*/Battery-[^\"]*\.dmg|download/v$VERSION/Battery-$VERSION.dmg|" Casks/claude-battery.rb
 echo "  Updated Casks/claude-battery.rb"
 
+# Update the User-Agent every API request sends. Missed here until 0.8.0, so
+# releases from 0.2.4 onward all identified themselves as 0.2.4 — which quietly
+# ruins the one signal that says which build a request came from.
+sed -i '' "s|static let userAgent = \"Battery/[^\"]*\"|static let userAgent = \"Battery/$VERSION\"|" \
+  Sources/Utilities/Constants.swift
+echo "  Updated Sources/Utilities/Constants.swift"
+
+# Fail loudly rather than shipping a build that lies about its version.
+if ! grep -q "static let userAgent = \"Battery/$VERSION\"" Sources/Utilities/Constants.swift; then
+  echo "Error: could not update userAgent in Sources/Utilities/Constants.swift" >&2
+  exit 1
+fi
+
 echo ""
 
 # Commit the changes
-git add Info.plist Casks/claude-battery.rb
+git add Info.plist Casks/claude-battery.rb Sources/Utilities/Constants.swift
 git commit -m "chore: bump version to $VERSION"
 echo "  Committed version bump"
 

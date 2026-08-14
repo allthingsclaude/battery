@@ -103,6 +103,58 @@ actor DatabaseService {
         return try db.prepare(query).map { snapshotFromRow($0) }.reversed()  // Return in chronological order
     }
 
+    /// Peak session utilization per local day for one account, keyed by the
+    /// start of that day.
+    ///
+    /// This is what makes streaks and history per-account: the local Claude Code
+    /// transcripts under `~/.claude` carry no marker saying which account ran a
+    /// session, so several accounts sharing that directory can only be told
+    /// apart by what Battery itself recorded against each `account_id`.
+    ///
+    /// Aggregated in SQL rather than by loading rows — a 35-day window is on the
+    /// order of ten thousand snapshots at the one-minute poll rate.
+    ///
+    /// - Parameter accountId: nil aggregates across every account.
+    func dailyPeakUtilization(from startDate: Date, to endDate: Date, accountId: UUID?) throws -> [Date: Double] {
+        guard let db = db else { return [:] }
+
+        var sql = """
+        SELECT date(timestamp, 'unixepoch', 'localtime') AS day, MAX(session_utilization)
+        FROM usage_snapshots
+        WHERE timestamp >= ? AND timestamp <= ?
+        """
+        var bindings: [SQLite.Binding?] = [
+            startDate.timeIntervalSince1970,
+            endDate.timeIntervalSince1970,
+        ]
+        if let accountId = accountId {
+            sql += "\n  AND account_id = ?"
+            bindings.append(accountId.uuidString)
+        }
+        sql += "\nGROUP BY day"
+
+        // SQLite's 'localtime' resolves against the OS zone, so the parser has to
+        // read the day strings back in that same zone or every key lands a day off.
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        let calendar = Calendar.current
+
+        var peaks: [Date: Double] = [:]
+        for row in try db.prepare(sql, bindings) {
+            guard let day = row[0] as? String, let date = formatter.date(from: day) else { continue }
+            let peak: Double
+            switch row[1] {
+            case let value as Double: peak = value
+            case let value as Int64: peak = Double(value)
+            default: peak = 0
+            }
+            peaks[calendar.startOfDay(for: date)] = peak
+        }
+        return peaks
+    }
+
     private func snapshotFromRow(_ row: Row) -> UsageSnapshot {
         UsageSnapshot(
             id: UUID(uuidString: row[colId]) ?? UUID(),

@@ -11,7 +11,8 @@ enum Constants {
     static let oauthTokenURL = "https://platform.claude.com/v1/oauth/token"
     static let oauthScopes = "user:profile user:inference"
     static let oauthRedirectPath = "/callback"
-    static let userAgent = "Battery/0.2.4"
+    // Kept in step with Info.plist by Scripts/release.sh.
+    static let userAgent = "Battery/0.8.0"
 
     // Push relay — the Cloudflare Worker that forwards Live Activity updates to
     // the iPhone app (see worker/).
@@ -34,6 +35,10 @@ enum Constants {
 
     // Database
     static let dataRetentionDays: Int = 90
+
+    // Stats — how far back the heat map reaches. Five weeks so the grid in
+    // StatsView (5 rows × 7 days, week-aligned) is always fully covered.
+    static let heatMapDays: Int = 35
 
     // UI — Tahoe-style corner radius for the menu bar panel
     static let panelCornerRadius: CGFloat = 24

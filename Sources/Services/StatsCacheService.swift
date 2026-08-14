@@ -2,8 +2,14 @@ import Foundation
 import Combine
 import Darwin
 
-/// Watches `~/.claude/stats-cache.json` for changes and publishes
-/// streak, heatmap, sparkline, and session count data derived from it.
+/// Watches one Claude Code configuration directory's `stats-cache.json` for
+/// changes and publishes streak, heatmap, sparkline, and session count data
+/// derived from it.
+///
+/// Scoped to a directory rather than to `~/.claude` because that is what makes
+/// the numbers belong to a single account — see `ClaudeConfigDir`. One instance
+/// per directory, shared by every account pointing at it; `StatsCacheRegistry`
+/// owns them.
 class StatsCacheService: ObservableObject {
     @Published var currentStreak: Int = 0
     @Published var activeDays: [Date: Double] = [:]
@@ -17,12 +23,23 @@ class StatsCacheService: ObservableObject {
     private static let cacheCreationTokensData = Data(#""cache_creation_input_tokens":"#.utf8)
     private static let cacheReadTokensData = Data(#""cache_read_input_tokens":"#.utf8)
 
+    /// The Claude Code configuration directory this instance reads.
+    let configDir: String
+
     private let filePath: String
     private let projectsPath: String
     private let supplementPath: String
     private let userName: String
     private var fileDescriptor: Int32 = -1
     private var source: DispatchSourceFileSystemObject?
+    /// Every reload runs here, one at a time.
+    ///
+    /// The watcher and the refresh timer both sit on concurrent global queues,
+    /// so their reloads could overlap and tear the `cachedToday*` fields below —
+    /// a Swift Dictionary read concurrent with a write is undefined, not merely
+    /// stale. Serializing also keeps the first scan off the main thread, which
+    /// is where `startWatching` used to run it.
+    private let reloadQueue = DispatchQueue(label: "com.allthingsclaude.battery.stats-reload", qos: .utility)
     private var fallbackTimer: Timer?
     private var refreshTimer: DispatchSourceTimer?
 
@@ -37,12 +54,19 @@ class StatsCacheService: ObservableObject {
         var tokens: Int
     }
 
-    init() {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        self.filePath = home.appendingPathComponent(".claude/stats-cache.json").path
-        self.projectsPath = home.appendingPathComponent(".claude/projects").path
-        self.supplementPath = home.appendingPathComponent(".battery/stats-supplement.json").path
-        self.userName = home.lastPathComponent
+    init(configDir: String = ClaudeConfigDir.defaultDir) {
+        let normalized = ClaudeConfigDir.normalize(configDir)
+        self.configDir = normalized
+        self.filePath = ClaudeConfigDir.statsCacheFile(in: normalized)
+        self.projectsPath = ClaudeConfigDir.projectsDir(in: normalized)
+        self.supplementPath = ClaudeConfigDir.statsSupplementFile(for: normalized).path
+        self.userName = FileManager.default.homeDirectoryForCurrentUser.lastPathComponent
+    }
+
+    /// Releasing a dispatch source that was never cancelled traps, so a service
+    /// dropped without `stopWatching` would take the app down with it.
+    deinit {
+        stopWatching()
     }
 
     func startWatching() {
@@ -153,7 +177,15 @@ class StatsCacheService: ObservableObject {
 
     // MARK: - Parsing
 
+    /// Queue a reload. Results arrive on the published properties, so callers
+    /// never needed this to finish before returning.
     func reload() {
+        reloadQueue.async { [weak self] in
+            self?.performReload()
+        }
+    }
+
+    private func performReload() {
         guard let data = FileManager.default.contents(atPath: filePath) else { return }
         guard let cache = try? JSONDecoder().decode(StatsCache.self, from: data) else {
             print("StatsCacheService: Failed to decode stats-cache.json")
