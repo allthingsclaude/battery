@@ -78,6 +78,15 @@
             android:exported="false" />
 
         <!--
+          The live card's switch button. Not exported: only our own card may
+          fire it, and a PendingIntent carries the permission to do so without
+          the receiver being open to everyone.
+        -->
+        <receiver
+            android:name=".live.AccountSwitchReceiver"
+            android:exported="false" />
+
+        <!--
           The account switcher that works from a locked phone. exported and
           permission-guarded are both required: SystemUI binds this, and only
           SystemUI may.
