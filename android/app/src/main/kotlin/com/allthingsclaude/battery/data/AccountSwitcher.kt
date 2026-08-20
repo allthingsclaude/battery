@@ -3,6 +3,7 @@ package com.allthingsclaude.battery.data
 import android.content.Context
 import com.allthingsclaude.battery.core.SessionPolicy
 import com.allthingsclaude.battery.live.SessionService
+import com.allthingsclaude.battery.quicksettings.AccountTileService
 
 /**
  * Switching accounts, as one operation.
@@ -24,9 +25,14 @@ import com.allthingsclaude.battery.live.SessionService
  * Widgets need no help here: [UsageRepository.poll] refreshes them itself on
  * success.
  *
- * Takes the repository rather than building one, because inference state lives
- * in the instance — a second [UsageRepository] would keep its own regression
- * buffer and the two would disagree about the burn rate.
+ * Takes a repository rather than building one only to avoid a redundant object
+ * where the caller already holds it. It is safe for a caller that has none — a
+ * Quick Settings tile, a broadcast receiver — to construct its own: the state
+ * `resetInference` clears is not held in the instance. `SessionHistory`
+ * delegates to `SnapshotPrefs` and the payload cache is a store, so both are
+ * SharedPreferences-backed and shared by every instance in the process. An
+ * earlier version of this comment claimed the opposite, which would have ruled
+ * out the tile entirely.
  */
 class AccountSwitcher(context: Context, private val repository: UsageRepository) {
 
@@ -46,6 +52,9 @@ class AccountSwitcher(context: Context, private val repository: UsageRepository)
         repository.selectAccount(id)
         val result = repository.poll()
         repaint()
+        // The tile is ACTIVE_TILE, so it is bound only for taps and panel opens.
+        // Without this nudge it would keep naming the account we just left.
+        AccountTileService.requestRefresh(appContext)
         return result
     }
 

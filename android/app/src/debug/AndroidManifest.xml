@@ -3,42 +3,15 @@
   Debug-only components for the account-switching work. Nothing here ships.
 
   There is deliberately no probe *activity*: SpikeActivity is this project's one
-  diagnostics harness and a second screen beside it was duplication. The two
-  components that remain are not a harness — they are the earliest form of real
-  features (PLAN_02 Phases 4 and 5), kept in src/debug only until those phases
-  promote them to main.
+  diagnostics harness and a second screen beside it was duplication.
+
+  What remains is the receiver a probe card action fires at, kept only until
+  PLAN_02 Phase 5 replaces it with the real one. The tile has already been
+  promoted to main.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application>
-
-        <!--
-          Verified on One UI 8.5: the tile registers (it landed first in
-          `sysui_qs_tiles`), and onClick() fires with the device locked AND
-          secure, with no credential prompt — because onClick runs in this
-          app's own process, so no activity launch and none of the Android
-          12/14/15 trampoline or background-activity-launch rules are in the
-          path. That is what makes the tile the only switcher that works from
-          anywhere.
-
-          Deliberately NO `TOGGLEABLE_TILE`: that meta-data declares a two-state
-          switch to accessibility services, and this cycles through N accounts
-          with wrap-around. Declaring it would make TalkBack describe the
-          control as something it is not.
-        -->
-        <service
-            android:name=".probe.AccountTileService"
-            android:exported="true"
-            android:icon="@drawable/ic_stat_battery"
-            android:label="Battery account"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.service.quicksettings.ACTIVE_TILE"
-                android:value="true" />
-        </service>
 
         <receiver
             android:name=".probe.ProbeReceiver"
