@@ -61,6 +61,7 @@ import com.allthingsclaude.battery.ui.AppearanceMode
 import com.allthingsclaude.battery.ui.BatteryTheme
 import com.allthingsclaude.battery.core.SessionPolicy
 import androidx.activity.compose.BackHandler
+import com.allthingsclaude.battery.ui.AccountTabs
 import com.allthingsclaude.battery.ui.AppHeader
 import com.allthingsclaude.battery.ui.DashboardScreen
 import com.allthingsclaude.battery.ui.SettingsSheet
@@ -327,6 +328,39 @@ private fun Root() {
 
     val accounts = remember(signedIn, showSettings) { repository.listAccounts() }
 
+    // Held as state rather than read from the repository on each composition, so
+    // a tapped tab moves under the finger instead of waiting for the poll that
+    // follows it to come back.
+    var selectedAccountId by remember(signedIn) { mutableStateOf(repository.selectedAccountId) }
+
+    // One handler for both entry points — the header tabs and, later, anything
+    // outside the Activity. The seam owns select, poll and repaint.
+    fun selectAccount(id: String) {
+        selectedAccountId = id
+        scope.launch { switcher.switchTo(id).report { p, m -> payload = p; message = m } }
+    }
+
+    fun addAccount() {
+        auth.start { result ->
+            scope.launch {
+                when (result) {
+                    is AuthService.Result.Success ->
+                        if (repository.addAccount(result.tokens)) {
+                            showSettings = false
+                            refresh(context, repository) { p, m -> payload = p; message = m }
+                            signedIn = true
+                            selectedAccountId = repository.selectedAccountId
+                            switcher.repaint()
+                        } else {
+                            message = "Couldn't store the credential."
+                        }
+                    is AuthService.Result.Failure -> message = result.message
+                    AuthService.Result.Cancelled -> Unit
+                }
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         // Back closes settings rather than leaving the app. Without this the
         // system back gesture exits from a modal-feeling screen, which is the
@@ -338,6 +372,20 @@ private fun Root() {
         AppHeader(
             title = if (showSettings) "Settings" else "Battery",
             payload = if (showSettings) null else payload,
+            // One account has nothing to switch to, so the header keeps showing
+            // the plain name rather than a row of one tab.
+            accountSwitcher = if (!showSettings && accounts.size > 1) {
+                {
+                    AccountTabs(
+                        accounts = accounts,
+                        selectedAccountId = selectedAccountId,
+                        onSelect = { selectAccount(it) },
+                        onAdd = { addAccount() },
+                    )
+                }
+            } else {
+                null
+            },
         ) {
             IconButton(onClick = { showSettings = !showSettings }) {
                 Icon(
@@ -351,7 +399,7 @@ private fun Root() {
             when {
                 showSettings -> SettingsSheet(
                     accounts = accounts,
-                    selectedAccountId = repository.selectedAccountId,
+                    selectedAccountId = selectedAccountId,
                     onCardModeChanged = {
                         cardMode = it
                         // Restart so the new mode takes effect now rather than on
@@ -365,11 +413,6 @@ private fun Root() {
                     // which bypassed all three gates that decide whether a card
                     // may exist — the card mode, SessionPolicy, and the record
                     // of a card the user swiped away.
-                    onSelectAccount = {
-                        scope.launch {
-                            switcher.switchTo(it).report { p, m -> payload = p; message = m }
-                        }
-                    },
                     // Not routed through the seam: a rename is not a switch, and
                     // switching would discard the burn-rate inference this
                     // account has been building all window for no reason.
@@ -382,6 +425,7 @@ private fun Root() {
                     },
                     onRemoveAccount = {
                         repository.removeAccount(it)
+                        selectedAccountId = repository.selectedAccountId
                         scope.launch {
                             refresh(context, repository) { p, m -> payload = p; message = m }
                             // No repaint: the account this card described is
@@ -389,27 +433,7 @@ private fun Root() {
                             SessionService.stop(context)
                         }
                     },
-                    onAddAccount = {
-                        auth.start { result ->
-                            scope.launch {
-                                when (result) {
-                                    is AuthService.Result.Success ->
-                                        if (repository.addAccount(result.tokens)) {
-                                            showSettings = false
-                                            refresh(context, repository) { p, m ->
-                                                payload = p; message = m
-                                            }
-                                            signedIn = true
-                                            switcher.repaint()
-                                        } else {
-                                            message = "Couldn't store the credential."
-                                        }
-                                    is AuthService.Result.Failure -> message = result.message
-                                    AuthService.Result.Cancelled -> Unit
-                                }
-                            }
-                        }
-                    },
+                    onAddAccount = { addAccount() },
                     onSignOut = {
                         repository.signOutAll()
                         signedIn = false

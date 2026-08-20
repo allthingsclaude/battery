@@ -65,7 +65,6 @@ fun SettingsSheet(
     accounts: List<Account>,
     selectedAccountId: String?,
     onCardModeChanged: (SessionPolicy.Mode) -> Unit,
-    onSelectAccount: (String) -> Unit,
     onRenameAccount: (String, String) -> Unit,
     onRemoveAccount: (String) -> Unit,
     onAddAccount: () -> Unit,
@@ -94,7 +93,6 @@ fun SettingsSheet(
             AccountRow(
                 account = account,
                 selected = account.id == selectedAccountId,
-                onSelect = { onSelectAccount(account.id) },
                 onRename = { renaming = account },
                 onRemove = { onRemoveAccount(account.id) },
                 canRemove = accounts.size > 1,
@@ -222,11 +220,19 @@ private fun RenameDialog(account: Account, onDismiss: () -> Unit, onConfirm: (St
     )
 }
 
+/**
+ * Manage an account — rename it, remove it. Deliberately *not* select it.
+ *
+ * Switching moved to the header (see `AccountTabs`), and leaving a second
+ * switcher here would mean two controls for one piece of state, in the screen
+ * with the wrong information scent for it. The active account is still marked,
+ * because a management list that cannot tell you which one is live is worse than
+ * useless — but the marker is a label, not a control.
+ */
 @Composable
 private fun AccountRow(
     account: Account,
     selected: Boolean,
-    onSelect: () -> Unit,
     onRename: () -> Unit,
     onRemove: () -> Unit,
     canRemove: Boolean,
@@ -239,16 +245,22 @@ private fun AccountRow(
                 if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
                 else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             )
-            .clickable(onClick = onSelect)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RadioButton(selected = selected, onClick = onSelect)
         Text(
             account.name,
-            Modifier.padding(start = 4.dp).weight(1f),
+            Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
         )
+        if (selected) {
+            Text(
+                "Active",
+                Modifier.padding(end = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+        }
         TextButton(onClick = onRename) { Text("Rename") }
         // Removing the only account is what "Sign out" is for; offering both
         // would leave the app in a signed-out state reached two different ways.
