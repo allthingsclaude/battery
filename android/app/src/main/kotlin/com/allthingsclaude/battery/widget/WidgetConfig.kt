@@ -20,6 +20,18 @@ data class WidgetConfig(
     /** 0f = fully transparent, 1f = solid. */
     val opacity: Float = DEFAULT_OPACITY,
     val colors: Colors = Colors.AUTO,
+    /**
+     * Which account this widget shows, or null to follow whichever is selected.
+     *
+     * Null is the default and stays the sensible one for a single-account user —
+     * and for anyone who wants a widget that tracks the switcher. Binding is for
+     * the case that makes switching unnecessary: one widget per account, both on
+     * the home screen, neither of them ever needing to be told which is which.
+     *
+     * This is the pattern Google's own widget guidance names for exactly this
+     * situation, with the multi-account email widget as the worked example.
+     */
+    val accountId: String? = null,
 ) {
     /** Which ink to draw with, given the current system theme. */
     fun lightInk(systemIsDark: Boolean): Boolean = when (colors) {
@@ -56,7 +68,8 @@ data class WidgetConfig(
             val colors = prefs.getString(key(appWidgetId, "colors"), null)
                 ?.let { raw -> Colors.entries.firstOrNull { it.name == raw } }
                 ?: Colors.AUTO
-            return WidgetConfig(opacity, colors)
+            val accountId = prefs.getString(key(appWidgetId, "account"), null)
+            return WidgetConfig(opacity, colors, accountId)
         }
 
         fun save(context: Context, appWidgetId: Int, config: WidgetConfig) {
@@ -64,6 +77,7 @@ data class WidgetConfig(
                 .edit()
                 .putFloat(key(appWidgetId, "opacity"), config.opacity)
                 .putString(key(appWidgetId, "colors"), config.colors.name)
+                .putString(key(appWidgetId, "account"), config.accountId)
                 .apply()
         }
 
@@ -90,10 +104,43 @@ data class WidgetConfig(
                 .edit()
                 .remove(key(appWidgetId, "opacity"))
                 .remove(key(appWidgetId, "colors"))
+                .remove(key(appWidgetId, "account"))
                 .apply()
         }
 
         private fun key(id: Int, field: String) = "w${id}_$field"
+
+        /**
+         * Drop settings for widgets that are no longer placed.
+         *
+         * `onDeleted` covers the ordinary case, but it is not guaranteed to
+         * fire: clearing One UI Home's data destroys the host's widget records
+         * without telling the provider, and that is a fix Samsung's own support
+         * threads tell people to perform. Without a sweep the bindings left
+         * behind would accumulate for the life of the install.
+         */
+        fun reconcile(context: Context, liveIds: Set<Int>) {
+            val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val stale = prefs.all.keys
+                .mapNotNull { it.removePrefix("w").substringBefore('_').toIntOrNull() }
+                .toSet()
+                .minus(liveIds)
+            if (stale.isEmpty()) return
+            prefs.edit().apply { stale.forEach { id ->
+                remove(key(id, "opacity"))
+                remove(key(id, "colors"))
+                remove(key(id, "account"))
+            } }.apply()
+        }
+
+        /**
+         * Every account any placed widget is bound to, plus the selected one.
+         *
+         * What the refresh worker fans out over. Distinct, so four widgets on
+         * one account cost one poll rather than four.
+         */
+        fun boundAccountIds(context: Context, appWidgetIds: List<Int>, activeId: String?): Set<String> =
+            (appWidgetIds.mapNotNull { load(context, it).accountId } + listOfNotNull(activeId)).toSet()
 
         val INVALID_ID = AppWidgetManager.INVALID_APPWIDGET_ID
     }

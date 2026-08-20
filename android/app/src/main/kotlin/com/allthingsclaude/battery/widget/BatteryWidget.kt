@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.glance.appwidget.updateAll
 import com.allthingsclaude.battery.core.UsagePayload
+import com.allthingsclaude.battery.data.AccountStore
 import com.allthingsclaude.battery.data.PayloadStore
 
 /**
@@ -37,13 +38,31 @@ abstract class BasePayloadWidget : GlanceAppWidget() {
         // the config because mapping a GlanceId to the numeric appWidgetId the
         // settings are keyed by is a suspend call that cannot happen inside
         // composition.
-        val payload = PayloadStore(context).load()
         val appWidgetId = runCatching {
             GlanceAppWidgetManager(context).getAppWidgetId(id)
         }.getOrDefault(WidgetConfig.INVALID_ID)
         val config = WidgetConfig.load(context, appWidgetId)
+        val payload = payloadFor(context, config)
         provideContent { GlanceTheme { Content(payload, config) } }
     }
+}
+
+/**
+ * The reading this widget should show, given what it is bound to.
+ *
+ * An unbound widget follows the selection, which is the old behaviour and the
+ * right default. A bound one shows its own account — and if that account has
+ * been removed it shows **nothing**, never a fallback. Quietly rendering
+ * whichever account is selected instead would leave the same numbers on the home
+ * screen under a heading the user believes means something else, which is the
+ * one failure a quota display must not have.
+ */
+private fun payloadFor(context: Context, config: WidgetConfig): UsagePayload? {
+    val accounts = AccountStore(context)
+    val accountId = config.accountId
+        ?: return accounts.activeId?.let { PayloadStore(context, it).load() }
+    if (accounts.load().none { it.id == accountId }) return null
+    return PayloadStore(context, accountId).load()
 }
 
 /** 4x1 — the default, the same short-and-wide shape as the media player. */

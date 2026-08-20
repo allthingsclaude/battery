@@ -9,6 +9,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,6 +54,7 @@ import com.allthingsclaude.battery.core.BatteryPalette
 import com.allthingsclaude.battery.core.TimeFormatting
 import com.allthingsclaude.battery.core.UsageLevel
 import com.allthingsclaude.battery.core.UsagePayload
+import com.allthingsclaude.battery.data.AccountStore
 import com.allthingsclaude.battery.data.PayloadStore
 import com.allthingsclaude.battery.ui.BatteryTheme
 import com.allthingsclaude.battery.ui.UsageRingRenderer
@@ -133,12 +136,19 @@ private fun ConfigScreen(
     val context = LocalContext.current
     var opacity by remember { mutableFloatStateOf(initial.opacity) }
     var colors by remember { mutableStateOf(initial.colors) }
+    var accountId by remember { mutableStateOf(initial.accountId) }
+
+    val accounts = remember { AccountStore(context).load() }
 
     // Real data where there is some — a preview showing invented numbers would
-    // be a worse guide to what the widget will actually look like.
-    val payload = remember { PayloadStore(context).load() ?: UsagePayload.PLACEHOLDER }
+    // be a worse guide to what the widget will actually look like. Keyed on the
+    // binding so picking an account previews *that* account's numbers.
+    val payload = remember(accountId) {
+        val id = accountId ?: AccountStore(context).activeId
+        id?.let { PayloadStore(context, it).load() } ?: UsagePayload.PLACEHOLDER
+    }
     val systemDark = isSystemInDarkTheme()
-    val config = WidgetConfig(opacity, colors)
+    val config = WidgetConfig(opacity, colors, accountId)
 
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Text("Widget settings", style = MaterialTheme.typography.headlineSmall)
@@ -154,7 +164,46 @@ private fun ConfigScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text("Opacity", style = MaterialTheme.typography.titleMedium)
+            // First, and only when there is a choice to make. Google's widget
+            // guidance puts account selection at placement time and names the
+            // multi-account mail widget as the case; appearance is the detail
+            // that comes after, not before.
+            if (accounts.size > 1) {
+                Text("Account", style = MaterialTheme.typography.titleMedium)
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = accountId == null,
+                        onClick = { accountId = null },
+                        label = { Text("Follow selection") },
+                    )
+                    accounts.forEach { account ->
+                        FilterChip(
+                            selected = accountId == account.id,
+                            onClick = { accountId = account.id },
+                            label = { Text(account.name) },
+                        )
+                    }
+                }
+                Text(
+                    if (accountId == null) {
+                        "Follows whichever account is selected in the app."
+                    } else {
+                        "Always shows this account, whatever the app is switched to. " +
+                            "Place one widget per account and you never need to switch."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+
+            Text(
+                "Opacity",
+                Modifier.padding(top = if (accounts.size > 1) 10.dp else 0.dp),
+                style = MaterialTheme.typography.titleMedium,
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // The checkerboard is the conventional "transparent" marker at
                 // the zero end of an opacity control.

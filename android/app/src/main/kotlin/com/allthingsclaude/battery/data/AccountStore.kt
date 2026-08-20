@@ -66,6 +66,13 @@ class AccountStore(context: Context) {
         }.apply()
 
     /**
+     * The account everything should be reading, resolving an unset selection to
+     * the first one — the same rule the repository polls by, kept here so the
+     * widgets and the tile cannot disagree with it.
+     */
+    val activeId: String? get() = selectedId ?: load().firstOrNull()?.id
+
+    /**
      * The account after the selected one, wrapping past the end.
      *
      * A cycle, not a toggle. The list is N long, not two, and "switch" has to
