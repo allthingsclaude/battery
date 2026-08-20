@@ -71,6 +71,21 @@ object LiveUpdateNotifier {
         payload: UsagePayload,
         didReset: Boolean = false,
         alertLevel: UsageLevel? = null,
+        /**
+         * Extra action buttons. Empty for the card the service posts today; the
+         * account switcher (PLAN_02 Phase 5) is what fills it.
+         *
+         * Safe, and measured rather than assumed: on One UI 8.5 a card carrying
+         * an action kept `FLAG_PROMOTED_ONGOING` and
+         * `hasPromotableCharacteristics`, rendered the button on the expanded
+         * lock-screen card, and fired its receiver with the device locked and
+         * secure. Actions are not one of the clauses that disqualify promotion —
+         * unlike `setColorized(true)`, noted below.
+         *
+         * The collapsed Now Bar pill does *not* show them: reaching an action
+         * from the lock screen costs one tap to expand first.
+         */
+        actions: List<NotificationCompat.Action> = emptyList(),
     ): Notification {
         val percent = payload.sessionUtilization.roundToInt().coerceIn(0, 100)
         val level = UsageLevel.from(payload.sessionUtilization)
@@ -180,6 +195,8 @@ object LiveUpdateNotifier {
                 .setChronometerCountDown(true)
         }
 
+        actions.forEach { builder.addAction(it) }
+
         return builder.build()
     }
 
@@ -235,10 +252,11 @@ object LiveUpdateNotifier {
         payload: UsagePayload,
         didReset: Boolean = false,
         alertLevel: UsageLevel? = null,
+        actions: List<NotificationCompat.Action> = emptyList(),
     ) {
         ensureChannel(context)
         NotificationManagerCompat.from(context)
-            .notify(NOTIFICATION_ID, build(context, payload, didReset, alertLevel))
+            .notify(NOTIFICATION_ID, build(context, payload, didReset, alertLevel, actions))
     }
 
     fun cancel(context: Context) {

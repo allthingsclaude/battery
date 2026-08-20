@@ -70,8 +70,20 @@ data class WidgetConfig(
         /**
          * Forget a removed widget's settings.
          *
-         * Android reuses `appWidgetId`s, so without this a newly placed widget
-         * would silently inherit the opacity of a deleted one.
+         * Not because ids get reused — they do not. `AppWidgetServiceImpl`
+         * allocates from a per-user monotonic counter and says so outright:
+         * "appWidgetId is a monotonic increasing number, so the appWidgetId
+         * cannot be reclaimed by a new widget." An earlier comment here claimed
+         * the opposite and would have justified far more defensive machinery
+         * than the problem deserves.
+         *
+         * It earns its place anyway. The one real collision vector is a
+         * cross-device restore, where the system's id counter starts fresh at 1
+         * while backed-up preferences still hold keys from the old device — and
+         * that is already closed by `allowBackup="false"`. What remains is
+         * ordinary hygiene: `onDeleted` is not guaranteed to fire (clearing One
+         * UI Home's data destroys the host's records without telling us), so
+         * settings for a departed widget would otherwise accumulate forever.
          */
         fun delete(context: Context, appWidgetId: Int) {
             context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
