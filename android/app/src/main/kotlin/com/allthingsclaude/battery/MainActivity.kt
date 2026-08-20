@@ -50,6 +50,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.allthingsclaude.battery.auth.AuthService
 import com.allthingsclaude.battery.core.ReleaseFeed
 import com.allthingsclaude.battery.core.UsagePayload
+import com.allthingsclaude.battery.data.AccountSwitcher
 import com.allthingsclaude.battery.data.Settings
 import com.allthingsclaude.battery.data.UsageRepository
 import com.allthingsclaude.battery.launcher.AppIcon
@@ -105,6 +106,7 @@ private fun Root() {
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val repository = remember { UsageRepository(context) }
+    val switcher = remember { AccountSwitcher(context, repository) }
     val auth = remember { AuthService(context) }
 
     val settings = remember { Settings(context) }
@@ -364,17 +366,18 @@ private fun Root() {
                     // may exist — the card mode, SessionPolicy, and the record
                     // of a card the user swiped away.
                     onSelectAccount = {
-                        repository.selectAccount(it)
                         scope.launch {
-                            refresh(context, repository) { p, m -> payload = p; message = m }
-                            repaintCard(context, cardMode)
+                            switcher.switchTo(it).report { p, m -> payload = p; message = m }
                         }
                     },
+                    // Not routed through the seam: a rename is not a switch, and
+                    // switching would discard the burn-rate inference this
+                    // account has been building all window for no reason.
                     onRenameAccount = { id, name ->
                         repository.renameAccount(id, name)
                         scope.launch {
                             refresh(context, repository) { p, m -> payload = p; message = m }
-                            repaintCard(context, cardMode)
+                            switcher.repaint()
                         }
                     },
                     onRemoveAccount = {
@@ -397,7 +400,7 @@ private fun Root() {
                                                 payload = p; message = m
                                             }
                                             signedIn = true
-                                            repaintCard(context, cardMode)
+                                            switcher.repaint()
                                         } else {
                                             message = "Couldn't store the credential."
                                         }
@@ -622,6 +625,3 @@ private fun SignInGate(message: String?, onSignIn: () -> Unit) {
  * the dismissal record get consulted. Posting the notification directly — which
  * these handlers used to do — skips all of that.
  */
-private fun repaintCard(context: android.content.Context, mode: SessionPolicy.Mode) {
-    if (mode != SessionPolicy.Mode.OFF) SessionService.start(context)
-}
