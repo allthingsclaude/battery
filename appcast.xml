@@ -645,5 +645,18 @@
                 sparkle:edSignature="xDYq5WQufPzDvdBOf+M9txUV3M1l0TuNjKlpM0k5wn10EccvU+D8HlsfucOh483JBu5BWHwJEZBcVVUfoaH2Cw=="
             />
         </item>
+            <item>
+            <title>Version 0.8.3</title>
+            <pubDate>Fri, 21 Aug 2026 19:04:34 +0000</pubDate>
+            <sparkle:version>307</sparkle:version>
+            <sparkle:shortVersionString>0.8.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure
+                url="https://github.com/allthingsclaude/battery/releases/download/v0.8.3/Battery-0.8.3.dmg"
+                length="3999563"
+                type="application/octet-stream"
+                sparkle:edSignature="wvGC6p/lQMT7115uHKluyk0z20ft4feJZK/pQchprA0Taf+HZ2umMFgI0ZgBbLStbaPYLE2G+6QcJEQt5QHyCQ=="
+            />
+        </item>
     </channel>
 </rss>
