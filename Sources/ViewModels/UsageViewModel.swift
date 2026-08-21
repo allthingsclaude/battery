@@ -675,7 +675,11 @@ class UsageViewModel: ObservableObject {
 
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
-        guard let windowStart = calendar.date(byAdding: .day, value: -Constants.heatMapDays, to: today) else { return }
+        // The streak reaches as far back as Battery has snapshots, not as far as
+        // the heat map draws. Querying the heat-map window instead capped every
+        // streak at `heatMapDays + 1`, so an account that had been used daily for
+        // months sat frozen at 36 and could only ever move downwards from there.
+        guard let windowStart = calendar.date(byAdding: .day, value: -Constants.dataRetentionDays, to: today) else { return }
 
         Task {
             do {
