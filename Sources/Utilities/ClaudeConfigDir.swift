@@ -115,6 +115,17 @@ enum ClaudeConfigDir {
         normalize(dir) + "/projects"
     }
 
+    /// Claude Code's prompt history — one JSON line per prompt, appended and
+    /// never pruned.
+    ///
+    /// It sits inside the directory alongside `projects/`; the odd one out is
+    /// `.claude.json`, see `configFile(in:)`. Worth having a path to because it
+    /// is the only record here that outlives `cleanupPeriodDays`, and so the
+    /// only thing that can still place a day whose transcript has been deleted.
+    static func historyFile(in dir: String) -> String {
+        normalize(dir) + "/history.jsonl"
+    }
+
     /// Claude Code's config file, which holds the `oauthAccount` block.
     ///
     /// The location is inconsistent and has to be special-cased: a default

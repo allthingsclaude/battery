@@ -29,6 +29,7 @@ class StatsCacheService: ObservableObject {
     private let filePath: String
     private let projectsPath: String
     private let supplementPath: String
+    private let historyPath: String
     private let userName: String
     private var fileDescriptor: Int32 = -1
     private var source: DispatchSourceFileSystemObject?
@@ -42,6 +43,10 @@ class StatsCacheService: ObservableObject {
     private let reloadQueue = DispatchQueue(label: "com.allthingsclaude.battery.stats-reload", qos: .utility)
     private var fallbackTimer: Timer?
     private var refreshTimer: DispatchSourceTimer?
+
+    /// Whether `history.jsonl` has been read this launch. Touched only from
+    /// `reloadQueue`, which serializes every reload.
+    private var hasReadHistoryFile = false
 
     // In-memory cache for today's live scan
     private var cachedTodayDate: String = ""
@@ -60,6 +65,7 @@ class StatsCacheService: ObservableObject {
         self.filePath = ClaudeConfigDir.statsCacheFile(in: normalized)
         self.projectsPath = ClaudeConfigDir.projectsDir(in: normalized)
         self.supplementPath = ClaudeConfigDir.statsSupplementFile(for: normalized).path
+        self.historyPath = ClaudeConfigDir.historyFile(in: normalized)
         self.userName = FileManager.default.homeDirectoryForCurrentUser.lastPathComponent
     }
 
@@ -213,6 +219,15 @@ class StatsCacheService: ObservableObject {
             calendar: calendar,
             dateFormatter: dateFormatter
         )
+
+        // Recover days neither source above can still see, from the one record
+        // Claude Code does not prune. Once per launch is enough: the file only
+        // grows, and now that every reload archives what it knows, a gap in
+        // past days cannot open while the app is running.
+        if !hasReadHistoryFile {
+            hasReadHistoryFile = true
+            supplementFromHistoryFile(into: &parsed, calendar: calendar, dateFormatter: dateFormatter)
+        }
 
         // Write down everything now known about each day, while it is still
         // knowable. Both sources above forget: the cache window rolls forward
@@ -396,6 +411,82 @@ class StatsCacheService: ObservableObject {
                 parsed.append((date: calendar.startOfDay(for: d), activity: todayActivity))
             }
         }
+    }
+
+    // MARK: Prompt history (recovery source of last resort)
+
+    private struct HistoryEntry: Decodable {
+        let timestamp: Double?
+        let sessionId: String?
+    }
+
+    private func supplementFromHistoryFile(
+        into parsed: inout [(date: Date, activity: StatsCache.DailyActivity)],
+        calendar: Calendar,
+        dateFormatter: DateFormatter
+    ) {
+        guard let data = FileManager.default.contents(atPath: historyPath) else { return }
+        let existingDates = Set(parsed.map { dateFormatter.string(from: $0.date) })
+        for activity in Self.dailyActivityFromHistory(data, calendar: calendar)
+        where !existingDates.contains(activity.date) {
+            if let d = dateFormatter.date(from: activity.date) {
+                parsed.append((date: calendar.startOfDay(for: d), activity: activity))
+            }
+        }
+    }
+
+    /// Which days a directory was used on, recovered from Claude Code's prompt
+    /// history.
+    ///
+    /// This is the only record here that survives `cleanupPeriodDays`: one line
+    /// per prompt, appended and never pruned, so it can still place a day whose
+    /// transcript was deleted a month ago. Without it most gaps in Battery's
+    /// history are phantom — days the account was plainly used, dropped because
+    /// the only other evidence had been cleaned up, each one breaking a streak
+    /// that should have run through it.
+    ///
+    /// `sessionCount` is exact, being the day's distinct session ids.
+    /// `messageCount` is not comparable to the other sources — this counts
+    /// prompts where they count assistant messages — so it stands as a floor
+    /// that `mergeDailyActivity` lets a better-informed source raise.
+    /// `toolCallCount` is unknowable from here and reported as zero.
+    ///
+    /// Lines are decoded as JSON rather than scanned for the two fields: a
+    /// prompt that quotes `"timestamp":` — pasting JSON into Claude is hardly
+    /// exotic — would otherwise be read as a day of its own.
+    static func dailyActivityFromHistory(_ data: Data, calendar: Calendar) -> [StatsCache.DailyActivity] {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = calendar.timeZone
+
+        let decoder = JSONDecoder()
+        var days: [String: (prompts: Int, sessions: Set<String>)] = [:]
+
+        for line in data.split(separator: UInt8(ascii: "\n")) {
+            guard !line.isEmpty,
+                  let entry = try? decoder.decode(HistoryEntry.self, from: Data(line)),
+                  let timestamp = entry.timestamp
+            else { continue }
+
+            // Claude Code writes milliseconds since the epoch.
+            let key = dateFormatter.string(from: Date(timeIntervalSince1970: timestamp / 1000))
+            var bucket = days[key] ?? (prompts: 0, sessions: [])
+            bucket.prompts += 1
+            if let sessionId = entry.sessionId { bucket.sessions.insert(sessionId) }
+            days[key] = bucket
+        }
+
+        return days
+            .map { date, counts in
+                StatsCache.DailyActivity(
+                    date: date,
+                    messageCount: counts.prompts,
+                    sessionCount: counts.sessions.count,
+                    toolCallCount: 0
+                )
+            }
+            .sorted { $0.date < $1.date }
     }
 
     // MARK: Archived days (persisted to ~/.battery/stats-supplement*.json)
