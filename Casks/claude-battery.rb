@@ -1,8 +1,8 @@
 cask "claude-battery" do
-  version "0.8.1"
-  sha256 "42a3970978356065e64b11d34bbafd60e808532393315ccd9ffe651e211472d7"
+  version "0.8.2"
+  sha256 "a7ac1f3c59c1c115e04b6eb94f564b8bc5b1a108925dbe823d146c3de598620e"
 
-  url "https://github.com/allthingsclaude/battery/releases/download/v0.8.1/Battery-0.8.1.dmg"
+  url "https://github.com/allthingsclaude/battery/releases/download/v0.8.2/Battery-0.8.2.dmg"
   name "Battery"
   desc "Claude Code usage monitor for your menu bar"
   homepage "https://github.com/allthingsclaude/battery"

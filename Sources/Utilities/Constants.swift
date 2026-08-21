@@ -12,7 +12,7 @@ enum Constants {
     static let oauthScopes = "user:profile user:inference"
     static let oauthRedirectPath = "/callback"
     // Kept in step with Info.plist by Scripts/release.sh.
-    static let userAgent = "Battery/0.8.1"
+    static let userAgent = "Battery/0.8.2"
 
     // Push relay — the Cloudflare Worker that forwards Live Activity updates to
     // the iPhone app (see worker/).
