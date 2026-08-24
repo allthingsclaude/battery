@@ -4,6 +4,7 @@ import android.content.Context
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import com.allthingsclaude.battery.data.AccountStore
+import com.allthingsclaude.battery.data.AccountSwitcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -67,7 +68,15 @@ class WidgetRefreshWorker(
         // to, plus whichever is selected. Four widgets on one account cost one
         // poll, not four.
         val activeId = AccountStore(applicationContext).activeId
-        val candidates = WidgetConfig.boundAccountIds(applicationContext, liveIds, activeId)
+        val follows = Settings(applicationContext).followsActiveAccount
+        // Following the active account needs evidence from *every* account, not
+        // just the ones on a home screen — an account nobody has a widget for is
+        // exactly the one the mode has to be able to notice work on.
+        val candidates = if (follows) {
+            AccountStore(applicationContext).load().map { it.id }.toSet()
+        } else {
+            WidgetConfig.boundAccountIds(applicationContext, liveIds, activeId)
+        }
 
         // Staleness is judged per account against its own cache, because a
         // widget bound to an account nobody has opened for an hour is exactly
@@ -95,6 +104,12 @@ class WidgetRefreshWorker(
         // number on the lock screen under a heading that means something else.
         // Two accounts may also share a display name.
         val fresh = (results[activeId] as? UsageRepository.PollResult.Success)?.payload
+
+        // Acted on after the polls, so it decides on what this run just learned.
+        // repaintCard = false: this is a background worker, and the card is
+        // posted below by the path that is allowed to.
+        runCatching { AccountSwitcher(applicationContext, repository).applyAutoFollow(repaintCard = false) }
+            .onFailure { Log.w(TAG, "auto-follow skipped: $it") }
 
         // **Exactly one repaint per run, on every path.** The polls above are
         // told not to repaint for this reason: two `updateAll` bursts cancel

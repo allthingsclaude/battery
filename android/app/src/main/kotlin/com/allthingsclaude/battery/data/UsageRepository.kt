@@ -50,6 +50,19 @@ class UsageRepository(context: Context) {
     /** The cached reading for one account, whichever is selected. */
     fun lastKnownPayload(accountId: String): UsagePayload? = storeFor(accountId).load()
 
+    /**
+     * When this account's usage last rose, from its own sample buffer.
+     *
+     * The evidence behind follow-the-active-account: a rise means that account
+     * spent tokens, which is a fact rather than an inference about intent. Null
+     * when there is no open window or too few samples to see a rise — which the
+     * caller must read as "no evidence", not as "idle".
+     */
+    fun lastActivityAt(accountId: String): Instant? {
+        val cached = storeFor(accountId).load() ?: return null
+        return historyFor(accountId).lastRiseAt(cached.sessionResetsAt)
+    }
+
     fun isSignedIn(): Boolean = accounts.load().isNotEmpty()
 
     sealed class PollResult {

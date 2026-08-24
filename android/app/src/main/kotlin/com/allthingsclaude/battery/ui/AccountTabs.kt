@@ -2,7 +2,10 @@ package com.allthingsclaude.battery.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.selectable
@@ -48,27 +51,63 @@ fun AccountTabs(
     onSelect: (String) -> Unit,
     onAdd: () -> Unit,
     modifier: Modifier = Modifier,
+    followsActive: Boolean = false,
+    onToggleFollow: (() -> Unit)? = null,
+    /**
+     * Why the follow mode chose what it chose. Shown whenever it is on, and not
+     * optional then: an automatic selection nobody can see the reasoning for is
+     * how a wrong account's quota gets believed.
+     */
+    followReason: String? = null,
 ) {
-    Row(
-        modifier,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        accounts.forEach { account ->
-            // Falling back to the first account rather than showing nothing
-            // selected: the repository resolves an absent selection the same
-            // way, so the header would otherwise disagree with the number
-            // underneath it.
-            val selected = account.id == (selectedAccountId ?: accounts.firstOrNull()?.id)
-            Tab(
-                name = account.name,
-                selected = selected,
-                onClick = { if (!selected) onSelect(account.id) },
-            )
+    Column(modifier) {
+        Row(
+            // Scrolls, because the row has to survive its own worst case. With
+            // the Auto chip, three accounts and the plan badge sharing the line,
+            // the "+" was pushed off the end entirely — leaving no way to add an
+            // account from the header at exactly the account count where someone
+            // is most likely to want one.
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // An explicit third state, borrowed from how VPN clients offer "fastest
+            // server": Auto is a thing the user turns on, sitting beside the manual
+            // choices, not something that happens to them.
+            if (onToggleFollow != null) {
+                Tab(name = "Auto", selected = followsActive, onClick = onToggleFollow)
+            }
+
+            accounts.forEach { account ->
+                // Falling back to the first account rather than showing nothing
+                // selected: the repository resolves an absent selection the same
+                // way, so the header would otherwise disagree with the number
+                // underneath it.
+                val selected = account.id == (selectedAccountId ?: accounts.firstOrNull()?.id)
+                Tab(
+                    name = account.name,
+                    selected = selected,
+                    // Still clickable when already selected while following: tapping
+                    // the account you are on is how you pin it and stop the mode
+                    // moving you off it again.
+                    onClick = { if (!selected || followsActive) onSelect(account.id) },
+                )
+            }
+
+            if (accounts.size < MAX_ACCOUNTS) {
+                Tab(name = "+", selected = false, onClick = onAdd)
+            }
         }
 
-        if (accounts.size < MAX_ACCOUNTS) {
-            Tab(name = "+", selected = false, onClick = onAdd)
+        followReason?.takeIf { followsActive }?.let {
+            Text(
+                it,
+                Modifier.padding(start = 10.dp, top = 1.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

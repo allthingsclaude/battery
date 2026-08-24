@@ -118,6 +118,13 @@ private fun Root() {
     var message by remember { mutableStateOf<String?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     var cardMode by remember { mutableStateOf(settings.cardMode) }
+    // Held as state rather than read from the repository on each composition, so
+    // a tapped tab moves under the finger instead of waiting for the poll that
+    // follows it to come back. Declared up here with the rest of the state
+    // because the resume effect below acts on it.
+    var selectedAccountId by remember(signedIn) { mutableStateOf(repository.selectedAccountId) }
+    var followsActive by remember { mutableStateOf(settings.followsActiveAccount) }
+    var followReason by remember { mutableStateOf<String?>(null) }
 
     // The launcher icon, chosen now and applied on the way out.
     //
@@ -261,6 +268,11 @@ private fun Root() {
             if (result !is UsageRepository.PollResult.SignedOut && cardMode != SessionPolicy.Mode.OFF) {
                 SessionService.start(context)
             }
+            if (switcher.applyAutoFollow() != null) {
+                selectedAccountId = repository.selectedAccountId
+                payload = repository.lastKnownPayload
+            }
+            followReason = switcher.followReason()
             // Self-heals in both directions — see syncSchedule. Cheap: KEEP
             // leaves an existing schedule untouched rather than restarting it.
             WidgetRefreshWorker.syncSchedule(context)
@@ -328,16 +340,34 @@ private fun Root() {
 
     val accounts = remember(signedIn, showSettings) { repository.listAccounts() }
 
-    // Held as state rather than read from the repository on each composition, so
-    // a tapped tab moves under the finger instead of waiting for the poll that
-    // follows it to come back.
-    var selectedAccountId by remember(signedIn) { mutableStateOf(repository.selectedAccountId) }
 
     // One handler for both entry points — the header tabs and, later, anything
     // outside the Activity. The seam owns select, poll and repaint.
     fun selectAccount(id: String) {
+        // A manual pick pins. Anything else would leave the mode free to move
+        // the user straight back off the account they just chose, which is the
+        // "I had to fight the algorithm" failure the research warns about.
+        if (followsActive) {
+            settings.followsActiveAccount = false
+            followsActive = false
+            followReason = null
+        }
         selectedAccountId = id
         scope.launch { switcher.switchTo(id).report { p, m -> payload = p; message = m } }
+    }
+
+    fun toggleFollow() {
+        val next = !followsActive
+        settings.followsActiveAccount = next
+        followsActive = next
+        followReason = null
+        if (!next) return
+        scope.launch {
+            switcher.applyAutoFollow()
+            selectedAccountId = repository.selectedAccountId
+            followReason = switcher.followReason()
+            payload = repository.lastKnownPayload
+        }
     }
 
     fun addAccount() {
@@ -381,6 +411,9 @@ private fun Root() {
                         selectedAccountId = selectedAccountId,
                         onSelect = { selectAccount(it) },
                         onAdd = { addAccount() },
+                        followsActive = followsActive,
+                        onToggleFollow = { toggleFollow() },
+                        followReason = followReason,
                     )
                 }
             } else {
