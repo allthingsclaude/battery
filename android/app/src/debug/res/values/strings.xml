@@ -15,4 +15,5 @@
     <string name="widget_name_session_ring">Claude — Ring (dev)</string>
     <string name="widget_name_overview">Claude — Overview (dev)</string>
     <string name="widget_name_forecast">Claude — Forecast (dev)</string>
+    <string name="tile_account_label">Claude account (dev)</string>
 </resources>

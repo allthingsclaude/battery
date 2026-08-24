@@ -16,32 +16,49 @@ import java.time.Instant
  * that applies here: Glance widgets run in this process, so this is just a cache
  * that survives a cold start, and no credential is ever copied out of
  * [TokenStore].
+ *
+ * **Scoped per account.** It used to be one global key, and that had to be
+ * cleared on every switch — otherwise the freshness gate served the outgoing
+ * account's numbers as the incoming account's for the next minute, with the
+ * header, the card and all four widgets naming one account while showing
+ * another's usage. Scoping removes the bug rather than papering over it: a late
+ * response writes to the account it was fetched for, whatever is selected by the
+ * time it lands, and switching back finds the previous reading still there.
+ *
+ * Not migrated from the old unscoped keys. The payload refills on the next poll
+ * and the sample buffer rebuilds over a window, so the cost is one burn rate
+ * reading "—" for a few minutes, against migration code that would run once and
+ * then be wrong to keep.
  */
-class PayloadStore(context: Context) {
+class PayloadStore(context: Context, accountId: String) {
 
     private val prefs = context.applicationContext
         .getSharedPreferences("payload", Context.MODE_PRIVATE)
+
+    private val payloadKey = "$KEY_PAYLOAD_PREFIX$accountId"
 
     /**
      * The burn-rate sample buffer, exposed separately rather than implemented on
      * this class: both concerns want `load`/`save`/`clear`, and collapsing them
      * onto one type produced three overload collisions and no clarity.
      */
-    val snapshots: SnapshotStore = SnapshotPrefs(prefs)
+    val snapshots: SnapshotStore = SnapshotPrefs(prefs, "$KEY_SNAPSHOTS_PREFIX$accountId")
 
     // ── Payload ─────────────────────────────────────────────────────────────
 
     fun save(payload: UsagePayload) {
-        prefs.edit().putString(KEY_PAYLOAD, encode(payload).toString()).apply()
+        prefs.edit().putString(payloadKey, encode(payload).toString()).apply()
     }
 
     fun load(): UsagePayload? {
-        val raw = prefs.getString(KEY_PAYLOAD, null) ?: return null
+        val raw = prefs.getString(payloadKey, null) ?: return null
         return runCatching { decode(JSONObject(raw)) }.getOrNull()
     }
 
+    /** Forget this account's cache. Other accounts' caches are untouched. */
     fun clear() {
-        prefs.edit().clear().apply()
+        prefs.edit().remove(payloadKey).apply()
+        snapshots.clear()
     }
 
     // ── Codec ───────────────────────────────────────────────────────────────
@@ -110,7 +127,7 @@ class PayloadStore(context: Context) {
         if (isNull(key)) null else Instant.ofEpochMilli(getLong(key))
 
     private companion object {
-        const val KEY_PAYLOAD = "latest"
-        const val KEY_SNAPSHOTS = "snapshots"
+        const val KEY_PAYLOAD_PREFIX = "latest_"
+        const val KEY_SNAPSHOTS_PREFIX = "snapshots_"
     }
 }

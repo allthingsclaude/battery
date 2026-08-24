@@ -129,6 +129,7 @@ fun AppHeader(
     title: String,
     payload: UsagePayload?,
     modifier: Modifier = Modifier,
+    accountSwitcher: (@Composable () -> Unit)? = null,
     trailing: @Composable () -> Unit,
 ) {
     Row(
@@ -155,13 +156,21 @@ fun AppHeader(
                             color = BatteryColors.brandDark,
                         )
                     }
-                    Text(
-                        it.accountName,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    )
+                    // With more than one account this line becomes the
+                    // switcher: the account name was already here and already
+                    // the thing the eye goes to, so making it tappable costs no
+                    // height and needs no new affordance to discover.
+                    if (accountSwitcher != null) {
+                        accountSwitcher()
+                    } else {
+                        Text(
+                            it.accountName,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }

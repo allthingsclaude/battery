@@ -13,6 +13,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import com.allthingsclaude.battery.R
 import com.allthingsclaude.battery.core.UsageForecast
+import androidx.core.net.toUri
+import com.allthingsclaude.battery.data.AccountStore
 import com.allthingsclaude.battery.core.UsageLevel
 import com.allthingsclaude.battery.core.BatteryPalette
 import com.allthingsclaude.battery.core.TimeFormatting
@@ -180,6 +182,10 @@ object LiveUpdateNotifier {
                 .setChronometerCountDown(true)
         }
 
+        // Added here rather than by the caller, so every path that posts a card
+        // gets it — the service, and the diagnostics harness alike.
+        switchAction(context)?.let { builder.addAction(it) }
+
         return builder.build()
     }
 
@@ -239,6 +245,50 @@ object LiveUpdateNotifier {
         ensureChannel(context)
         NotificationManagerCompat.from(context)
             .notify(NOTIFICATION_ID, build(context, payload, didReset, alertLevel))
+    }
+
+    /**
+     * "Switch to «next»", or nothing when there is nowhere to go.
+     *
+     * The label names the *destination* rather than saying "Switch account",
+     * because the card is read at a glance on a lock screen and a button whose
+     * effect you have to guess is worse than no button. It names one account
+     * because a cycle only ever has one next step — see `AccountCycle`.
+     *
+     * Rebuilt on every post, so a switch made from the tile or the header leaves
+     * the card offering the account after *that* one rather than a stale target.
+     */
+    private fun switchAction(context: Context): NotificationCompat.Action? {
+        val store = AccountStore(context)
+        val nextId = store.nextAccountId() ?: return null
+        val next = store.load().firstOrNull { it.id == nextId } ?: return null
+
+        val intent = Intent(context, AccountSwitchReceiver::class.java)
+            .setAction(AccountSwitchReceiver.ACTION)
+            // Distinct data per account. `Intent.filterEquals` ignores extras,
+            // so without this every account's button would resolve to the same
+            // cached PendingIntent and they would all switch to whichever one
+            // was built first.
+            .setData("battery://account/$nextId".toUri())
+            .putExtra(AccountSwitchReceiver.EXTRA_ACCOUNT_ID, nextId)
+
+        val pending = android.app.PendingIntent.getBroadcast(
+            context,
+            nextId.hashCode(),
+            intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        return NotificationCompat.Action.Builder(
+            R.drawable.ic_stat_battery,
+            "Switch to ${next.name}",
+            pending,
+        )
+            // Left false deliberately: the whole value of this button is that it
+            // works without unlocking. Verified that it does.
+            .setAuthenticationRequired(false)
+            .build()
     }
 
     fun cancel(context: Context) {

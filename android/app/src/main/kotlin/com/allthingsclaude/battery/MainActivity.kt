@@ -50,6 +50,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.allthingsclaude.battery.auth.AuthService
 import com.allthingsclaude.battery.core.ReleaseFeed
 import com.allthingsclaude.battery.core.UsagePayload
+import com.allthingsclaude.battery.data.AccountSwitcher
 import com.allthingsclaude.battery.data.Settings
 import com.allthingsclaude.battery.data.UsageRepository
 import com.allthingsclaude.battery.launcher.AppIcon
@@ -60,6 +61,7 @@ import com.allthingsclaude.battery.ui.AppearanceMode
 import com.allthingsclaude.battery.ui.BatteryTheme
 import com.allthingsclaude.battery.core.SessionPolicy
 import androidx.activity.compose.BackHandler
+import com.allthingsclaude.battery.ui.AccountTabs
 import com.allthingsclaude.battery.ui.AppHeader
 import com.allthingsclaude.battery.ui.DashboardScreen
 import com.allthingsclaude.battery.ui.SettingsSheet
@@ -105,6 +107,7 @@ private fun Root() {
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val repository = remember { UsageRepository(context) }
+    val switcher = remember { AccountSwitcher(context, repository) }
     val auth = remember { AuthService(context) }
 
     val settings = remember { Settings(context) }
@@ -115,6 +118,13 @@ private fun Root() {
     var message by remember { mutableStateOf<String?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     var cardMode by remember { mutableStateOf(settings.cardMode) }
+    // Held as state rather than read from the repository on each composition, so
+    // a tapped tab moves under the finger instead of waiting for the poll that
+    // follows it to come back. Declared up here with the rest of the state
+    // because the resume effect below acts on it.
+    var selectedAccountId by remember(signedIn) { mutableStateOf(repository.selectedAccountId) }
+    var followsActive by remember { mutableStateOf(settings.followsActiveAccount) }
+    var followReason by remember { mutableStateOf<String?>(null) }
 
     // The launcher icon, chosen now and applied on the way out.
     //
@@ -258,6 +268,11 @@ private fun Root() {
             if (result !is UsageRepository.PollResult.SignedOut && cardMode != SessionPolicy.Mode.OFF) {
                 SessionService.start(context)
             }
+            if (switcher.applyAutoFollow() != null) {
+                selectedAccountId = repository.selectedAccountId
+                payload = repository.lastKnownPayload
+            }
+            followReason = switcher.followReason()
             // Self-heals in both directions — see syncSchedule. Cheap: KEEP
             // leaves an existing schedule untouched rather than restarting it.
             WidgetRefreshWorker.syncSchedule(context)
@@ -325,6 +340,57 @@ private fun Root() {
 
     val accounts = remember(signedIn, showSettings) { repository.listAccounts() }
 
+
+    // One handler for both entry points — the header tabs and, later, anything
+    // outside the Activity. The seam owns select, poll and repaint.
+    fun selectAccount(id: String) {
+        // A manual pick pins. Anything else would leave the mode free to move
+        // the user straight back off the account they just chose, which is the
+        // "I had to fight the algorithm" failure the research warns about.
+        if (followsActive) {
+            settings.followsActiveAccount = false
+            followsActive = false
+            followReason = null
+        }
+        selectedAccountId = id
+        scope.launch { switcher.switchTo(id).report { p, m -> payload = p; message = m } }
+    }
+
+    fun toggleFollow() {
+        val next = !followsActive
+        settings.followsActiveAccount = next
+        followsActive = next
+        followReason = null
+        if (!next) return
+        scope.launch {
+            switcher.applyAutoFollow()
+            selectedAccountId = repository.selectedAccountId
+            followReason = switcher.followReason()
+            payload = repository.lastKnownPayload
+        }
+    }
+
+    fun addAccount() {
+        auth.start { result ->
+            scope.launch {
+                when (result) {
+                    is AuthService.Result.Success ->
+                        if (repository.addAccount(result.tokens)) {
+                            showSettings = false
+                            refresh(context, repository) { p, m -> payload = p; message = m }
+                            signedIn = true
+                            selectedAccountId = repository.selectedAccountId
+                            switcher.repaint()
+                        } else {
+                            message = "Couldn't store the credential."
+                        }
+                    is AuthService.Result.Failure -> message = result.message
+                    AuthService.Result.Cancelled -> Unit
+                }
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         // Back closes settings rather than leaving the app. Without this the
         // system back gesture exits from a modal-feeling screen, which is the
@@ -336,6 +402,23 @@ private fun Root() {
         AppHeader(
             title = if (showSettings) "Settings" else "Battery",
             payload = if (showSettings) null else payload,
+            // One account has nothing to switch to, so the header keeps showing
+            // the plain name rather than a row of one tab.
+            accountSwitcher = if (!showSettings && accounts.size > 1) {
+                {
+                    AccountTabs(
+                        accounts = accounts,
+                        selectedAccountId = selectedAccountId,
+                        onSelect = { selectAccount(it) },
+                        onAdd = { addAccount() },
+                        followsActive = followsActive,
+                        onToggleFollow = { toggleFollow() },
+                        followReason = followReason,
+                    )
+                }
+            } else {
+                null
+            },
         ) {
             IconButton(onClick = { showSettings = !showSettings }) {
                 Icon(
@@ -349,7 +432,7 @@ private fun Root() {
             when {
                 showSettings -> SettingsSheet(
                     accounts = accounts,
-                    selectedAccountId = repository.selectedAccountId,
+                    selectedAccountId = selectedAccountId,
                     onCardModeChanged = {
                         cardMode = it
                         // Restart so the new mode takes effect now rather than on
@@ -363,22 +446,19 @@ private fun Root() {
                     // which bypassed all three gates that decide whether a card
                     // may exist — the card mode, SessionPolicy, and the record
                     // of a card the user swiped away.
-                    onSelectAccount = {
-                        repository.selectAccount(it)
-                        scope.launch {
-                            refresh(context, repository) { p, m -> payload = p; message = m }
-                            repaintCard(context, cardMode)
-                        }
-                    },
+                    // Not routed through the seam: a rename is not a switch, and
+                    // switching would discard the burn-rate inference this
+                    // account has been building all window for no reason.
                     onRenameAccount = { id, name ->
                         repository.renameAccount(id, name)
                         scope.launch {
                             refresh(context, repository) { p, m -> payload = p; message = m }
-                            repaintCard(context, cardMode)
+                            switcher.repaint()
                         }
                     },
                     onRemoveAccount = {
                         repository.removeAccount(it)
+                        selectedAccountId = repository.selectedAccountId
                         scope.launch {
                             refresh(context, repository) { p, m -> payload = p; message = m }
                             // No repaint: the account this card described is
@@ -386,27 +466,7 @@ private fun Root() {
                             SessionService.stop(context)
                         }
                     },
-                    onAddAccount = {
-                        auth.start { result ->
-                            scope.launch {
-                                when (result) {
-                                    is AuthService.Result.Success ->
-                                        if (repository.addAccount(result.tokens)) {
-                                            showSettings = false
-                                            refresh(context, repository) { p, m ->
-                                                payload = p; message = m
-                                            }
-                                            signedIn = true
-                                            repaintCard(context, cardMode)
-                                        } else {
-                                            message = "Couldn't store the credential."
-                                        }
-                                    is AuthService.Result.Failure -> message = result.message
-                                    AuthService.Result.Cancelled -> Unit
-                                }
-                            }
-                        }
-                    },
+                    onAddAccount = { addAccount() },
                     onSignOut = {
                         repository.signOutAll()
                         signedIn = false
@@ -622,6 +682,3 @@ private fun SignInGate(message: String?, onSignIn: () -> Unit) {
  * the dismissal record get consulted. Posting the notification directly — which
  * these handlers used to do — skips all of that.
  */
-private fun repaintCard(context: android.content.Context, mode: SessionPolicy.Mode) {
-    if (mode != SessionPolicy.Mode.OFF) SessionService.start(context)
-}

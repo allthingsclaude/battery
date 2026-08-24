@@ -1,6 +1,7 @@
 package com.allthingsclaude.battery.data
 
 import android.content.Context
+import com.allthingsclaude.battery.core.AccountCycle
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -63,6 +64,28 @@ class AccountStore(context: Context) {
         set(value) = prefs.edit().apply {
             if (value == null) remove(KEY_SELECTED) else putString(KEY_SELECTED, value)
         }.apply()
+
+    /**
+     * The account everything should be reading, resolving an unset selection to
+     * the first one — the same rule the repository polls by, kept here so the
+     * widgets and the tile cannot disagree with it.
+     */
+    val activeId: String? get() = selectedId ?: load().firstOrNull()?.id
+
+    /**
+     * The account after the selected one, wrapping past the end.
+     *
+     * A cycle, not a toggle. The list is N long, not two, and "switch" has to
+     * keep meaning something at three — so the primitive is "next", and the
+     * two-account case falls out of it for free rather than being a second code
+     * path that can disagree with the first. It is the same reason Alt-Tab was
+     * never designed as a two-window toggle.
+     *
+     * Null when there is nothing to switch to: no accounts, or only one. See
+     * [AccountCycle] for the rules and the cases they are pinned to.
+     */
+    fun nextAccountId(): String? =
+        AccountCycle.next(load().map { it.id }, selectedId)
 
     /**
      * "Account N" using the highest existing suffix, so removing #1 from [1, 2]

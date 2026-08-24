@@ -32,8 +32,9 @@ class UsageRepository(context: Context) {
     private val appContext = context.applicationContext
     private val accounts = AccountStore(appContext)
     private val tokens = TokenStore(appContext)
-    private val payloads = PayloadStore(appContext)
-    private val history = SessionHistory(payloads.snapshots)
+    private fun storeFor(accountId: String) = PayloadStore(appContext, accountId)
+
+    private fun historyFor(accountId: String) = SessionHistory(storeFor(accountId).snapshots)
 
     private val userAgent: String by lazy {
         val version = runCatching {
@@ -43,7 +44,24 @@ class UsageRepository(context: Context) {
     }
 
     private val api by lazy { UsageApi(userAgent) }
-    val lastKnownPayload: UsagePayload? get() = payloads.load()
+    val lastKnownPayload: UsagePayload?
+        get() = accounts.activeId?.let { storeFor(it).load() }
+
+    /** The cached reading for one account, whichever is selected. */
+    fun lastKnownPayload(accountId: String): UsagePayload? = storeFor(accountId).load()
+
+    /**
+     * When this account's usage last rose, from its own sample buffer.
+     *
+     * The evidence behind follow-the-active-account: a rise means that account
+     * spent tokens, which is a fact rather than an inference about intent. Null
+     * when there is no open window or too few samples to see a rise — which the
+     * caller must read as "no evidence", not as "idle".
+     */
+    fun lastActivityAt(accountId: String): Instant? {
+        val cached = storeFor(accountId).load() ?: return null
+        return historyFor(accountId).lastRiseAt(cached.sessionResetsAt)
+    }
 
     fun isSignedIn(): Boolean = accounts.load().isNotEmpty()
 
@@ -66,11 +84,44 @@ class UsageRepository(context: Context) {
      * @param force skip the freshness gate. Only for an explicit user action —
      *   never for a lifecycle event, which is what caused the problem below.
      */
-    suspend fun poll(force: Boolean = false): PollResult = pollLock.withLock {
-        pollLocked(force)
+    suspend fun poll(force: Boolean = false): PollResult {
+        val all = accounts.load()
+        val account = all.firstOrNull { it.id == accounts.selectedId }
+            ?: all.firstOrNull()
+            ?: return PollResult.NoAccount
+        return pollAccount(account.id, force)
     }
 
-    private suspend fun pollLocked(force: Boolean): PollResult = withContext(Dispatchers.IO) {
+    /**
+     * Poll one account by id, whether or not it is the selected one.
+     *
+     * This is what makes a widget bound to an account it is not currently
+     * looking at possible. It is safe now in a way it would not have been
+     * before: the payload cache and the sample buffer are both scoped per
+     * account, so a background poll cannot overwrite the foreground one's
+     * numbers or feed its regression.
+     */
+    suspend fun pollAccount(
+        accountId: String,
+        force: Boolean = false,
+        /**
+         * Set false when the caller is polling several accounts and will repaint
+         * once itself. Two `updateAll` bursts cancel each other's Glance
+         * sessions and lose *both* compositions — see `refreshAllWidgets`.
+         */
+        repaintWidgets: Boolean = true,
+    ): PollResult =
+        // Per account rather than one lock for the app. The race this guards is
+        // two concurrent refreshes of the *same* refresh token rotating it twice
+        // — which is per-credential, so serialising unrelated accounts against
+        // each other only costs the fan-in its concurrency.
+        lockFor(accountId).withLock { pollLocked(accountId, force, repaintWidgets) }
+
+    private suspend fun pollLocked(
+        accountId: String,
+        force: Boolean,
+        repaintWidgets: Boolean,
+    ): PollResult = withContext(Dispatchers.IO) {
         // Rate-limit guard, at the single choke point every caller goes through.
         //
         // Learned the hard way: the app polls on every resume, the service polls
@@ -87,15 +138,15 @@ class UsageRepository(context: Context) {
         // below the threshold, so the cache would be served until real time
         // caught back up. Verification called that unreachable enough not to be
         // a defect; it is one character to stop it being a question.
-        val cached = payloads.load()
+        val store = storeFor(accountId)
+        val cached = store.load()
         if (!force && cached != null &&
             abs(Instant.now().epochSecond - cached.updatedAt.epochSecond) < MIN_POLL_INTERVAL_SECONDS
         ) {
             return@withContext PollResult.Success(cached)
         }
 
-        val all = accounts.load()
-        val account = all.firstOrNull { it.id == accounts.selectedId } ?: all.firstOrNull()
+        val account = accounts.load().firstOrNull { it.id == accountId }
             ?: return@withContext PollResult.NoAccount
         val stored = tokens.load(account.id) ?: return@withContext PollResult.SignedOut
 
@@ -131,13 +182,13 @@ class UsageRepository(context: Context) {
             // account, wrapped so it can never turn a good poll into a failure.
             val planTier = account.planTier.ifEmpty { backfillPlanTier(account, stored) }
 
-            val payload = buildPayload(usage, account.name, planTier)
-            payloads.save(payload)
+            val payload = buildPayload(usage, account.name, planTier, historyFor(account.id))
+            store.save(payload)
             // Repainted here rather than by the service, because this is the one
             // place a new payload lands — a manual refresh from the dashboard
             // has to move the widgets too, and routing it through the service
             // would mean the widgets only update while a card is up.
-            refreshWidgets()
+            if (repaintWidgets) refreshWidgets()
             PollResult.Success(payload)
         } catch (e: UsageApiError.Unauthorized) {
             PollResult.SignedOut
@@ -180,16 +231,22 @@ class UsageRepository(context: Context) {
      * payload that was just cleared and — via the refresh callback — recreate a
      * live credential file for an account that no longer exists.
      *
-     * Membership is checked as well as selection, because "still selected" is
-     * meaningless once the list is empty. `fetchUsage` is a blocking
-     * `HttpURLConnection` call with no suspension point before the writes, so
-     * cancellation cannot be relied on to do this.
+     * Selection is deliberately **not** part of this any more. It used to be,
+     * because the payload cache was one global key and a late response for the
+     * outgoing account would relabel the incoming one's card. Now that both the
+     * cache and the sample buffer are scoped per account, a response is correct
+     * for the account it was fetched for whatever is selected by the time it
+     * lands — and a background poll for a widget-bound account, which is never
+     * the selected one, has to be allowed to write at all.
+     *
+     * Membership still is. An in-flight poll finishing after sign-out would
+     * otherwise rewrite a cache that was just cleared and — via the refresh
+     * callback — recreate a live credential file for an account that no longer
+     * exists. `fetchUsage` is a blocking `HttpURLConnection` call with no
+     * suspension point before the writes, so cancellation cannot be relied on.
      */
-    private fun stillCurrent(id: String): Boolean {
-        if (accounts.load().none { it.id == id }) return false
-        val selected = accounts.selectedId ?: return true
-        return selected == id
-    }
+    private fun stillCurrent(id: String): Boolean =
+        accounts.load().any { it.id == id }
 
     /**
      * `accountName` is passed in rather than read back from the selected account
@@ -200,6 +257,7 @@ class UsageRepository(context: Context) {
         usage: UsageResponse,
         accountName: String,
         accountPlanTier: String,
+        history: SessionHistory,
     ): UsagePayload {
         val session = usage.fiveHour
         val sessionUtil = session?.utilization ?: 0.0
@@ -265,7 +323,6 @@ class UsageRepository(context: Context) {
         if (!tokens.save(account.id, newTokens)) return@withContext false
         accounts.save(existing + account)
         accounts.selectedId = account.id
-        resetInference()
         true
     }
 
@@ -284,23 +341,29 @@ class UsageRepository(context: Context) {
         val remaining = accounts.load().filterNot { it.id == id }
         accounts.save(remaining)
         if (accounts.selectedId == id) accounts.selectedId = remaining.firstOrNull()?.id
-        resetInference()
+        forget(id)
     }
 
     fun signOutAll() {
+        val all = accounts.load()
         tokens.deleteAll()
         accounts.save(emptyList())
         accounts.selectedId = null
-        resetInference()
+        all.forEach { forget(it.id) }
     }
 
     fun listAccounts(): List<Account> = accounts.load()
 
+    /**
+     * Point at [id]. Nothing is discarded: each account keeps its own payload
+     * cache and sample buffer, so switching back finds the previous reading
+     * intact instead of an empty state and a rebuilt regression.
+     *
+     * This used to clear both, which was never about switching — it was the only
+     * way to stop one global cache being served as the other account's data.
+     */
     fun selectAccount(id: String) {
         accounts.selectedId = id
-        // A different account's samples must never feed this account's
-        // regression — the buffer is per-window, not per-account.
-        resetInference()
     }
 
     private suspend fun refreshWidgets() {
@@ -320,14 +383,13 @@ class UsageRepository(context: Context) {
      * lives — activity inference reads it too, so clearing it clears both the
      * burn-rate regression and any lingering idea that a session is live.
      */
-    private fun resetInference() {
-        history.reset()
-        // The payload cache is one global key, not one per account, so it
-        // carries the outgoing account's name, percentages and burn rate. Left
-        // in place, the freshness gate serves it as the *incoming* account's
-        // data for the next sixty seconds — the dashboard header, the card and
-        // all four widgets showing account A under account B's radio button.
-        payloads.clear()
+    /**
+     * Drop everything cached for one account. For removal and sign-out only —
+     * leaving a departed account's numbers on disk would strand them there for
+     * good, since nothing polls an account that no longer exists.
+     */
+    private fun forget(accountId: String) {
+        storeFor(accountId).clear()
     }
 
     private companion object {
@@ -348,7 +410,10 @@ class UsageRepository(context: Context) {
          * means the second caller arrives after the first has written, so it
          * either reads RT2 or is served from the cache.
          */
-        val pollLock = Mutex()
+        private val pollLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+
+        private fun lockFor(accountId: String): Mutex =
+            pollLocks.computeIfAbsent(accountId) { Mutex() }
         const val TAG = "UsageRepository"
         const val ACTIVE_WINDOW_SECONDS = 10 * 60
 

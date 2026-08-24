@@ -34,6 +34,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import android.app.StatusBarManager
+import android.content.ComponentName
+import android.content.Context
+import android.graphics.drawable.Icon
+import com.allthingsclaude.battery.quicksettings.AccountTileService
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -65,7 +70,6 @@ fun SettingsSheet(
     accounts: List<Account>,
     selectedAccountId: String?,
     onCardModeChanged: (SessionPolicy.Mode) -> Unit,
-    onSelectAccount: (String) -> Unit,
     onRenameAccount: (String, String) -> Unit,
     onRemoveAccount: (String) -> Unit,
     onAddAccount: () -> Unit,
@@ -79,6 +83,7 @@ fun SettingsSheet(
     val settings = remember { Settings(context) }
     var cardMode by remember { mutableStateOf(settings.cardMode) }
     var renaming by remember { mutableStateOf<Account?>(null) }
+    var tileRequestResult by remember { mutableStateOf<String?>(null) }
     var confirmSignOut by remember { mutableStateOf(false) }
 
     Column(
@@ -94,13 +99,31 @@ fun SettingsSheet(
             AccountRow(
                 account = account,
                 selected = account.id == selectedAccountId,
-                onSelect = { onSelectAccount(account.id) },
                 onRename = { renaming = account },
                 onRemove = { onRemoveAccount(account.id) },
                 canRemove = accounts.size > 1,
             )
         }
         ActionRow("Add account", "Sign in to another Claude account", onAddAccount)
+
+        // Offered rather than assumed: the system can refuse, and silently — it
+        // auto-denies once a user has declined the same tile enough times, and
+        // whether One UI shows the prompt at all is its own choice. So the row
+        // reports what came back instead of claiming success, and the panel's
+        // own edit screen remains the way in if this route is closed.
+        ActionRow(
+            "Add Quick Settings tile",
+            "Switch accounts from the quick panel, without unlocking",
+            { tileRequestResult = requestAccountTile(context) },
+        )
+        tileRequestResult?.let {
+            Text(
+                it,
+                Modifier.padding(start = 14.dp, top = 2.dp, bottom = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+        }
 
         SectionHeader("Lock-screen card")
         SessionPolicy.Mode.entries.forEach { mode ->
@@ -222,11 +245,19 @@ private fun RenameDialog(account: Account, onDismiss: () -> Unit, onConfirm: (St
     )
 }
 
+/**
+ * Manage an account — rename it, remove it. Deliberately *not* select it.
+ *
+ * Switching moved to the header (see `AccountTabs`), and leaving a second
+ * switcher here would mean two controls for one piece of state, in the screen
+ * with the wrong information scent for it. The active account is still marked,
+ * because a management list that cannot tell you which one is live is worse than
+ * useless — but the marker is a label, not a control.
+ */
 @Composable
 private fun AccountRow(
     account: Account,
     selected: Boolean,
-    onSelect: () -> Unit,
     onRename: () -> Unit,
     onRemove: () -> Unit,
     canRemove: Boolean,
@@ -239,16 +270,22 @@ private fun AccountRow(
                 if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
                 else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             )
-            .clickable(onClick = onSelect)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RadioButton(selected = selected, onClick = onSelect)
         Text(
             account.name,
-            Modifier.padding(start = 4.dp).weight(1f),
+            Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
         )
+        if (selected) {
+            Text(
+                "Active",
+                Modifier.padding(end = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+        }
         TextButton(onClick = onRename) { Text("Rename") }
         // Removing the only account is what "Sign out" is for; offering both
         // would leave the app in a signed-out state reached two different ways.
@@ -540,4 +577,26 @@ private fun StatusNote(text: String) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
     )
+}
+
+/**
+ * Ask the system to offer the account tile, and say what happened.
+ *
+ * `requestAddTileService` needs the app in the foreground — true here, since
+ * this runs from a tap in the settings sheet — and can decline in ways worth
+ * distinguishing: already added is not a failure, and a refusal is not a bug to
+ * retry. Anything unexpected points the user at the panel's own edit screen,
+ * which always works.
+ */
+private fun requestAccountTile(context: Context): String {
+    val manager = context.getSystemService(StatusBarManager::class.java)
+        ?: return "Not available on this device — add it from the quick panel's edit screen."
+
+    manager.requestAddTileService(
+        ComponentName(context, AccountTileService::class.java),
+        context.getString(R.string.tile_account_label),
+        Icon.createWithResource(context, R.drawable.ic_stat_battery),
+        { it.run() },
+    ) { }
+    return "Asked the system to add it. If no prompt appeared, add it from the quick panel's edit screen."
 }

@@ -281,11 +281,28 @@ internal suspend fun refresh(
     postCard: Boolean = false,
     onResult: (UsagePayload?, String) -> Unit,
 ) {
-    when (val result = repository.poll()) {
-        is UsageRepository.PollResult.Success -> {
-            if (postCard) LiveUpdateNotifier.post(context, result.payload)
-            onResult(result.payload, "Updated ${result.payload.sessionUtilization.toInt()}%.")
-        }
+    val result = repository.poll()
+    if (postCard && result is UsageRepository.PollResult.Success) {
+        LiveUpdateNotifier.post(context, result.payload)
+    }
+    result.report(onResult)
+}
+
+/**
+ * Turn a poll outcome into what the user should see.
+ *
+ * Split out of [refresh] so that a switch can say the same things: the seam
+ * polls inside itself (see `AccountSwitcher`), so it has a result in hand and
+ * nothing left to call [refresh] for.
+ *
+ * Every failure keeps its own message. Collapsing them into "poll failed" would
+ * hide the one distinction that matters to a user — a dead grant needs a new
+ * sign-in, everything else just needs waiting.
+ */
+internal fun UsageRepository.PollResult.report(onResult: (UsagePayload?, String) -> Unit) {
+    when (this) {
+        is UsageRepository.PollResult.Success ->
+            onResult(payload, "Updated ${payload.sessionUtilization.toInt()}%.")
         UsageRepository.PollResult.SignedOut ->
             onResult(null, "Session expired — sign in again.")
         UsageRepository.PollResult.NoAccount ->
@@ -294,9 +311,7 @@ internal suspend fun refresh(
             onResult(null, "Account changed mid-poll; discarded.")
         is UsageRepository.PollResult.Failed -> onResult(
             null,
-            result.retryAfterSeconds
-                ?.let { "${result.message} Retry in ${it}s." }
-                ?: result.message,
+            retryAfterSeconds?.let { "$message Retry in ${it}s." } ?: message,
         )
     }
 }

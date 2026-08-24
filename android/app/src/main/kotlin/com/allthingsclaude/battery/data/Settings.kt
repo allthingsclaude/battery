@@ -39,6 +39,20 @@ class Settings(context: Context) {
             ?: SessionPolicy.Mode.SMART
         set(value) = prefs.edit().putString(KEY_CARD_MODE, value.name).apply()
 
+    /**
+     * Follow whichever account is actually being used, instead of staying where
+     * it was put.
+     *
+     * Off by default, and a mode the user *chooses* rather than one that happens
+     * to them. That distinction is the whole safety argument: the cost of a bad
+     * guess here is not a wrong tap but a wrong number believed — quota read off
+     * the wrong account — so it is opt-in, it names the account it followed, and
+     * any manual pick turns it off rather than fighting the user.
+     */
+    var followsActiveAccount: Boolean
+        get() = prefs.getBoolean(KEY_FOLLOW_ACTIVE, false)
+        set(value) = prefs.edit().putBoolean(KEY_FOLLOW_ACTIVE, value).apply()
+
     /** When the automatic update check last ran, epoch millis. 0 means never. */
     var lastUpdateCheckAt: Long
         get() = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0L)
@@ -95,6 +109,7 @@ class Settings(context: Context) {
 
     private companion object {
         const val KEY_CARD_MODE = "card_mode"
+        const val KEY_FOLLOW_ACTIVE = "follows_active_account"
         const val KEY_LAST_UPDATE_CHECK = "last_update_check_at"
         const val KEY_SKIPPED_VERSION = "skipped_version"
         const val KEY_PENDING_VERSION = "pending_update_version"
