@@ -352,6 +352,16 @@ struct SettingsView: View {
                             .foregroundStyle(.tertiary)
                     }
                 }
+
+                Toggle(isOn: $settings.showWeeklyAsDays) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Show weekly usage in days")
+                            .font(.caption)
+                        Text(settings.showWeeklyAsDays ? "e.g. 2.5 of 7 days used, a tick per day" : "e.g. 36% used")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
             }
         }
     }

@@ -23,6 +23,7 @@ Battery lives in your menu bar and shows how much of your Claude Code rate limit
 - **Session detection** - Integrates with Claude Code hooks to detect active coding sessions and poll more frequently
 - **Auto-updates** - Built-in Sparkle updater checks for new versions automatically
 - **Menu bar display modes** - Show percentage + time, percentage only, time only, or just an icon
+- **Weekly usage in days** - Optionally read 7-day windows as days of the week ("2.5 of 7 days used") on a bar with a tick per day
 
 ## Install
 

@@ -6,6 +6,9 @@ struct ProgressBarView: View {
     let color: Color
     var height: CGFloat = 6
     var cornerRadius: CGFloat = 3
+    /// Splits the bar into this many equal parts, e.g. 7 for the days of a
+    /// weekly window. 1 draws a plain bar.
+    var segments: Int = 1
 
     var body: some View {
         GeometryReader { geometry in
@@ -20,8 +23,22 @@ struct ProgressBarView: View {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(color)
                     .frame(width: geometry.size.width * min(max(value, 0), 1.0), height: height)
+
+                // Cut the dividers out rather than painting them, so the gaps
+                // show whatever is behind the panel, glass included.
+                if segments > 1 {
+                    ForEach(1..<segments, id: \.self) { index in
+                        Rectangle()
+                            .frame(width: Self.dividerWidth, height: height)
+                            .offset(x: geometry.size.width * CGFloat(index) / CGFloat(segments) - Self.dividerWidth / 2)
+                            .blendMode(.destinationOut)
+                    }
+                }
             }
+            .compositingGroup()
         }
         .frame(height: height)
     }
+
+    private static let dividerWidth: CGFloat = 1.5
 }
