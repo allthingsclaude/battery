@@ -8,6 +8,10 @@ import SwiftUI
 /// this file is purely how it looks. It reuses the shared `UsageRing` and the
 /// terracotta ramp so it's unmistakably the same product as the menu bar app, and
 /// the reset time drives a live countdown that ticks without any push.
+///
+/// Everything leads with the state's primary window: the session, or — for an
+/// account with no five-hour limit (verified Ultra) — the week. Durations go
+/// through `longDuration`, so a weekly countdown reads "3d 4h", not "76h 0m".
 @available(iOS 16.2, *)
 struct UsageLiveActivity: Widget {
     var body: some WidgetConfiguration {
@@ -21,11 +25,12 @@ struct UsageLiveActivity: Widget {
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 10) {
-                        UsageRing(utilization: state.sessionUtilization, size: 40, lineWidth: 5,
+                        UsageRing(utilization: state.primaryUtilization, size: 40, lineWidth: 5,
                                   showsLabel: false, gradientStroke: true, glow: false)
                         VStack(alignment: .leading, spacing: 0) {
-                            Text("Session").font(.caption2).foregroundStyle(.secondary)
-                            Text("\(Int(state.sessionUtilization.rounded()))%")
+                            Text(state.hasSessionLimit ? "Session" : "Weekly")
+                                .font(.caption2).foregroundStyle(.secondary)
+                            Text("\(Int(state.primaryUtilization.rounded()))%")
                                 .font(BatteryFont.numeric(17, weight: .strong, relativeTo: .headline))
                                 .foregroundStyle(level.color)
                         }
@@ -34,9 +39,9 @@ struct UsageLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.trailing) {
                     VStack(alignment: .trailing, spacing: 0) {
                         Text("Resets").font(.caption2).foregroundStyle(.secondary)
-                        if let reset = state.sessionResetsAt {
+                        if let reset = state.primaryResetsAt {
                             // Compact for the same reason as the card above.
-                            Text(TimeFormatting.shortDuration(max(0, reset.timeIntervalSinceNow)))
+                            Text(TimeFormatting.longDuration(max(0, reset.timeIntervalSinceNow)))
                                 .font(BatteryFont.numeric(15, weight: .strong, relativeTo: .subheadline))
                                 .lineLimit(1).minimumScaleFactor(0.7)
                                 .multilineTextAlignment(.trailing)
@@ -49,14 +54,14 @@ struct UsageLiveActivity: Widget {
                     ExpandedFooter(state: state)
                 }
             } compactLeading: {
-                UsageRing(utilization: state.sessionUtilization, size: 20, lineWidth: 3,
+                UsageRing(utilization: state.primaryUtilization, size: 20, lineWidth: 3,
                           showsLabel: false, gradientStroke: true, glow: false)
             } compactTrailing: {
-                Text("\(Int(state.sessionUtilization.rounded()))%")
+                Text("\(Int(state.primaryUtilization.rounded()))%")
                     .font(BatteryFont.numeric(14, weight: .strong, relativeTo: .footnote))
                     .foregroundStyle(level.color)
             } minimal: {
-                UsageRing(utilization: state.sessionUtilization, size: 20, lineWidth: 3,
+                UsageRing(utilization: state.primaryUtilization, size: 20, lineWidth: 3,
                           showsLabel: false, gradientStroke: true, glow: false)
             }
             .keylineTint(level.color)
@@ -80,7 +85,7 @@ struct LockScreenActivityView: View {
 
     private var liveCard: some View {
         HStack(spacing: 16) {
-            UsageRing(utilization: state.sessionUtilization, size: 58, lineWidth: 7,
+            UsageRing(utilization: state.primaryUtilization, size: 58, lineWidth: 7,
                       gradientStroke: true)
 
             VStack(alignment: .leading, spacing: 5) {
@@ -112,7 +117,7 @@ struct LockScreenActivityView: View {
                     Image(systemName: forecast.symbol)
                         .font(.caption).foregroundStyle(.white.opacity(0.75))
                 }
-                Text(weeklyLine)
+                Text(contextLine)
                     .font(.caption2).foregroundStyle(.white.opacity(0.5))
             }
             .layoutPriority(1)
@@ -130,7 +135,7 @@ struct LockScreenActivityView: View {
                     .font(.caption2).foregroundStyle(.white.opacity(0.4))
                     .lineLimit(1).minimumScaleFactor(0.7)
                     .multilineTextAlignment(.trailing)
-                if let reset = state.sessionResetsAt {
+                if let reset = state.primaryResetsAt {
                     // Compact ("2h 13m") rather than `Text(_, style: .relative)`.
                     // `.relative` renders "2 hr, 13 min", which in a monospaced
                     // face is far too wide for this column — it truncated either
@@ -142,7 +147,10 @@ struct LockScreenActivityView: View {
                     // system's schedule; now the relay pushes at least every
                     // five minutes, and the live "Updated …" line directly above
                     // discloses any lag, so the card can't quietly mislead.
-                    Text(TimeFormatting.shortDuration(max(0, reset.timeIntervalSinceNow)))
+                    //
+                    // `longDuration` so a weekly reset reads "3d 4h", and a
+                    // static string loses nothing at that scale.
+                    Text(TimeFormatting.longDuration(max(0, reset.timeIntervalSinceNow)))
                         .font(BatteryFont.numeric(17, weight: .strong, relativeTo: .headline))
                         .foregroundStyle(.white)
                         .lineLimit(1).minimumScaleFactor(0.7)
@@ -159,8 +167,10 @@ struct LockScreenActivityView: View {
             Image(systemName: "arrow.clockwise.circle.fill")
                 .font(.largeTitle).foregroundStyle(BatteryPalette.brandGradient)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Session reset").font(.subheadline.weight(.semibold)).foregroundStyle(.white)
-                Text("Back to \(Int(state.sessionUtilization.rounded()))% — a fresh 5-hour window.")
+                Text(state.hasSessionLimit ? "Session reset" : "Weekly reset")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                Text("Back to \(Int(state.primaryUtilization.rounded()))% — a fresh "
+                     + "\(state.hasSessionLimit ? "5-hour window" : "week").")
                     .font(.caption).foregroundStyle(.white.opacity(0.7))
             }
             Spacer()
@@ -168,11 +178,15 @@ struct LockScreenActivityView: View {
         .padding(16)
     }
 
-    /// "Weekly 8%" — plus " · Max 5x" only when the plan is actually known.
-    private var weeklyLine: String {
-        let weekly = "Weekly \(Int(state.weeklyUtilization.rounded()))%"
-        let plan = context.attributes.planTier
-        return plan.isEmpty ? weekly : "\(weekly) · \(plan)"
+    /// "Weekly 8%" — plus " · Max" only when the plan is actually known. With
+    /// no session limit the ring already *is* the weekly number, so the line
+    /// says why there's no session instead: "No 5-hour limit · Ultra".
+    private var contextLine: String {
+        let lead = state.hasSessionLimit
+            ? "Weekly \(Int(state.weeklyUtilization.rounded()))%"
+            : NoSessionLimitNote.text
+        let plan = context.attributes.planLabel
+        return plan.isEmpty ? lead : "\(lead) · \(plan)"
     }
 }
 
@@ -192,7 +206,9 @@ struct ExpandedFooter: View {
                 .font(.caption).foregroundStyle(.secondary)
                 .lineLimit(1).minimumScaleFactor(0.75)
             Spacer(minLength: 6)
-            Text("Weekly \(Int(state.weeklyUtilization.rounded()))%")
+            Text(state.hasSessionLimit
+                 ? "Weekly \(Int(state.weeklyUtilization.rounded()))%"
+                 : NoSessionLimitNote.text)
                 .font(.caption2).foregroundStyle(.tertiary).fixedSize()
         }
     }
@@ -204,14 +220,16 @@ struct ExpandedFooter: View {
 extension UsageForecast {
     /// The Live Activity carries the same precomputed projection fields as the
     /// payload — including when the push relay builds the state on a Mac — so the
-    /// card can speak in exactly the same terms as the app.
+    /// card can speak in exactly the same terms as the app. Like the payload's,
+    /// they describe the primary window.
     init(state: UsageActivityAttributes.ContentState, now: Date = Date()) {
         self.init(
-            utilization: state.sessionUtilization,
-            resetsAt: state.sessionResetsAt,
+            utilization: state.primaryUtilization,
+            resetsAt: state.primaryResetsAt,
             burnRatePerHour: state.burnRatePerHour,
             projectedLimitAt: state.projectedLimitAt,
             isSessionActive: state.isSessionActive,
+            window: state.hasSessionLimit ? .session : .weekly,
             now: now
         )
     }

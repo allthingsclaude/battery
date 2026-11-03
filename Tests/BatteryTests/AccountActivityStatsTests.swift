@@ -48,6 +48,28 @@ final class AccountActivityStatsTests: XCTestCase {
         XCTAssertEqual(stats.currentStreak, 3)
     }
 
+    /// A streak is not bounded by the heat map. `refreshAccountStats` used to
+    /// hand this only the heat-map window, which capped every streak at
+    /// `heatMapDays + 1` — an account used daily for months read 36 and could
+    /// only ever move down from there.
+    func testStreakIsNotCappedByTheHeatMapWindow() {
+        var dayPeaks: [Date: Double] = [:]
+        for offset in 0...59 {
+            dayPeaks[day(-offset)] = 42
+        }
+
+        let stats = AccountActivityStats.build(
+            dayPeaks: dayPeaks,
+            today: today(),
+            calendar: calendar,
+            heatMapDays: Constants.heatMapDays
+        )
+
+        XCTAssertEqual(stats.currentStreak, 60)
+        // The heat map still draws its own five weeks, one row per week.
+        XCTAssertEqual(stats.activeDays.count, Constants.heatMapDays + 1)
+    }
+
     func testStreakIsZeroWhenNeitherTodayNorYesterdayIsActive() {
         let stats = AccountActivityStats.build(
             dayPeaks: [day(-2): 90, day(-3): 90],

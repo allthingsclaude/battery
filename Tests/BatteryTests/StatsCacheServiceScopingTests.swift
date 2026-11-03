@@ -61,6 +61,28 @@ final class StatsCacheServiceScopingTests: XCTestCase {
         XCTAssertFalse(usageA.contains { $0.name == "beta" }, "A must not see B's projects")
     }
 
+    /// The popover shows five projects and expands to ten, so the scan keeps
+    /// ten by name and rolls everything past them into one "Other projects" row.
+    func testBreakdownKeepsTenProjectsAndRollsUpTheRest() throws {
+        var dir: URL!
+        // Project pN gets N+1 messages, so the order by tokens is p11 ... p0.
+        for index in 0..<12 {
+            dir = try makeConfigDir(named: "cfg-many", project: "p\(index)", messages: index + 1)
+        }
+
+        let usage = StatsCacheService(configDir: dir.path).scanProjectTokenUsage(
+            from: Date().addingTimeInterval(-3600),
+            to: Date().addingTimeInterval(3600)
+        )
+
+        XCTAssertEqual(usage.count, 11)
+        XCTAssertEqual(usage.prefix(10).map(\.name), (2..<12).reversed().map { "p\($0)" })
+        XCTAssertEqual(usage.last?.isOtherProjects, true)
+        // p0: one message of 100 + 50 tokens; p1: 150 + 151.
+        XCTAssertEqual(usage.last?.tokens, 451)
+        XCTAssertEqual(usage.reduce(0) { $0 + $1.percentage }, 100, accuracy: 0.001)
+    }
+
     func testConfigDirIsNormalizedOnTheInstance() throws {
         let dir = try makeConfigDir(named: ".claude-n", project: "gamma", messages: 1)
         let service = StatsCacheService(configDir: dir.path + "/")

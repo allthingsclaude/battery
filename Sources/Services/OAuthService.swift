@@ -7,9 +7,25 @@ import CryptoKit
 final class OAuthService: ObservableObject {
     @Published var isAuthenticating: Bool = false
 
+    private let loginTimeout: TimeInterval
+    private let openURL: (URL) -> Void
+
     private var codeVerifier: String?
     private var oauthState: String?
     private var httpListener: OAuthHTTPListener?
+    /// Identifies the in-flight attempt, so a callback from one that has since
+    /// been superseded or torn down can't complete the current one.
+    private var attemptID: UUID?
+    private var pendingCompletion: ((Result<TokenPair, Error>) -> Void)?
+    private var timeoutTask: Task<Void, Never>?
+
+    init(
+        loginTimeout: TimeInterval = 300,
+        openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }
+    ) {
+        self.loginTimeout = loginTimeout
+        self.openURL = openURL
+    }
 
     struct TokenPair {
         let accessToken: String
@@ -21,6 +37,7 @@ final class OAuthService: ObservableObject {
         case noCodeVerifier
         case noRedirectUri
         case listenerFailed
+        case timedOut
         case tokenExchangeFailed(String)
 
         var errorDescription: String? {
@@ -28,12 +45,24 @@ final class OAuthService: ObservableObject {
             case .noCodeVerifier: return "Missing code verifier"
             case .noRedirectUri: return "Missing redirect URI"
             case .listenerFailed: return "Failed to start local server"
+            case .timedOut: return "Sign-in timed out waiting for the browser"
             case .tokenExchangeFailed(let detail): return "Token exchange failed: \(detail)"
             }
         }
     }
 
+    /// Opens the browser to sign in and reports the outcome exactly once —
+    /// including a timeout when the browser never comes back, so callers are
+    /// never left waiting on a tab that was closed.
+    ///
+    /// Starting a new attempt supersedes the in-flight one, whose completion is
+    /// then never called: the caller that started the new attempt owns the outcome.
     func startLogin(completion: @escaping (Result<TokenPair, Error>) -> Void) {
+        cancelLogin()
+
+        let attempt = UUID()
+        attemptID = attempt
+        pendingCompletion = completion
         isAuthenticating = true
 
         let verifier = generateCodeVerifier()
@@ -41,27 +70,34 @@ final class OAuthService: ObservableObject {
         let challenge = generateCodeChallenge(verifier: verifier)
 
         let listener = OAuthHTTPListener(path: Constants.oauthRedirectPath) { [weak self] code in
-            guard let self = self else { return }
             Task { @MainActor in
+                guard let self = self, self.attemptID == attempt else { return }
+                // The browser came back, so only the token exchange is left and
+                // it must not be cut off by the wait for the browser expiring.
+                self.timeoutTask?.cancel()
+                let result: Result<TokenPair, Error>
                 do {
-                    let tokens = try await self.exchangeCode(code)
-                    self.isAuthenticating = false
-                    completion(.success(tokens))
+                    result = .success(try await self.exchangeCode(code))
                 } catch {
-                    self.isAuthenticating = false
-                    completion(.failure(error))
+                    result = .failure(error)
                 }
-                self.httpListener?.stop()
-                self.httpListener = nil
+                guard self.attemptID == attempt else { return }
+                self.finishLogin(with: result)
             }
         }
 
         guard let port = listener.start() else {
-            isAuthenticating = false
-            completion(.failure(OAuthError.listenerFailed))
+            finishLogin(with: .failure(OAuthError.listenerFailed))
             return
         }
         self.httpListener = listener
+
+        let timeout = loginTimeout
+        timeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.finishLogin(with: .failure(OAuthError.timedOut))
+        }
 
         let redirectUri = "http://localhost:\(port)\(Constants.oauthRedirectPath)"
         let state = generateCodeVerifier()
@@ -79,11 +115,27 @@ final class OAuthService: ObservableObject {
         ]
 
         if let url = components.url {
-            NSWorkspace.shared.open(url)
+            openURL(url)
         }
     }
 
+    /// Abandons the in-flight attempt without reporting an outcome.
     func cancelLogin() {
+        pendingCompletion = nil
+        tearDownAttempt()
+    }
+
+    private func finishLogin(with result: Result<TokenPair, Error>) {
+        let completion = pendingCompletion
+        pendingCompletion = nil
+        tearDownAttempt()
+        completion?(result)
+    }
+
+    private func tearDownAttempt() {
+        attemptID = nil
+        timeoutTask?.cancel()
+        timeoutTask = nil
         httpListener?.stop()
         httpListener = nil
         isAuthenticating = false
@@ -226,11 +278,6 @@ final class OAuthHTTPListener: @unchecked Sendable {
             self?.acceptLoop()
         }
         listenThread?.start()
-
-        // Auto-stop after 5 minutes to avoid leaked listeners
-        DispatchQueue.global().asyncAfter(deadline: .now() + 300) { [weak self] in
-            self?.stop()
-        }
 
         return port
     }

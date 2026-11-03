@@ -28,7 +28,7 @@ class ProfileApi(
     data class Profile(
         val email: String?,
         val displayName: String?,
-        /** `organization.rate_limit_tier`, e.g. `default_claude_max_20x`. */
+        /** `organization.rate_limit_tier`, e.g. `default_claude_max_20x` (Ultra). */
         val rateLimitTier: String? = null,
     ) {
         /** The best human label available, or null to fall back to "Account N". */
@@ -44,19 +44,33 @@ class ProfileApi(
          * tier from the Keychain, where the Claude Code CLI happens to have left
          * it, which is not a source an Android app has.
          *
+         * Anthropic renamed the plans on 2026-10-30: Max 20x is now **Ultra**
+         * and Max 5x is plain **Max**. The tier string did not change with them —
+         * an Ultra account still reports `default_claude_max_20x` — so the old
+         * spellings map to the new names, and `ultra` is accepted for when the
+         * tier catches up. Every platform produces these same strings.
+         *
          * **Order matters and is the whole reason this is not a `when` on the
-         * raw string.** The live value is `default_claude_max_20x`, which
-         * contains "max" — so a naive contains-check labels a 20x plan as plain
-         * "Max". The narrower tiers have to be tested first.
+         * raw string.** `default_claude_max_20x` contains "max", so a naive
+         * contains-check labels Ultra as plain "Max". The narrower tiers have to
+         * be tested first.
+         *
+         * The label is a badge and nothing more. It must not be used to decide
+         * whether a five-hour window exists: an unverified Ultra account still
+         * has one. That comes from the usage response —
+         * [UsageResponse.hasSessionLimit].
          */
         val planLabel: String
             get() {
                 val t = rateLimitTier?.lowercase() ?: return ""
                 return when {
-                    t.contains("max_20x") || t.contains("max20x") -> "Max 20x"
-                    t.contains("max_5x") || t.contains("max5x") -> "Max 5x"
+                    t.contains("ultra") || t.contains("max_20x") || t.contains("max20x") -> "Ultra"
+                    t.contains("max_5x") || t.contains("max5x") -> "Max"
                     t.contains("max") -> "Max"
                     t.contains("pro") -> "Pro"
+                    // Android-only, and older than the rename: no other platform
+                    // labels these, but dropping them would blank a badge that
+                    // Team and Enterprise accounts have been shown since sign-in.
                     t.contains("team") -> "Team"
                     t.contains("enterprise") -> "Enterprise"
                     else -> ""
@@ -84,6 +98,22 @@ class ProfileApi(
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
+
+        /**
+         * A plan label persisted before the 2026-10-30 rename, spelled the way
+         * [Profile.planLabel] spells it now.
+         *
+         * Needed because the label is resolved once, at sign-in, and stored
+         * beside the account — nothing ever asks the profile again for an
+         * account that already has one. Without this every account signed in
+         * before the rename would wear "Max 20x" forever. Applied on read, so
+         * the stored value heals the next time the account list is written.
+         */
+        fun migratePlanLabel(stored: String): String = when (stored) {
+            "Max 20x" -> "Ultra"
+            "Max 5x" -> "Max"
+            else -> stored
+        }
 
         /**
          * Pull an email out of whatever shape comes back.

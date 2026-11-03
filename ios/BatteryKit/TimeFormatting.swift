@@ -25,6 +25,21 @@ enum TimeFormatting {
         }
     }
 
+    /// Like `shortDuration`, but rolls hours over into days once the span
+    /// reaches a day — for the weekly window, which would otherwise read
+    /// "98h 12m". Ported from the macOS app alongside `shortDuration`, so the
+    /// two read identically for an account with no 5-hour limit, where every
+    /// countdown is a weekly one.
+    /// Examples: "4d 2h", "1d", "23h 59m", "45m"
+    static func longDuration(_ interval: TimeInterval) -> String {
+        let totalSeconds = Int(interval)
+        guard totalSeconds >= 86400 else { return shortDuration(interval) }
+
+        let days = totalSeconds / 86400
+        let hours = (totalSeconds % 86400) / 3600
+        return hours > 0 ? "\(days)d \(hours)h" : "\(days)d"
+    }
+
     /// Format a date as a relative time string. Examples: "just now", "2m ago".
     static func relativeTime(_ date: Date) -> String {
         let interval = Date().timeIntervalSince(date)

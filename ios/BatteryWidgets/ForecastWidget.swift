@@ -8,13 +8,17 @@ import SwiftUI
 /// this going", which is the question worth a large tile. Everything it shows is
 /// precomputed in the payload (see `UsagePayload`) and phrased by the shared
 /// `UsageForecast`, so it can't disagree with the app or the Live Activity.
+///
+/// For an account with no five-hour limit the hero, the projection, and the
+/// header all describe the weekly window, and the weekly row underneath gives
+/// way to a "No 5-hour limit" note.
 struct ForecastWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "ClaudeForecastLarge", provider: UsageProvider()) { entry in
             widgetBody(entry) { LargeForecastView(payload: $0) }
         }
         .configurationDisplayName("Claude — Forecast")
-        .description("Your session, where it's heading, and both 7-day limits.")
+        .description("Your current window, where it's heading, and your 7-day limits.")
         .supportedFamilies([.systemLarge])
     }
 }
@@ -30,7 +34,7 @@ struct LargeForecastView: View {
 
             // Hero: the ring, and the sentence that explains where it's going.
             HStack(alignment: .center, spacing: 16) {
-                UsageRing(utilization: payload.sessionUtilization, size: 88, lineWidth: 9,
+                UsageRing(utilization: payload.primaryUtilization, size: 88, lineWidth: 9,
                           gradientStroke: true)
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -50,7 +54,7 @@ struct LargeForecastView: View {
                             .lineLimit(2).minimumScaleFactor(0.85)
                     }
 
-                    WidgetCountdown(reset: payload.sessionResetsAt)
+                    WidgetCountdown(reset: payload.primaryResetsAt)
                         .lineLimit(1).minimumScaleFactor(0.75)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -78,8 +82,12 @@ struct LargeForecastView: View {
             Divider().overlay(BatteryPalette.hairline)
 
             VStack(alignment: .leading, spacing: 9) {
-                windowRow(title: "Weekly", util: payload.weeklyUtilization,
-                          reset: payload.weeklyResetsAt)
+                if payload.hasSessionLimit {
+                    windowRow(title: "Weekly", util: payload.weeklyUtilization,
+                              reset: payload.weeklyResetsAt)
+                } else {
+                    NoSessionLimitNote()
+                }
                 if let opus = payload.opusUtilization {
                     windowRow(title: "Opus", util: opus, reset: nil)
                 }
@@ -92,16 +100,20 @@ struct LargeForecastView: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            SectionLabel(title: "Session · 5-hour", systemImage: "bolt.fill")
+            if payload.hasSessionLimit {
+                SectionLabel(title: "Session · 5-hour", systemImage: "bolt.fill")
+            } else {
+                SectionLabel(title: "Weekly · 7-day", systemImage: "calendar")
+            }
             if payload.isSessionActive {
                 Circle().fill(BatteryPalette.brand).frame(width: 6, height: 6)
             }
             Spacer(minLength: 4)
-            Text(payload.sessionLevel.label.uppercased())
+            Text(payload.primaryLevel.label.uppercased())
                 .font(.system(size: 9, weight: .bold)).tracking(0.5)
                 .padding(.horizontal, 7).padding(.vertical, 3)
-                .background(payload.sessionLevel.color.opacity(0.16), in: Capsule())
-                .foregroundStyle(payload.sessionLevel.color)
+                .background(payload.primaryLevel.color.opacity(0.16), in: Capsule())
+                .foregroundStyle(payload.primaryLevel.color)
         }
     }
 

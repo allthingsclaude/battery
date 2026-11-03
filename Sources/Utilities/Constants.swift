@@ -12,7 +12,7 @@ enum Constants {
     static let oauthScopes = "user:profile user:inference"
     static let oauthRedirectPath = "/callback"
     // Kept in step with Info.plist by Scripts/release.sh.
-    static let userAgent = "Battery/0.8.1"
+    static let userAgent = "Battery/0.9.0"
 
     // Push relay — the Cloudflare Worker that forwards Live Activity updates to
     // the iPhone app (see worker/).
@@ -39,6 +39,16 @@ enum Constants {
     // Stats — how far back the heat map reaches. Five weeks so the grid in
     // StatsView (5 rows × 7 days, week-aligned) is always fully covered.
     static let heatMapDays: Int = 35
+
+    // Stats — how far back Battery keeps its own copy of local daily activity.
+    //
+    // Neither source it reads is durable: Claude Code's `stats-cache.json` is a
+    // rolling 30-day window, and the session transcripts the gaps are rebuilt
+    // from are deleted after `cleanupPeriodDays` (30 by default). A day older
+    // than that survives only because Battery wrote it down while it was still
+    // visible, so the archive has to outlive both. A year bounds the file at a
+    // few tens of kilobytes while reaching well past any streak worth showing.
+    static let localHistoryRetentionDays: Int = 365
 
     // UI — Tahoe-style corner radius for the menu bar panel
     static let panelCornerRadius: CGFloat = 24

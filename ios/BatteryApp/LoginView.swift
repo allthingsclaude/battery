@@ -38,6 +38,11 @@ struct LoginView: View {
                 Button("Preview with demo data") { service.toggleDemo() }
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(BatteryPalette.brandDark)
+                // An Ultra account has no five-hour limit, so every surface
+                // leads with the weekly window — worth seeing without one.
+                Button("Preview an Ultra account") { service.toggleDemo(weeklyOnly: true) }
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(BatteryPalette.brandDark)
                 #endif
             }
             .padding(28)

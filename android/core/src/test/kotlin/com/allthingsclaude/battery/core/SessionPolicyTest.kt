@@ -393,4 +393,189 @@ class SessionPolicyTest {
         // A tie goes to the session: it moves faster and is the one you can act on.
         assertEquals(UsagePayload.FocusWindow.SESSION, focus(session = 50.0, weekly = 50.0))
     }
+
+    // ── Weekly-only accounts ────────────────────────────────────────────────
+    //
+    // A verified Ultra account has no five-hour window. The weekly window takes
+    // over every rule here — and, being a week long and almost always in use,
+    // it cannot bound the card the way a five-hour window does.
+
+    private fun weeklyOnly(
+        weekly: Double,
+        active: Boolean = false,
+        resetsAt: Instant? = now.plusSeconds(3 * 86_400),
+    ) = UsagePayload(
+        sessionUtilization = 0.0,
+        sessionResetsAt = null,
+        weeklyUtilization = weekly,
+        weeklyResetsAt = resetsAt,
+        hasSessionLimit = false,
+        isSessionActive = active,
+        updatedAt = now,
+    )
+
+    @Test
+    fun `SMART on a weekly-only account waits for activity`() {
+        // The session rule — any usage in an open window — would put a card up
+        // for the whole week: the weekly window is open and used nearly always.
+        // So does the background worker, which evaluates with a fresh state.
+        for (weekly in listOf(1.0, 40.0, 95.0)) {
+            assertIs<SessionPolicy.Decision.Hide>(
+                SessionPolicy.evaluate(SessionPolicy.State(), weeklyOnly(weekly), now = now).decision,
+                "an idle week at $weekly% must not raise a card",
+            )
+        }
+        assertIs<SessionPolicy.Decision.Show>(
+            SessionPolicy.evaluate(SessionPolicy.State(), weeklyOnly(40.0, active = true), now = now).decision,
+        )
+    }
+
+    @Test
+    fun `a weekly-only card goes after the grace period, however full the week`() {
+        // END_THRESHOLD keeps a session card up through a lull because a
+        // five-hour window ends soon anyway. A week above 25% would keep it up
+        // for days, so for these accounts idleness alone ends the card.
+        var state = SessionPolicy.evaluate(
+            SessionPolicy.State(), weeklyOnly(80.0, active = true), now = now,
+        ).state
+
+        val idle = SessionPolicy.evaluate(state, weeklyOnly(80.0), now = now)
+        assertIs<SessionPolicy.Decision.Show>(idle.decision, "stays up through a short lull")
+        state = idle.state
+
+        val late = SessionPolicy.evaluate(
+            state,
+            weeklyOnly(80.0),
+            now = now.plusSeconds(SessionPolicy.END_GRACE_SECONDS),
+        )
+        assertIs<SessionPolicy.Decision.Hide>(late.decision)
+    }
+
+    @Test
+    fun `the level thresholds are session-only`() {
+        // The shared rule across Mac, worker, iOS and here. A session at 80%
+        // stays up through any lull — its window ends within five hours anyway.
+        // The same 80% of a week, idle past the grace period, goes: weekly
+        // utilization only climbs until the weekly reset, so a level-based
+        // exemption would pin the card up for days. And no weekly level, however
+        // high, starts a card on its own; only activity does.
+        val idleStart = now
+        val pastGrace = idleStart.plusSeconds(SessionPolicy.END_GRACE_SECONDS)
+
+        var session = SessionPolicy.evaluate(
+            SessionPolicy.State(), payload(80.0, active = true), now = idleStart,
+        ).state
+        session = SessionPolicy.evaluate(session, payload(80.0), now = idleStart).state
+        assertIs<SessionPolicy.Decision.Show>(
+            SessionPolicy.evaluate(session, payload(80.0), now = pastGrace).decision,
+            "a session account keeps today's rules",
+        )
+
+        var weekly = SessionPolicy.evaluate(
+            SessionPolicy.State(), weeklyOnly(80.0, active = true), now = idleStart,
+        ).state
+        weekly = SessionPolicy.evaluate(weekly, weeklyOnly(80.0), now = idleStart).state
+        assertIs<SessionPolicy.Decision.Hide>(
+            SessionPolicy.evaluate(weekly, weeklyOnly(80.0), now = pastGrace).decision,
+            "a weekly-only card ends on idleness whatever the level",
+        )
+
+        assertIs<SessionPolicy.Decision.Hide>(
+            SessionPolicy.evaluate(SessionPolicy.State(), weeklyOnly(95.0), now = now).decision,
+            "a high weekly level never starts a card by itself",
+        )
+    }
+
+    @Test
+    fun `WHENEVER_OPEN on a weekly-only account shows while the week is open`() {
+        val outcome = SessionPolicy.evaluate(
+            SessionPolicy.State(),
+            weeklyOnly(12.0),
+            mode = SessionPolicy.Mode.WHENEVER_OPEN,
+            now = now,
+        )
+        assertIs<SessionPolicy.Decision.Show>(outcome.decision)
+
+        val noWeek = SessionPolicy.evaluate(
+            SessionPolicy.State(),
+            weeklyOnly(0.0, resetsAt = null),
+            mode = SessionPolicy.Mode.WHENEVER_OPEN,
+            now = now,
+        )
+        assertIs<SessionPolicy.Decision.Hide>(noWeek.decision)
+    }
+
+    @Test
+    fun `alerts follow the weekly window`() {
+        // The stored session is 0% on these accounts; alerting on it would mean
+        // never alerting at all.
+        var state = SessionPolicy.evaluate(
+            SessionPolicy.State(), weeklyOnly(60.0, active = true), now = now,
+        ).state
+        val crossing = SessionPolicy.evaluate(state, weeklyOnly(76.0, active = true), now = now)
+        assertEquals(UsageLevel.HIGH, (crossing.decision as SessionPolicy.Decision.Show).alertLevel)
+        state = crossing.state
+        assertEquals(true, state.primaryIsWeekly)
+    }
+
+    @Test
+    fun `a weekly rollover shows the reset card`() {
+        val outcome = SessionPolicy.evaluate(
+            SessionPolicy.State(previousUtilization = 70.0, primaryIsWeekly = true),
+            weeklyOnly(2.0, active = true),
+            now = now,
+        )
+        assertIs<SessionPolicy.Decision.ShowReset>(outcome.decision)
+    }
+
+    @Test
+    fun `losing the session limit is not a rollover`() {
+        // A session at 45% followed by a week at 4% is two different windows,
+        // not one that reset. Read as a reset it would post "Weekly limit reset"
+        // and take the card down at the moment verification landed.
+        var state = SessionPolicy.evaluate(
+            SessionPolicy.State(), payload(45.0, active = true), now = now,
+        ).state
+        assertEquals(false, state.primaryIsWeekly)
+
+        val switched = SessionPolicy.evaluate(state, weeklyOnly(4.0, active = true), now = now)
+        assertIs<SessionPolicy.Decision.Show>(switched.decision)
+        state = switched.state
+
+        // And back: a temporary limit appearing is not a rollover either.
+        val back = SessionPolicy.evaluate(state, payload(2.0, active = true), now = now)
+        assertIs<SessionPolicy.Decision.Show>(back.decision)
+    }
+
+    @Test
+    fun `one window's alert neither fires nor silences the other's`() {
+        // A session that alerted CRITICAL, then the account goes weekly-only at
+        // 80%. That first weekly reading is seeded quietly, as any card's first
+        // reading is — and the session's CRITICAL must not swallow the week's
+        // own climb to CRITICAL later.
+        var state = SessionPolicy.State()
+        state = SessionPolicy.evaluate(state, payload(60.0, active = true), now = now).state
+        state = SessionPolicy.evaluate(state, payload(92.0, active = true), now = now).state
+        assertEquals(UsageLevel.CRITICAL, state.alertedLevel)
+
+        val switched = SessionPolicy.evaluate(state, weeklyOnly(80.0, active = true), now = now)
+        assertNull((switched.decision as SessionPolicy.Decision.Show).alertLevel)
+        assertEquals(UsageLevel.HIGH, switched.state.alertedLevel)
+
+        val climbed = SessionPolicy.evaluate(switched.state, weeklyOnly(91.0, active = true), now = now)
+        assertEquals(
+            UsageLevel.CRITICAL,
+            (climbed.decision as SessionPolicy.Decision.Show).alertLevel,
+        )
+    }
+
+    @Test
+    fun `a weekly-only account always focuses the week`() {
+        // Its stored session is 0%, which must never win a comparison it was
+        // not part of — nor tie with an empty week and claim the focus.
+        val payload = weeklyOnly(0.0)
+        assertEquals(UsagePayload.FocusWindow.WEEKLY, payload.focusWindow)
+        assertEquals(UsagePayload.FocusWindow.WEEKLY, payload.primaryWindow)
+        assertEquals(0.0, payload.focusUtilization)
+    }
 }

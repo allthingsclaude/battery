@@ -29,6 +29,9 @@ final class UsageService: ObservableObject {
     // background task and the widget's self-fetch contribute to the same buffer.
     private var lastRiseAt: Date?
     private var lastUtilization: Double?
+    /// Which window `lastUtilization` measured. A rise is only a rise within
+    /// one window — 4% session after 63% weekly is a different number, not a drop.
+    private var lastWindow: UsagePayload.FocusWindow?
     private let activeWindow: TimeInterval = 10 * 60
 
     var isSignedIn: Bool { !accounts.isEmpty }
@@ -164,6 +167,7 @@ final class UsageService: ObservableObject {
         SessionHistory.reset()
         lastRiseAt = nil
         lastUtilization = nil
+        lastWindow = nil
     }
 
     // MARK: - Polling
@@ -235,24 +239,39 @@ final class UsageService: ObservableObject {
 
     /// `accountName` is passed in (rather than read from `selectedAccount`) so a
     /// response can only ever be labelled with the account it was fetched for.
+    ///
+    /// Everything that tracks "the" window — the regression, activity inference
+    /// — follows the primary one: the session, or the weekly window for an
+    /// account with no five-hour limit. The session fields are then 0 / nil.
     private func buildPayload(from usage: UsageResponse, accountName: String) -> UsagePayload {
-        let session = usage.fiveHour
-        let sessionUtil = session?.utilization ?? 0
-        let sessionReset = session?.resetsAtDate
+        let session = usage.sessionBucket
+        let window = usage.primaryWindow
+        let primaryUtil = usage.primaryUtilization
 
         // Burn-rate projection, from the buffer shared with the widget and the
         // background task.
-        let projection = SessionHistory.record(utilization: sessionUtil, resetsAt: sessionReset)
+        let projection = SessionHistory.record(
+            utilization: primaryUtil,
+            resetsAt: usage.primaryResetsAt,
+            window: window
+        )
 
-        // Activity inference: a session is "active" if utilization climbed recently.
-        if let last = lastUtilization, sessionUtil > last + 0.01 { lastRiseAt = Date() }
-        lastUtilization = sessionUtil
-        let isActive = session != nil
-            && (lastRiseAt.map { Date().timeIntervalSince($0) < activeWindow } ?? false)
+        // Activity inference: a session is "active" if utilization climbed
+        // recently. A switch of primary window restarts the comparison rather
+        // than reading the jump between two different windows as a rise.
+        if window != lastWindow {
+            lastUtilization = nil
+            lastRiseAt = nil
+        }
+        if let last = lastUtilization, primaryUtil > last + 0.01 { lastRiseAt = Date() }
+        lastUtilization = primaryUtil
+        lastWindow = window
+        let isActive = lastRiseAt.map { Date().timeIntervalSince($0) < activeWindow } ?? false
 
         return UsagePayload(
-            sessionUtilization: sessionUtil,
-            sessionResetsAt: sessionReset,
+            hasSessionLimit: session != nil,
+            sessionUtilization: session?.utilization ?? 0,
+            sessionResetsAt: session?.resetsAtDate,
             weeklyUtilization: usage.sevenDay.utilization,
             weeklyResetsAt: usage.sevenDay.resetsAtDate,
             opusUtilization: usage.sevenDayOpus?.utilization,
@@ -274,9 +293,14 @@ final class UsageService: ObservableObject {
     /// lifecycle — widgets refreshing, the Live Activity starting, escalating
     /// through High/Critical, then the reset card — without a live coding session
     /// or even signing in. Utilization climbs ~4%/tick, then rolls over.
-    func toggleDemo() { isDemoRunning ? stopDemo() : startDemo() }
+    ///
+    /// `weeklyOnly` plays an Ultra account with no five-hour limit instead: the
+    /// weekly window does the climbing, and every surface leads with it.
+    func toggleDemo(weeklyOnly: Bool = false) {
+        isDemoRunning ? stopDemo() : startDemo(weeklyOnly: weeklyOnly)
+    }
 
-    private func startDemo() {
+    private func startDemo(weeklyOnly: Bool) {
         stopPolling()
         isDemoRunning = true
         demoTask = Task { @MainActor in
@@ -286,16 +310,18 @@ final class UsageService: ObservableObject {
             while !Task.isCancelled {
                 util = util >= 96 ? 6 : util + 4
                 let p = UsagePayload(
-                    sessionUtilization: util,
-                    sessionResetsAt: sessionReset,
-                    weeklyUtilization: 63,
+                    hasSessionLimit: !weeklyOnly,
+                    sessionUtilization: weeklyOnly ? 0 : util,
+                    sessionResetsAt: weeklyOnly ? nil : sessionReset,
+                    weeklyUtilization: weeklyOnly ? util : 63,
                     weeklyResetsAt: weeklyReset,
-                    opusUtilization: 21,
+                    opusUtilization: weeklyOnly ? nil : 21,
                     fableUtilization: 34,
-                    burnRatePerHour: 9.2,
-                    projectedLimitAt: util > 55 ? Date().addingTimeInterval(40 * 60) : nil,
+                    burnRatePerHour: weeklyOnly ? 1.4 : 9.2,
+                    projectedLimitAt: util > 55
+                        ? Date().addingTimeInterval(weeklyOnly ? 30 * 3600 : 40 * 60) : nil,
                     isSessionActive: util > 10,
-                    planTier: "Max 5x",
+                    planTier: weeklyOnly ? "Ultra" : "Max",
                     accountName: "Demo",
                     isConnected: true,
                     updatedAt: Date()

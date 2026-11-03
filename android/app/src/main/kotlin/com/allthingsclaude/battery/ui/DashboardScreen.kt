@@ -57,6 +57,11 @@ import kotlin.math.roundToInt
  *
  * Every word about the projection comes from [UsageForecast]. That is the whole
  * reason the type exists, and the Live Update already drifted away from it once.
+ *
+ * On an account with no five-hour limit the hero card is the weekly window —
+ * the one that can actually stop work — and the forecast describes the week.
+ * There is no session card at all rather than a ring parked at 0%, and the
+ * weekly card below keeps only what the hero doesn't already show.
  */
 @Composable
 fun DashboardScreen(
@@ -74,11 +79,11 @@ fun DashboardScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         NowBarBanner()
-        SessionCard(payload, now)
+        if (payload.hasSessionLimit) SessionCard(payload, now) else WeeklyHeroCard(payload, now)
         ForecastCard(UsageForecast(payload, now = now))
         WeeklyCard(payload, now)
         ExtraUsageCard(payload)
-        CardNote(cardMode)
+        CardNote(cardMode, payload.hasSessionLimit)
     }
 }
 
@@ -238,6 +243,50 @@ private fun SessionCard(payload: UsagePayload, now: Instant) {
     }
 }
 
+/**
+ * The hero for an account with no five-hour limit: the session card's layout,
+ * carrying the weekly window.
+ *
+ * Same ring, same size, same badge, so the screen has the shape it always had
+ * and the eye lands in the same place. What changes is what it is about, said in
+ * the label, plus one quiet line saying why there is no session card — without
+ * it, a reader who has had one for months goes looking for it.
+ */
+@Composable
+private fun WeeklyHeroCard(payload: UsagePayload, now: Instant) {
+    BatteryCard(padding = 18) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            SectionLabel("Weekly · 7-day")
+            LevelBadge(payload.weeklyLevel)
+        }
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            UsageRing(payload.weeklyUtilization, size = 148.dp, caption = "used")
+        }
+        Column(
+            Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                payload.weeklyResetsAt
+                    ?.let { TimeFormatting.untilReset((it.epochSecond - now.epochSecond).toDouble()) }
+                    ?.let { "Resets in $it" }
+                    // A weekly window opens on first use, like a session does.
+                    ?: "No weekly window open",
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+            )
+            Text(
+                "No 5-hour limit on this account",
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+            )
+        }
+    }
+}
+
 @Composable
 private fun LevelBadge(level: UsageLevel) {
     Text(
@@ -255,7 +304,9 @@ private fun LevelBadge(level: UsageLevel) {
 private fun ForecastCard(forecast: UsageForecast) {
     BatteryCard {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            SectionLabel("Forecast")
+            // Named when it is the week, because "Hits 100% in 2d 5h" under a
+            // bare "Forecast" was, for every month before this, a session.
+            SectionLabel(if (forecast.isWeekly) "Weekly forecast" else "Forecast")
             Text(
                 forecast.badgeLabel,
                 style = MaterialTheme.typography.labelMedium,
@@ -285,19 +336,28 @@ private fun ForecastCard(forecast: UsageForecast) {
 
 @Composable
 private fun WeeklyCard(payload: UsagePayload, now: Instant) {
+    // With no session window the weekly is already the hero above, so repeating
+    // it here would be the same number twice. What is left is the model-scoped
+    // row — and when there is none, no card at all rather than an empty one.
+    if (!payload.hasSessionLimit && payload.opusUtilization == null) return
+
     BatteryCard {
-        BarRow(
-            "Weekly · 7-day",
-            payload.weeklyUtilization,
-            payload.weeklyResetsAt?.let {
-                TimeFormatting.untilReset((it.epochSecond - now.epochSecond).toDouble())
-            },
-        )
+        if (payload.hasSessionLimit) {
+            BarRow(
+                "Weekly · 7-day",
+                payload.weeklyUtilization,
+                payload.weeklyResetsAt?.let {
+                    TimeFormatting.untilReset((it.epochSecond - now.epochSecond).toDouble())
+                },
+            )
+        }
         // Most accounts have no model-scoped bucket; an empty row would imply a
         // limit they don't have. The heading comes from the API, not from here —
         // it was hardcoded "Opus" and the live answer is now "Fable".
         payload.opusUtilization?.let {
-            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            if (payload.hasSessionLimit) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            }
             BarRow("${payload.scopedTitle} · 7-day", it, null)
         }
     }
@@ -430,17 +490,25 @@ private fun Stat(label: String, value: String) {
  * It is here because the behaviour is genuinely non-obvious: in SMART the card
  * can be absent while the app shows 7%, and without a word of explanation that
  * reads as the feature being broken rather than as it working as configured.
+ * Worded per account, because with no five-hour window the same mode follows a
+ * different rule — see [SessionPolicy.Mode.SMART].
  */
 @Composable
-private fun CardNote(mode: SessionPolicy.Mode) {
+private fun CardNote(mode: SessionPolicy.Mode, hasSessionLimit: Boolean) {
     Text(
         when (mode) {
             SessionPolicy.Mode.OFF ->
                 "The lock-screen card is off. Turn it on in Settings."
-            SessionPolicy.Mode.SMART ->
+            SessionPolicy.Mode.SMART -> if (hasSessionLimit) {
                 "The lock-screen card appears once you've used an open session, and goes after a long idle."
-            SessionPolicy.Mode.WHENEVER_OPEN ->
+            } else {
+                "The lock-screen card appears while your weekly usage is climbing, and goes after a long idle."
+            }
+            SessionPolicy.Mode.WHENEVER_OPEN -> if (hasSessionLimit) {
                 "The lock-screen card stays up for the whole 5-hour window."
+            } else {
+                "The lock-screen card stays up for the whole weekly window."
+            }
         },
         Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
         style = MaterialTheme.typography.labelMedium,

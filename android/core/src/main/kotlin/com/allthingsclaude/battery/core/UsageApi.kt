@@ -101,6 +101,11 @@ data class ExtraUsage(
 
 /** The `/api/oauth/usage` response. */
 data class UsageResponse(
+    /**
+     * The five-hour window, from `five_hour` or, failing that, the `limits`
+     * array's `session` entry. Null means the account has no five-hour limit at
+     * all — see [hasSessionLimit].
+     */
     val fiveHour: UsageBucket?,
     val sevenDay: UsageBucket,
     val sevenDayOpus: UsageBucket?,
@@ -108,13 +113,30 @@ data class UsageResponse(
     val scopedWeekly: ScopedWeekly?,
     /** Pay-as-you-go credits, null when the account has none. */
     val extraUsage: ExtraUsage?,
-)
+) {
+    /**
+     * Whether this account is metered by a five-hour window at all.
+     *
+     * Not an error when false. Verified Ultra accounts (the plan sold as Max 20x
+     * until 2026-10-30) have weekly limits only, and the API answers for them
+     * with `"five_hour": null` and no `session` entry in `limits`. The plan name
+     * cannot stand in for this — an unverified Ultra account still carries a
+     * temporary five-hour limit while reporting the same tier — so it is read
+     * from every response, and the weekly window takes over everything the
+     * session window used to drive when it is false.
+     *
+     * An *empty* window is not the same thing. Between sessions an account that
+     * has the limit reports `five_hour` as an object with no `resets_at`, which
+     * parses to a bucket and keeps this true.
+     */
+    val hasSessionLimit: Boolean get() = fiveHour != null
+}
 
 /*
  * No `rateLimitTier`/`planDisplayName`, though `ios/BatteryKit/UsageAPIShared.swift`
  * has both: this endpoint sends no `rate_limit_tier`, measured on a live account,
  * so the badge was permanently blank. `ProfileApi.planLabel` is the real source
- * and can tell Max 20x from Max, which this mapping could not.
+ * and can tell Ultra from Max, which this mapping could not.
  */
 
 /** Everything that can go wrong talking to the usage API. */
@@ -277,7 +299,10 @@ class UsageApi(
         fun parseUsage(body: String): UsageResponse {
             val root = json.parseToJsonElement(body).jsonObject
             return UsageResponse(
-                fiveHour = bucket(root, "five_hour"),
+                // The flat key first, the `limits` array second: the two carry
+                // the same numbers, and an account reporting either one has a
+                // five-hour window. Only both absent means it has none.
+                fiveHour = bucket(root, "five_hour") ?: sessionLimit(root),
                 sevenDay = bucket(root, "seven_day")
                     ?: throw IllegalArgumentException("response has no seven_day bucket"),
                 sevenDayOpus = bucket(root, "seven_day_opus"),
@@ -323,6 +348,29 @@ class UsageApi(
             )
         }
 
+        /** The `limits` array's entries, or nothing when it is absent or malformed. */
+        private fun limits(root: kotlinx.serialization.json.JsonObject) =
+            (root["limits"] as? kotlinx.serialization.json.JsonArray)
+                ?.mapNotNull { it as? kotlinx.serialization.json.JsonObject }
+                .orEmpty()
+
+        /**
+         * The five-hour window as the `limits` array reports it, for a response
+         * that carries it there and not under `five_hour`. Same
+         * `{kind, percent, resets_at}` shape as the scoped entry below.
+         */
+        private fun sessionLimit(root: kotlinx.serialization.json.JsonObject): UsageBucket? {
+            val entry = limits(root)
+                .firstOrNull { it["kind"]?.jsonPrimitive?.contentOrNullSafe() == "session" }
+                ?: return null
+            val percent = entry["percent"]?.jsonPrimitive?.contentOrNullSafe()?.toDoubleOrNull()
+                ?: return null
+            return UsageBucket(
+                utilization = percent,
+                resetsAt = entry["resets_at"]?.jsonPrimitive?.contentOrNullSafe()?.let(::parseInstant),
+            )
+        }
+
         /**
          * The model-scoped weekly limit, read from the `limits` array.
          *
@@ -338,9 +386,8 @@ class UsageApi(
          * or an account still on that shape — keeps working.
          */
         private fun scopedWeekly(root: kotlinx.serialization.json.JsonObject): ScopedWeekly? {
-            val entry = (root["limits"] as? kotlinx.serialization.json.JsonArray)
-                ?.mapNotNull { it as? kotlinx.serialization.json.JsonObject }
-                ?.firstOrNull { it["kind"]?.jsonPrimitive?.contentOrNullSafe() == "weekly_scoped" }
+            val entry = limits(root)
+                .firstOrNull { it["kind"]?.jsonPrimitive?.contentOrNullSafe() == "weekly_scoped" }
 
             if (entry != null) {
                 val label = entry["scope"]?.let { it as? kotlinx.serialization.json.JsonObject }

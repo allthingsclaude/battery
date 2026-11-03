@@ -52,14 +52,26 @@ class SessionHistory(private val store: SnapshotStore) {
      * Record a sample for the current window and return the projection it
      * implies. With no open window the buffer is dropped — samples from a closed
      * window can only poison the next one's regression.
+     *
+     * [weekly] says the sample is of the weekly window, which is the primary one
+     * on an account with no five-hour limit. Only samples of the *same* window
+     * survive into the saved buffer, so an account that gains or loses its
+     * session limit between two polls starts a fresh regression rather than
+     * fitting a line across a session percentage and a weekly one.
      */
-    fun record(utilization: Double, resetsAt: Instant?, now: Instant = Instant.now()): Projection {
+    fun record(
+        utilization: Double,
+        resetsAt: Instant?,
+        now: Instant = Instant.now(),
+        weekly: Boolean = false,
+    ): Projection {
         if (resetsAt == null) {
             store.clear()
             return Projection.NONE
         }
 
-        val history = (currentWindow(resetsAt) + UsageSnapshot(now, utilization, resetsAt))
+        val sample = UsageSnapshot(now, utilization, resetsAt, isWeekly = weekly)
+        val history = (currentWindow(resetsAt, weekly) + sample)
             .sortedBy { it.timestamp }
             .takeLast(CAPACITY)
 
@@ -78,8 +90,9 @@ class SessionHistory(private val store: SnapshotStore) {
     }
 
     /**
-     * When session utilization last went **up** inside the current window, or
-     * null if it never has.
+     * When utilization last went **up** inside the current window, or null if
+     * it never has. The session window's, or the weekly one's when [weekly] —
+     * whichever the account is actually metered by.
      *
      * This is the "is the user actually working right now" signal, and it reads
      * the persisted buffer rather than fields on the caller for a reason that
@@ -95,9 +108,9 @@ class SessionHistory(private val store: SnapshotStore) {
      * recency test: a rise older than the activity window reads as idle no
      * matter how it was stored.
      */
-    fun lastRiseAt(resetsAt: Instant?): Instant? {
+    fun lastRiseAt(resetsAt: Instant?, weekly: Boolean = false): Instant? {
         if (resetsAt == null) return null
-        return currentWindow(resetsAt)
+        return currentWindow(resetsAt, weekly)
             .sortedBy { it.timestamp }
             .zipWithNext()
             .lastOrNull { (before, after) ->
@@ -112,10 +125,16 @@ class SessionHistory(private val store: SnapshotStore) {
      *
      * Same 1-second tolerance the calculator uses: a reset time round-trips
      * through JSON and can come back a hair off.
+     *
+     * Matched on the kind of window as well as its end. A session and a weekly
+     * window can end at the same instant — the last five hours of a week — and
+     * the reset time alone would then splice one window's samples into the
+     * other's regression.
      */
-    private fun currentWindow(resetsAt: Instant): List<UsageSnapshot> =
+    private fun currentWindow(resetsAt: Instant, weekly: Boolean): List<UsageSnapshot> =
         store.load().filter {
-            abs((it.sessionResetsAt.toEpochMilli() - resetsAt.toEpochMilli()) / 1000.0) < 1.0
+            it.isWeekly == weekly &&
+                abs((it.sessionResetsAt.toEpochMilli() - resetsAt.toEpochMilli()) / 1000.0) < 1.0
         }
 
     /** Forget everything — a different account's usage must never feed this one. */

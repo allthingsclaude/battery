@@ -119,17 +119,32 @@ class Settings(context: Context) {
     }
 }
 
-/** Titles and one-line explanations, kept beside the enum they describe. */
-val SessionPolicy.Mode.title: String
-    get() = when (this) {
-        SessionPolicy.Mode.OFF -> "Off"
-        SessionPolicy.Mode.SMART -> "Smart"
-        SessionPolicy.Mode.WHENEVER_OPEN -> "Whole session"
-    }
+/**
+ * Titles and one-line explanations, kept beside the enum they describe.
+ *
+ * Worded for the account in front of the reader. With no five-hour limit the
+ * same modes mean different things — Smart follows activity, and the "whole
+ * window" is a whole week — and that has to be said *before* someone picks a
+ * card that will then sit on their lock screen for seven days.
+ */
+fun SessionPolicy.Mode.title(hasSessionLimit: Boolean = true): String = when (this) {
+    SessionPolicy.Mode.OFF -> "Off"
+    SessionPolicy.Mode.SMART -> "Smart"
+    SessionPolicy.Mode.WHENEVER_OPEN -> if (hasSessionLimit) "Whole session" else "Whole week"
+}
 
-val SessionPolicy.Mode.subtitle: String
-    get() = when (this) {
-        SessionPolicy.Mode.OFF -> "Never show a lock-screen card"
-        SessionPolicy.Mode.SMART -> "While a session is open and in use"
-        SessionPolicy.Mode.WHENEVER_OPEN -> "Any time a 5-hour window is open, at any percentage"
-    }
+fun SessionPolicy.Mode.subtitle(hasSessionLimit: Boolean = true): String = when (this) {
+    SessionPolicy.Mode.OFF -> "Never show a lock-screen card"
+    SessionPolicy.Mode.SMART ->
+        if (hasSessionLimit) {
+            "While a session is open and in use"
+        } else {
+            "While you're actively using Claude"
+        }
+    SessionPolicy.Mode.WHENEVER_OPEN ->
+        if (hasSessionLimit) {
+            "Any time a 5-hour window is open, at any percentage"
+        } else {
+            "Any time the weekly window is open — your account has no 5-hour limit"
+        }
+}

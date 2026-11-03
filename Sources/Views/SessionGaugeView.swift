@@ -1,11 +1,13 @@
 import SwiftUI
 
-/// Displays the 5-hour session usage with a circular gauge and countdown.
+/// Displays the primary window's usage with a circular gauge and countdown —
+/// the 5-hour session, or the weekly window for an account without one.
 struct SessionGaugeView: View {
     let title: String
     let utilization: Double
     let resetsAt: Date?
     let color: Color
+    var window: UsageWindow = .session
 
     private var settings: AppSettings { .shared }
 
@@ -35,7 +37,7 @@ struct SessionGaugeView: View {
                 }
 
                 if let resetsAt = resetsAt {
-                    CountdownLabel(targetDate: resetsAt, mode: settings.showTimeSinceReset ? .elapsed : .remaining)
+                    CountdownLabel(targetDate: resetsAt, mode: settings.showTimeSinceReset ? .elapsed : .remaining, window: window)
                 }
             }
 

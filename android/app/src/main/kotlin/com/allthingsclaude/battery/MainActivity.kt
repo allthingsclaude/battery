@@ -508,6 +508,7 @@ private fun Root() {
                     ),
                     appIcon = pendingIcon ?: installedIcon,
                     onAppIconChange = { pendingIcon = it },
+                    hasSessionLimit = payload?.hasSessionLimit ?: true,
                 )
                 payload != null -> DashboardScreen(payload!!, cardMode)
                 else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

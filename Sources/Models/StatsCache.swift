@@ -8,7 +8,9 @@ struct StatsCache: Codable {
     let totalSessions: Int
     let totalMessages: Int
 
-    struct DailyActivity: Codable {
+    /// `Equatable` so an archive rewrite can be skipped when nothing about a
+    /// day has changed.
+    struct DailyActivity: Codable, Equatable {
         let date: String  // "YYYY-MM-DD"
         let messageCount: Int
         let sessionCount: Int

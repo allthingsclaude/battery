@@ -11,6 +11,11 @@ import Foundation
 ///
 /// Now all three funnel through here and share one buffer in the App Group, so
 /// samples accumulate no matter which process happened to take them.
+///
+/// The buffer tracks the account's *primary* window: the five-hour session, or
+/// — for an account with no session limit (verified Ultra) — the weekly window.
+/// Only one window's samples are ever kept: recording into the other one drops
+/// the lot, so an account flipping between the two starts a clean regression.
 enum SessionHistory {
 
     /// Roughly 30–90 minutes of samples at the app's poll cadence. The
@@ -30,8 +35,17 @@ enum SessionHistory {
     /// Record a sample for the current window and return the projection it
     /// implies. With no open window the buffer is dropped — samples from a
     /// closed window can only poison the next one's regression.
+    ///
+    /// `window` says which window `utilization` and `resetsAt` describe. A
+    /// rollover changes the reset date and a switch of primary window changes
+    /// `window`; either way the old samples are dropped rather than mixed in.
     @discardableResult
-    static func record(utilization: Double, resetsAt: Date?, at now: Date = Date()) -> Projection {
+    static func record(
+        utilization: Double,
+        resetsAt: Date?,
+        window: UsagePayload.FocusWindow,
+        at now: Date = Date()
+    ) -> Projection {
         guard let reset = resetsAt else {
             SharedStore.clearSnapshots()
             return .none
@@ -40,9 +54,10 @@ enum SessionHistory {
         // Same 1-second tolerance the calculator uses: a reset time round-trips
         // through JSON and can come back a hair off.
         var history = SharedStore.loadSnapshots()
-            .filter { abs($0.sessionResetsAt.timeIntervalSince(reset)) < 1.0 }
+            .filter { $0.recordedWindow == window && abs($0.sessionResetsAt.timeIntervalSince(reset)) < 1.0 }
         history.append(
-            UsageSnapshot(timestamp: now, sessionUtilization: utilization, sessionResetsAt: reset)
+            UsageSnapshot(timestamp: now, sessionUtilization: utilization, sessionResetsAt: reset,
+                          window: window)
         )
         history = Array(history.sorted { $0.timestamp < $1.timestamp }.suffix(capacity))
         SharedStore.saveSnapshots(history)

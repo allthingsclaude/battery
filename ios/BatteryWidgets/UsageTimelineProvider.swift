@@ -21,14 +21,17 @@ struct UsageProvider: TimelineProvider {
     private let refreshEvery: TimeInterval = 15 * 60
 
     // The redacted skeleton / gallery preview may use sample data — that's what
-    // placeholders are *for*. Real timelines never do.
+    // placeholders are *for*. Real timelines never do. The sample takes the
+    // shape of the signed-in account (weekly-led for one with no session
+    // limit), so the skeleton doesn't rearrange itself when real data lands.
     func placeholder(in context: Context) -> UsageEntry {
-        UsageEntry(date: Date(), payload: .placeholder)
+        UsageEntry(date: Date(), payload: .placeholder(like: SharedStore.load()))
     }
 
     func getSnapshot(in context: Context, completion: @escaping (UsageEntry) -> Void) {
         // Widget gallery should look populated; a live snapshot uses real data.
-        let payload: UsagePayload? = context.isPreview ? .placeholder : SharedStore.load()
+        let stored = SharedStore.load()
+        let payload: UsagePayload? = context.isPreview ? .placeholder(like: stored) : stored
         completion(UsageEntry(date: Date(), payload: payload))
     }
 

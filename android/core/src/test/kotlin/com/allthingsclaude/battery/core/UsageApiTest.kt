@@ -4,6 +4,7 @@ import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -65,14 +66,94 @@ class UsageApiTest {
 
     @Test
     fun `tolerates a missing five_hour window`() {
-        // Real and common: between sessions there is no open 5-hour window. The
-        // app must render "no session" rather than fail the whole poll.
+        // A response with no five-hour window at all must parse rather than
+        // fail the whole poll. It reads as an account without the limit —
+        // absent and null are the same answer, as they are to Swift's decoder.
         val usage = UsageApi.parseUsage(
             """{ "seven_day": { "utilization": 12.0, "resets_at": null } }"""
         )
         assertNull(usage.fiveHour)
+        assertFalse(usage.hasSessionLimit)
         assertNull(usage.sevenDayOpus)
         assertNull(usage.sevenDay.resetsAt)
+    }
+
+    // ── Weekly-only accounts ────────────────────────────────────────────────
+
+    @Test
+    fun `a null five_hour means the account has no session limit`() {
+        // What the API sends for a verified Ultra account: HTTP 200, the weekly
+        // windows populated, and `"five_hour": null`. Not an error, and not an
+        // empty session — there is no session window to be empty.
+        val usage = UsageApi.parseUsage(
+            """
+            {
+              "five_hour": null,
+              "seven_day": { "utilization": 41.0, "resets_at": "2026-01-04T00:00:00Z" },
+              "limits": [
+                {"kind":"weekly","percent":41.0,"resets_at":"2026-01-04T00:00:00Z"},
+                {"kind":"weekly_scoped","percent":12.0,"resets_at":"2026-01-04T00:00:00Z",
+                 "scope":{"model":{"display_name":"Fable"}}}
+              ]
+            }
+            """.trimIndent()
+        )
+        assertNull(usage.fiveHour)
+        assertFalse(usage.hasSessionLimit)
+        assertEquals(41.0, usage.sevenDay.utilization)
+        assertNotNull(usage.sevenDay.resetsAt)
+        assertEquals("Fable", usage.scopedWeekly?.label)
+    }
+
+    @Test
+    fun `an empty session window still means the account has the limit`() {
+        // Between sessions an account that has the limit reports the window
+        // with no reset time. That is "no window open right now", which must
+        // not be mistaken for "no window, ever".
+        val usage = UsageApi.parseUsage(
+            """
+            {
+              "five_hour": { "utilization": 0.0, "resets_at": null },
+              "seven_day": { "utilization": 12.0, "resets_at": "2026-01-04T00:00:00Z" }
+            }
+            """.trimIndent()
+        )
+        assertTrue(usage.hasSessionLimit)
+        assertNull(usage.fiveHour?.resetsAt)
+    }
+
+    @Test
+    fun `a session entry in limits counts as a session window`() {
+        // The flat key and the `limits` array carry the same numbers. A
+        // response that has moved the window into the array alone still has it.
+        val usage = UsageApi.parseUsage(
+            """
+            {
+              "five_hour": null,
+              "seven_day": { "utilization": 12.0, "resets_at": "2026-01-04T00:00:00Z" },
+              "limits": [
+                {"kind":"session","percent":37.0,"resets_at":"2026-01-01T14:13:00Z"}
+              ]
+            }
+            """.trimIndent()
+        )
+        assertTrue(usage.hasSessionLimit)
+        assertEquals(37.0, usage.fiveHour?.utilization)
+        assertNotNull(usage.fiveHour?.resetsAt)
+    }
+
+    @Test
+    fun `the flat five_hour key wins over the limits entry`() {
+        val usage = UsageApi.parseUsage(
+            """
+            {
+              "five_hour": { "utilization": 50.0, "resets_at": "2026-01-01T14:13:00Z" },
+              "seven_day": { "utilization": 12.0 },
+              "limits": [ {"kind":"session","percent":49.0} ]
+            }
+            """.trimIndent()
+        )
+        assertEquals(50.0, usage.fiveHour?.utilization)
     }
 
     @Test

@@ -8,6 +8,10 @@ class UsageViewModel: ObservableObject {
 
     @Published var sessionUtilization: Double = 0
     @Published var sessionResetsAt: Date?
+    /// False for accounts metered weekly only (verified Ultra). The session
+    /// figures above are then 0 and nil, and the weekly window stands in for
+    /// the session everywhere a single number has to speak for the account.
+    @Published var hasSessionLimit: Bool = true
     @Published var weeklyUtilization: Double = 0
     @Published var weeklyResetsAt: Date?
     @Published var sonnetUtilization: Double?
@@ -67,13 +71,18 @@ class UsageViewModel: ObservableObject {
     /// it is injected into that account's heat map, and one account's busy
     /// afternoon says nothing about another's.
     private var todayPeakSeen: [UUID: Double] = [:]
+    /// Where today's weekly reading started, per account, for accounts with no
+    /// session window. Their "peak" is how much of the weekly allowance today
+    /// has used, which needs a starting point to measure from.
+    private var todayWeeklyBaseline: [UUID: WeeklyBaseline] = [:]
     private var todayPeakDate: Date = Calendar.current.startOfDay(for: Date())
-    private var isReauthenticating = false
     private var projectTokenUsageTask: Task<Void, Never>?
     private var lastProjectTokenUsageRefresh: Date?
     private var lastProjectTokenUsageSessionReset: Date?
     private var lastProjectTokenUsageWeeklyReset: Date?
     private let projectTokenUsageRefreshInterval: TimeInterval = 5 * 60
+    /// How far back the weekly-window regression reaches.
+    private let weeklyProjectionLookback: TimeInterval = 24 * 3600
 
     // Per-account usage state cache
     private var accountUsageStates: [UUID: AccountUsageState] = [:]
@@ -94,6 +103,18 @@ class UsageViewModel: ObservableObject {
         UsageLevel.from(utilization: sessionUtilization).color
     }
 
+    /// The window that can stop work right now: the five-hour session, or the
+    /// weekly window for an account that has no session limit.
+    var primaryWindow: UsageWindow { hasSessionLimit ? .session : .weekly }
+
+    var primaryUtilization: Double {
+        hasSessionLimit ? sessionUtilization : weeklyUtilization
+    }
+
+    var primaryResetsAt: Date? {
+        hasSessionLimit ? sessionResetsAt : weeklyResetsAt
+    }
+
     var weeklyColor: Color {
         UsageLevel.from(utilization: weeklyUtilization).color
     }
@@ -104,16 +125,18 @@ class UsageViewModel: ObservableObject {
         let settings = AppSettings.shared
         guard settings.showMenuBarText else { return "" }
 
-        let pct = settings.displayPercentage(for: sessionUtilization)
+        // Without a session limit the weekly window is the one that can stop
+        // work, so it takes the menu bar rather than a permanent 0%.
+        let pct = settings.displayPercentage(for: primaryUtilization)
 
         let time: String
-        if let resetsAt = sessionResetsAt {
+        if let resetsAt = primaryResetsAt {
             let remaining = max(0, resetsAt.timeIntervalSince(now))
             if settings.showTimeSinceReset {
-                // 5-hour window: time since reset = 5h - time remaining
-                time = TimeFormatting.shortDuration(max(0, 18000 - remaining))
+                // Time since reset = window length - time remaining
+                time = TimeFormatting.longDuration(max(0, primaryWindow.duration - remaining))
             } else {
-                time = TimeFormatting.shortDuration(remaining)
+                time = TimeFormatting.longDuration(remaining)
             }
         } else {
             time = TimeFormatting.shortDuration(0)
@@ -132,7 +155,7 @@ class UsageViewModel: ObservableObject {
     }
 
     var menuBarSymbol: String {
-        UsageLevel.from(utilization: sessionUtilization).sfSymbol
+        UsageLevel.from(utilization: primaryUtilization).sfSymbol
     }
 
     /// The account everything here is attributed to.
@@ -286,26 +309,31 @@ class UsageViewModel: ObservableObject {
     }
 
     /// Re-authenticate the current account (replaces tokens without creating a new account).
+    /// A click always reaches the browser, even while an automatic attempt is
+    /// still waiting on a tab that was never finished.
     func reauthenticateCurrentAccount() {
-        attemptSilentReauth()
+        startReauth()
     }
 
-    /// Silently re-authenticate the current account when the refresh token expires.
+    /// Re-authenticate automatically when the refresh token stops working.
+    /// Skipped while an attempt is already waiting on the browser.
+    private func attemptSilentReauth() {
+        guard !oauthService.isAuthenticating else { return }
+        startReauth()
+    }
+
     /// Opens the browser OAuth flow. If the user completes it, tokens are replaced
     /// and polling resumes. If it fails, falls back to a notification.
-    private func attemptSilentReauth() {
-        guard !isReauthenticating else { return }
+    private func startReauth() {
         guard let account = accountManager.selectedAccount else {
             notificationService.notifyTokenRefreshFailure()
             return
         }
 
-        isReauthenticating = true
         error = "Session expired — signing in again…"
 
         oauthService.startLogin { [weak self] result in
             guard let self = self else { return }
-            self.isReauthenticating = false
 
             switch result {
             case .success(let tokenPair):
@@ -320,6 +348,9 @@ class UsageViewModel: ObservableObject {
                 Task { await self.pollingService.pollNow() }
 
             case .failure:
+                // Back to the error that prompted the attempt, which is the
+                // state that offers Sign In again.
+                self.error = self.pollingService.lastError?.localizedDescription
                 self.notificationService.notifyTokenRefreshFailure()
             }
         }
@@ -328,6 +359,7 @@ class UsageViewModel: ObservableObject {
     func removeAccount(id: UUID) {
         accountUsageStates.removeValue(forKey: id)
         todayPeakSeen.removeValue(forKey: id)
+        todayWeeklyBaseline.removeValue(forKey: id)
         // Otherwise a later sign-in reusing this id would inherit the folder.
         ClaudeConfigDir.clearDir(for: id)
         accountManager.removeAccount(id: id)
@@ -402,6 +434,7 @@ class UsageViewModel: ObservableObject {
     func removeAllAccounts() {
         accountUsageStates.removeAll()
         todayPeakSeen.removeAll()
+        todayWeeklyBaseline.removeAll()
         for account in accountManager.accounts {
             ClaudeConfigDir.clearDir(for: account.id)
         }
@@ -425,7 +458,11 @@ class UsageViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$selectedAccountId)
 
+        // Every failing poll re-publishes `true`. Reacting only to the change
+        // opens the browser once per expiry instead of a new tab every poll
+        // after an attempt is abandoned.
         pollingService.$needsReauth
+            .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] needsReauth in
                 guard let self = self, needsReauth else { return }
@@ -449,6 +486,7 @@ class UsageViewModel: ObservableObject {
         var state = AccountUsageState()
         state.sessionUtilization = sessionUtilization
         state.sessionResetsAt = sessionResetsAt
+        state.hasSessionLimit = hasSessionLimit
         state.weeklyUtilization = weeklyUtilization
         state.weeklyResetsAt = weeklyResetsAt
         state.sonnetUtilization = sonnetUtilization
@@ -476,6 +514,7 @@ class UsageViewModel: ObservableObject {
     private func restoreState(_ state: AccountUsageState) {
         sessionUtilization = state.sessionUtilization
         sessionResetsAt = state.sessionResetsAt
+        hasSessionLimit = state.hasSessionLimit
         weeklyUtilization = state.weeklyUtilization
         weeklyResetsAt = state.weeklyResetsAt
         sonnetUtilization = state.sonnetUtilization
@@ -675,7 +714,11 @@ class UsageViewModel: ObservableObject {
 
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
-        guard let windowStart = calendar.date(byAdding: .day, value: -Constants.heatMapDays, to: today) else { return }
+        // The streak reaches as far back as Battery has snapshots, not as far as
+        // the heat map draws. Querying the heat-map window instead capped every
+        // streak at `heatMapDays + 1`, so an account that had been used daily for
+        // months sat frozen at 36 and could only ever move downwards from there.
+        guard let windowStart = calendar.date(byAdding: .day, value: -Constants.dataRetentionDays, to: today) else { return }
 
         Task {
             do {
@@ -706,8 +749,15 @@ class UsageViewModel: ObservableObject {
 
     private func updateFromUsage(_ usage: UsageResponse) {
         guard !needsLogin else { return }
-        sessionUtilization = usage.fiveHour?.utilization ?? 0
-        sessionResetsAt = usage.fiveHour?.resetsAtDate
+        // An account can change metering between polls — Ultra verification
+        // lifting the temporary session limit, or reimposing it — and a
+        // projection about one window says nothing about the other.
+        if usage.hasSessionLimit != hasSessionLimit {
+            projection = nil
+        }
+        hasSessionLimit = usage.hasSessionLimit
+        sessionUtilization = usage.sessionBucket?.utilization ?? 0
+        sessionResetsAt = usage.sessionBucket?.resetsAtDate
         weeklyUtilization = usage.sevenDay.utilization
         weeklyResetsAt = usage.sevenDay.resetsAtDate
         sonnetUtilization = usage.sevenDaySonnet?.utilization
@@ -722,19 +772,15 @@ class UsageViewModel: ObservableObject {
         lastUpdated = Date()
         error = nil
 
-        // Clear projections when no active session
-        if usage.fiveHour == nil {
-            projection = nil
-        }
-
         // Track today's peak utilization (survives session resets)
         let today = Calendar.current.startOfDay(for: Date())
         if today != todayPeakDate {
             todayPeakSeen.removeAll()
+            todayWeeklyBaseline.removeAll()
             todayPeakDate = today
         }
         if let accountId = activeAccountId {
-            todayPeakSeen[accountId] = max(selectedTodayPeak, sessionUtilization)
+            todayPeakSeen[accountId] = max(selectedTodayPeak, todayActivity(for: accountId))
         }
 
         // Ensure today appears in heatmap and sparkline with live data
@@ -749,18 +795,51 @@ class UsageViewModel: ObservableObject {
         refreshProjectTokenUsage()
 
         // Reset notification thresholds when utilization drops
-        notificationService.resetThresholds(below: sessionUtilization)
+        notificationService.resetThresholds(below: primaryUtilization)
 
         // Relay to a paired iPhone. Uses the projection from the previous poll —
         // it's a slow-moving estimate, and waiting for this poll's regression
         // would delay the Lock Screen by a full cycle.
         pushRelayService.send(pushSnapshot())
 
-        // Save snapshot and compute projections (only with active session)
-        guard dbInitialized, usage.fiveHour != nil else { return }
+        // Save snapshot and compute projections. A weekly-only account has no
+        // session reading but its weekly window is always open, so it records
+        // on every poll too.
+        guard dbInitialized else { return }
         Task {
             await saveSnapshotAndProject(usage)
         }
+    }
+
+    /// Today's activity figure for the heat map and sparkline.
+    ///
+    /// With a session window that is simply its utilization — `todayPeakSeen`
+    /// keeps the day's maximum. A weekly-only account has no such reading, so
+    /// its figure is how many points of the weekly allowance today has used:
+    /// the rise since the first reading of the day, carried across a weekly
+    /// reset should one fall today. Matches what `dailyPeakUtilization`
+    /// derives from the stored snapshots.
+    private func todayActivity(for accountId: UUID) -> Double {
+        guard !hasSessionLimit else { return sessionUtilization }
+
+        let resetsAt = weeklyResetsAt
+        guard var baseline = todayWeeklyBaseline[accountId] else {
+            todayWeeklyBaseline[accountId] = WeeklyBaseline(resetsAt: resetsAt, start: weeklyUtilization, carried: 0)
+            return 0
+        }
+        let sameWindow: Bool
+        switch (baseline.resetsAt, resetsAt) {
+        case let (old?, new?): sameWindow = abs(old.timeIntervalSince(new)) < 60
+        case (nil, nil): sameWindow = true
+        default: sameWindow = false
+        }
+        if !sameWindow {
+            // The window rolled over today: bank what the old one used, and
+            // everything in the new one was used today.
+            baseline = WeeklyBaseline(resetsAt: resetsAt, start: 0, carried: todayPeakSeen[accountId] ?? 0)
+            todayWeeklyBaseline[accountId] = baseline
+        }
+        return baseline.carried + max(0, weeklyUtilization - baseline.start)
     }
 
     /// Current state in the shape the iPhone's Live Activity expects.
@@ -772,6 +851,8 @@ class UsageViewModel: ObservableObject {
             burnRatePerHour: projection?.currentRate ?? 0,
             projectedLimitAt: projection?.projectedLimitTime,
             isSessionActive: isSessionActive,
+            hasSessionLimit: hasSessionLimit,
+            weeklyResetsAt: weeklyResetsAt,
             // The phone hides an unknown tier rather than guessing, so send an
             // empty string instead of the literal "Unknown".
             planTier: planTier == .unknown ? "" : planTier.displayName,
@@ -780,19 +861,23 @@ class UsageViewModel: ObservableObject {
     }
 
     private func saveSnapshotAndProject(_ usage: UsageResponse) async {
-        guard let fiveHour = usage.fiveHour else { return }
+        let session = usage.sessionBucket
+        let window: UsageWindow = session != nil ? .session : .weekly
 
-        // Save snapshot
+        // Save snapshot. A weekly-only account has no session reading, so its
+        // session columns hold 0 and a fixed placeholder date, flagged by
+        // `hasSessionLimit` so nothing mistakes them for a real window.
         let snapshot = UsageSnapshot(
-            sessionUtilization: fiveHour.utilization,
-            sessionResetsAt: fiveHour.resetsAtDate ?? Date(),
+            sessionUtilization: session?.utilization ?? 0,
+            sessionResetsAt: session.map { $0.resetsAtDate ?? Date() } ?? Date(timeIntervalSince1970: 0),
             weeklyUtilization: usage.sevenDay.utilization,
             weeklyResetsAt: usage.sevenDay.resetsAtDate ?? Date(),
             sonnetUtilization: usage.sevenDaySonnet?.utilization,
             opusUtilization: usage.sevenDayOpus?.utilization,
             fableUtilization: usage.fableUtilization,
             planTier: planTier.rawValue,
-            accountId: activeAccountId
+            accountId: activeAccountId,
+            hasSessionLimit: session != nil
         )
 
         do {
@@ -806,26 +891,51 @@ class UsageViewModel: ObservableObject {
 
         // Compute projections from recent snapshots
         do {
-            let recentSnapshots = try await databaseService.getLatestSnapshots(count: 20, accountId: activeAccountId)
-            guard let resetsAt = fiveHour.resetsAtDate else { return }
+            let utilization: Double
+            let resetsAt: Date?
+            let recentSnapshots: [UsageSnapshot]
+            switch window {
+            case .session:
+                utilization = session?.utilization ?? 0
+                resetsAt = session?.resetsAtDate
+                recentSnapshots = try await databaseService.getLatestSnapshots(count: 20, accountId: activeAccountId)
+            case .weekly:
+                // Weekly utilization moves a whole point at a time and roughly
+                // ten times slower than a session's, so the last twenty minutes
+                // would regress over a step or two of noise. A day's worth of
+                // readings gives the pace across work and idle time alike,
+                // which is what decides whether the week runs out.
+                utilization = usage.sevenDay.utilization
+                resetsAt = usage.sevenDay.resetsAtDate
+                let now = Date()
+                recentSnapshots = try await databaseService.getSnapshots(
+                    from: now.addingTimeInterval(-weeklyProjectionLookback),
+                    to: now,
+                    accountId: activeAccountId
+                )
+            }
+            guard let resetsAt else { return }
 
             let proj = BurnRateCalculator.calculate(
                 snapshots: recentSnapshots,
-                currentUtilization: fiveHour.utilization,
-                resetsAt: resetsAt
+                currentUtilization: utilization,
+                resetsAt: resetsAt,
+                window: window
             )
 
             await MainActor.run {
+                // The account may have changed metering while this ran.
+                guard self.primaryWindow == window else { return }
                 self.projection = proj
             }
 
             // Check notifications with projection data
             await MainActor.run {
                 self.notificationService.checkAndNotify(
-                    sessionUtilization: fiveHour.utilization,
-                    weeklyUtilization: usage.sevenDay.utilization,
+                    window: window,
+                    utilization: utilization,
                     projection: proj,
-                    sessionResetsAt: fiveHour.resetsAtDate
+                    resetsAt: resetsAt
                 )
             }
         } catch {
@@ -912,4 +1022,12 @@ class UsageViewModel: ObservableObject {
             }
         }
     }
+}
+
+/// The first weekly reading of the day for one account, and what the day had
+/// already used in an earlier weekly window if one reset today.
+private struct WeeklyBaseline {
+    var resetsAt: Date?
+    var start: Double
+    var carried: Double
 }

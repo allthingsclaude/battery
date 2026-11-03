@@ -255,6 +255,10 @@ private fun ConfigScreen(
  * A live preview of the row layout at the chosen settings, over a checkerboard
  * so partial opacity is actually visible — against a solid background, 40% and
  * 100% look nearly identical.
+ *
+ * Follows [RowLayout]'s rules for an account with no five-hour limit — weekly
+ * in front, the scoped weekly or a quiet note on the right — so the preview is
+ * of the widget the user will actually get.
  */
 @Composable
 private fun Preview(
@@ -268,7 +272,7 @@ private fun Preview(
     val base = if (lightInk) BatteryPalette.SURFACE_DARK else BatteryPalette.SURFACE_LIGHT
     val ink = if (lightInk) Color(0xFFF2EFE9) else Color(0xFF1C1B18)
     val muted = ink.copy(alpha = 0.6f)
-    val level = UsageLevel.from(payload.sessionUtilization)
+    val level = payload.primaryLevel
 
     Box(
         modifier
@@ -292,9 +296,9 @@ private fun Preview(
                 .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val bitmap = remember(payload.sessionUtilization, lightInk) {
+            val bitmap = remember(payload.primaryUtilization, lightInk) {
                 UsageRingRenderer.render(
-                    payload.sessionUtilization,
+                    payload.primaryUtilization,
                     sizePx = 140,
                     dark = lightInk,
                     showLabel = false,
@@ -303,29 +307,45 @@ private fun Preview(
             Image(bitmap.asImageBitmap(), null, Modifier.size(46.dp))
             Column(Modifier.padding(start = 12.dp).weight(1f)) {
                 Text(
-                    "${payload.sessionUtilization.roundToInt()}%",
+                    "${payload.primaryUtilization.roundToInt()}%",
                     color = Color(level.color),
                     fontWeight = FontWeight.Bold,
                     fontSize = 22.sp,
                     fontFamily = FontFamily.Monospace,
                 )
+                // untilReset, not shortDuration: a weekly reset is days out, and
+                // shortDuration has no day unit.
+                val reset = payload.primaryResetsAt
+                    ?.let { TimeFormatting.untilReset((it.epochSecond - Instant.now().epochSecond).toDouble()) }
                 Text(
-                    payload.sessionResetsAt?.let {
-                        "resets in ${TimeFormatting.shortDuration((it.epochSecond - Instant.now().epochSecond).toDouble())}"
-                    } ?: "no window",
+                    when {
+                        payload.hasSessionLimit -> reset?.let { "resets in $it" } ?: "no window"
+                        else -> reset?.let { "weekly · resets in $it" } ?: "weekly · no window"
+                    },
                     color = muted,
                     fontSize = 12.sp,
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text("WEEK", color = muted, fontSize = 10.sp)
-                Text(
-                    "${payload.weeklyUtilization.roundToInt()}%",
-                    color = Color(UsageLevel.from(payload.weeklyUtilization).color),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    fontFamily = FontFamily.Monospace,
-                )
+                val scoped = payload.opusUtilization
+                val side: Pair<String, Double>? = when {
+                    payload.hasSessionLimit -> "WEEK" to payload.weeklyUtilization
+                    scoped != null -> payload.scopedTitle.uppercase() to scoped
+                    else -> null
+                }
+                if (side != null) {
+                    Text(side.first, color = muted, fontSize = 10.sp)
+                    Text(
+                        "${side.second.roundToInt()}%",
+                        color = Color(UsageLevel.from(side.second).color),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                } else {
+                    Text("5-HOUR", color = muted, fontSize = 10.sp)
+                    Text("no limit", color = muted, fontSize = 13.sp)
+                }
             }
         }
     }

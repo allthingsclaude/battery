@@ -31,7 +31,7 @@ struct WeeklyGaugeView: View {
             ProgressBarView(value: utilization / 100.0, color: color)
 
             if let resetsAt = resetsAt {
-                CountdownLabel(targetDate: resetsAt, style: .compact, mode: settings.showTimeSinceReset ? .elapsed : .remaining)
+                CountdownLabel(targetDate: resetsAt, style: .compact, mode: settings.showTimeSinceReset ? .elapsed : .remaining, window: .weekly)
             }
         }
     }

@@ -8,6 +8,10 @@ import SwiftUI
 //   • Overview — medium, both windows + Opus together
 //   • Forecast — large, everything plus where the session is heading
 //                (see ForecastWidget.swift)
+//
+// An account with no five-hour limit (verified Ultra) has no session to show,
+// so each of these leads with the weekly window instead, and a quiet "No 5-hour
+// limit" note fills any slot the session leaves behind. Never a 0% ring.
 
 /// Small square — 5-hour session.
 /// NOTE: a fresh `kind` (not the old "BatterySessionWidget", which iOS still
@@ -18,7 +22,7 @@ struct SessionWidget: Widget {
             widgetBody(entry) { SmallGaugeView(payload: $0, window: .session) }
         }
         .configurationDisplayName("Claude — Session")
-        .description("Your 5-hour session usage.")
+        .description("Your 5-hour session usage, or your weekly usage on plans without one.")
         .supportedFamilies([.systemSmall])
     }
 }
@@ -53,15 +57,21 @@ struct SmallGaugeView: View {
     let payload: UsagePayload
     let window: UsagePayload.FocusWindow
 
-    private var isWeekly: Bool { window == .weekly }
+    /// The Session tile shows the weekly window for an account without a
+    /// session limit — the same tile as Weekly, rather than a ring stuck at 0%.
+    private var isWeekly: Bool { window == .weekly || !payload.hasSessionLimit }
     private var util: Double { isWeekly ? payload.weeklyUtilization : payload.sessionUtilization }
     private var reset: Date? { isWeekly ? payload.weeklyResetsAt : payload.sessionResetsAt }
+    /// The activity dot belongs to whichever window activity is inferred from.
+    private var showsActiveDot: Bool {
+        payload.isSessionActive && (isWeekly ? .weekly : .session) == payload.primaryWindow
+    }
 
     var body: some View {
         VStack(spacing: 8) {
             HStack(spacing: 5) {
                 SectionLabel(title: isWeekly ? "Weekly" : "Session")
-                if !isWeekly && payload.isSessionActive {
+                if showsActiveDot {
                     Circle().fill(BatteryPalette.brand).frame(width: 7, height: 7)
                 }
             }
@@ -84,27 +94,33 @@ struct MediumOverviewView: View {
 
     var body: some View {
         HStack(spacing: 22) {
-            // Left: the session ring is the hero — label above, 5-hour reset below,
-            // all centered on the ring.
+            // Left: the primary ring is the hero — label above, reset below, all
+            // centered on the ring. The session's, or the week's without one.
             VStack(spacing: 8) {
                 HStack(spacing: 5) {
-                    SectionLabel(title: "Session")
+                    SectionLabel(title: payload.hasSessionLimit ? "Session" : "Weekly")
                     if payload.isSessionActive {
                         Circle().fill(BatteryPalette.brand).frame(width: 6, height: 6)
                     }
                 }
-                UsageRing(utilization: payload.sessionUtilization, size: 96, lineWidth: 9,
+                UsageRing(utilization: payload.primaryUtilization, size: 96, lineWidth: 9,
                           gradientStroke: true)
-                WidgetCountdown(reset: payload.sessionResetsAt)
+                WidgetCountdown(reset: payload.primaryResetsAt)
                     .lineLimit(1).minimumScaleFactor(0.7)
                     .multilineTextAlignment(.center)
             }
             .frame(width: 138)
 
             // Right: weekly, then Opus (both 7-day → weekly shows the reset date).
+            // With the week already the hero, its slot goes to the note saying
+            // why there's no session ring — otherwise the column could be empty.
             VStack(alignment: .leading, spacing: 14) {
-                windowBlock(title: "Weekly", util: payload.weeklyUtilization,
-                            reset: payload.weeklyResetsAt)
+                if payload.hasSessionLimit {
+                    windowBlock(title: "Weekly", util: payload.weeklyUtilization,
+                                reset: payload.weeklyResetsAt)
+                } else {
+                    NoSessionLimitNote()
+                }
                 if let opus = payload.opusUtilization {
                     windowBlock(title: "Opus", util: opus, reset: nil)
                 }
@@ -112,7 +128,9 @@ struct MediumOverviewView: View {
                     windowBlock(title: "Fable", util: fable, reset: nil)
                 }
             }
-            .frame(maxWidth: .infinity)
+            // Leading, so a column holding only the note lines up with the rows
+            // it replaces instead of floating in the middle.
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

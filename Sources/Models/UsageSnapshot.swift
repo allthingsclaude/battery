@@ -13,6 +13,10 @@ struct UsageSnapshot: Codable, Identifiable {
     let fableUtilization: Double?
     let planTier: String
     let accountId: UUID?
+    /// False when the account had no five-hour window at the time (verified
+    /// Ultra). `sessionUtilization` is then 0 and `sessionResetsAt` a
+    /// placeholder, and the weekly columns are the ones that mean anything.
+    let hasSessionLimit: Bool
 
     init(
         id: UUID = UUID(),
@@ -25,7 +29,8 @@ struct UsageSnapshot: Codable, Identifiable {
         opusUtilization: Double? = nil,
         fableUtilization: Double? = nil,
         planTier: String = "unknown",
-        accountId: UUID? = nil
+        accountId: UUID? = nil,
+        hasSessionLimit: Bool = true
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -38,5 +43,6 @@ struct UsageSnapshot: Codable, Identifiable {
         self.fableUtilization = fableUtilization
         self.planTier = planTier
         self.accountId = accountId
+        self.hasSessionLimit = hasSessionLimit
     }
 }

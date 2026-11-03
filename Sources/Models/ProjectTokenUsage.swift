@@ -7,4 +7,9 @@ struct ProjectTokenUsage: Identifiable, Equatable {
     let path: String
     let tokens: Int
     let percentage: Double
+
+    /// Id of the row that rolls up everything past the named projects.
+    static let otherProjectsID = "__other_projects__"
+
+    var isOtherProjects: Bool { id == Self.otherProjectsID }
 }

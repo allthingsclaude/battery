@@ -29,6 +29,7 @@ class StatsCacheService: ObservableObject {
     private let filePath: String
     private let projectsPath: String
     private let supplementPath: String
+    private let historyPath: String
     private let userName: String
     private var fileDescriptor: Int32 = -1
     private var source: DispatchSourceFileSystemObject?
@@ -42,6 +43,10 @@ class StatsCacheService: ObservableObject {
     private let reloadQueue = DispatchQueue(label: "com.allthingsclaude.battery.stats-reload", qos: .utility)
     private var fallbackTimer: Timer?
     private var refreshTimer: DispatchSourceTimer?
+
+    /// Whether `history.jsonl` has been read this launch. Touched only from
+    /// `reloadQueue`, which serializes every reload.
+    private var hasReadHistoryFile = false
 
     // In-memory cache for today's live scan
     private var cachedTodayDate: String = ""
@@ -60,6 +65,7 @@ class StatsCacheService: ObservableObject {
         self.filePath = ClaudeConfigDir.statsCacheFile(in: normalized)
         self.projectsPath = ClaudeConfigDir.projectsDir(in: normalized)
         self.supplementPath = ClaudeConfigDir.statsSupplementFile(for: normalized).path
+        self.historyPath = ClaudeConfigDir.historyFile(in: normalized)
         self.userName = FileManager.default.homeDirectoryForCurrentUser.lastPathComponent
     }
 
@@ -214,6 +220,28 @@ class StatsCacheService: ObservableObject {
             dateFormatter: dateFormatter
         )
 
+        // Recover days neither source above can still see, from the one record
+        // Claude Code does not prune. Once per launch is enough: the file only
+        // grows, and now that every reload archives what it knows, a gap in
+        // past days cannot open while the app is running.
+        if !hasReadHistoryFile {
+            hasReadHistoryFile = true
+            supplementFromHistoryFile(into: &parsed, calendar: calendar, dateFormatter: dateFormatter)
+        }
+
+        // Write down everything now known about each day, while it is still
+        // knowable. Both sources above forget: the cache window rolls forward
+        // and the transcripts behind it are deleted, so a day not archived
+        // during the weeks it is visible is gone for good — which is how a
+        // streak that had been running for months kept shortening.
+        archiveDailyActivity(
+            parsed,
+            lastComputedDate: cache.lastComputedDate,
+            todayStr: dateFormatter.string(from: today),
+            dateFormatter: dateFormatter,
+            calendar: calendar
+        )
+
         // --- Today's session count ---
         let todaySessions = parsed.first(where: { $0.date == today })?.activity.sessionCount ?? 0
 
@@ -264,7 +292,13 @@ class StatsCacheService: ObservableObject {
 
     // MARK: - Project Token Usage
 
-    func scanProjectTokenUsage(from startDate: Date, to endDate: Date, limit: Int = 6) -> [ProjectTokenUsage] {
+    /// Per-project token share for a window, largest first.
+    ///
+    /// At most `limit` rows: when there are more projects than that, the last
+    /// row is "Other projects", rolling up the rest. The default is the ten
+    /// projects the popover can expand to, plus that roll-up — it shows five
+    /// until asked for more (see `ProjectTokenBreakdownView`).
+    func scanProjectTokenUsage(from startDate: Date, to endDate: Date, limit: Int = 11) -> [ProjectTokenUsage] {
         guard startDate < endDate else { return [] }
 
         let fm = FileManager.default
@@ -330,7 +364,7 @@ class StatsCacheService: ObservableObject {
         }
         let otherTokens = sortedTotals.dropFirst(visibleCount).reduce(0) { $0 + $1.tokens }
         let other = ProjectTokenUsage(
-            id: "__other_projects__",
+            id: ProjectTokenUsage.otherProjectsID,
             name: "Other projects",
             path: "Other projects",
             tokens: otherTokens,
@@ -341,7 +375,14 @@ class StatsCacheService: ObservableObject {
 
     // MARK: - JSONL Supplement
 
-    /// Persisted supplement for sealed past days + live scan for today.
+    /// Battery's own archive of local daily activity, plus the date of the
+    /// Claude Code cache it was last reconciled against.
+    ///
+    /// This is a record, not a cache. Neither source it draws from keeps
+    /// history: `stats-cache.json` is a rolling 30-day window, and the
+    /// transcripts its gaps are rebuilt from are deleted after
+    /// `cleanupPeriodDays`. Anything older than that exists here or nowhere,
+    /// which is why entries are merged in and never replaced.
     private struct PersistedSupplement: Codable {
         let lastComputedDate: String
         var days: [StatsCache.DailyActivity]
@@ -356,7 +397,7 @@ class StatsCacheService: ObservableObject {
         let todayStr = dateFormatter.string(from: Date())
         let existingDates = Set(parsed.map { dateFormatter.string(from: $0.date) })
 
-        // 1. Load persisted sealed days (past gap days, computed once)
+        // 1. Load archived past days, topped up from JSONL when a day is missing
         let sealedDays = loadOrComputeSealedDays(
             lastComputedDate: lastComputedDate,
             todayStr: todayStr,
@@ -378,35 +419,139 @@ class StatsCacheService: ObservableObject {
         }
     }
 
-    // MARK: Sealed days (persisted to ~/.battery/stats-supplement.json)
+    // MARK: Prompt history (recovery source of last resort)
 
+    private struct HistoryEntry: Decodable {
+        let timestamp: Double?
+        let sessionId: String?
+    }
+
+    private func supplementFromHistoryFile(
+        into parsed: inout [(date: Date, activity: StatsCache.DailyActivity)],
+        calendar: Calendar,
+        dateFormatter: DateFormatter
+    ) {
+        guard let data = FileManager.default.contents(atPath: historyPath) else { return }
+        let existingDates = Set(parsed.map { dateFormatter.string(from: $0.date) })
+        for activity in Self.dailyActivityFromHistory(data, calendar: calendar)
+        where !existingDates.contains(activity.date) {
+            if let d = dateFormatter.date(from: activity.date) {
+                parsed.append((date: calendar.startOfDay(for: d), activity: activity))
+            }
+        }
+    }
+
+    /// Which days a directory was used on, recovered from Claude Code's prompt
+    /// history.
+    ///
+    /// This is the only record here that survives `cleanupPeriodDays`: one line
+    /// per prompt, appended and never pruned, so it can still place a day whose
+    /// transcript was deleted a month ago. Without it most gaps in Battery's
+    /// history are phantom — days the account was plainly used, dropped because
+    /// the only other evidence had been cleaned up, each one breaking a streak
+    /// that should have run through it.
+    ///
+    /// `sessionCount` is exact, being the day's distinct session ids.
+    /// `messageCount` is not comparable to the other sources — this counts
+    /// prompts where they count assistant messages — so it stands as a floor
+    /// that `mergeDailyActivity` lets a better-informed source raise.
+    /// `toolCallCount` is unknowable from here and reported as zero.
+    ///
+    /// Lines are decoded as JSON rather than scanned for the two fields: a
+    /// prompt that quotes `"timestamp":` — pasting JSON into Claude is hardly
+    /// exotic — would otherwise be read as a day of its own.
+    static func dailyActivityFromHistory(_ data: Data, calendar: Calendar) -> [StatsCache.DailyActivity] {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = calendar.timeZone
+
+        let decoder = JSONDecoder()
+        var days: [String: (prompts: Int, sessions: Set<String>)] = [:]
+
+        for line in data.split(separator: UInt8(ascii: "\n")) {
+            guard !line.isEmpty,
+                  let entry = try? decoder.decode(HistoryEntry.self, from: Data(line)),
+                  let timestamp = entry.timestamp
+            else { continue }
+
+            // Claude Code writes milliseconds since the epoch.
+            let key = dateFormatter.string(from: Date(timeIntervalSince1970: timestamp / 1000))
+            var bucket = days[key] ?? (prompts: 0, sessions: [])
+            bucket.prompts += 1
+            if let sessionId = entry.sessionId { bucket.sessions.insert(sessionId) }
+            days[key] = bucket
+        }
+
+        return days
+            .map { date, counts in
+                StatsCache.DailyActivity(
+                    date: date,
+                    messageCount: counts.prompts,
+                    sessionCount: counts.sessions.count,
+                    toolCallCount: 0
+                )
+            }
+            .sorted { $0.date < $1.date }
+    }
+
+    // MARK: Archived days (persisted to ~/.battery/stats-supplement*.json)
+
+    /// Past days the streak and heat map can be built from.
+    ///
+    /// Returns what the archive already holds, rescanning JSONL only when a day
+    /// might be missing from it — when Claude Code has recomputed its cache, or
+    /// when yesterday has not been recorded yet. The scan can only prove a day
+    /// whose transcript still exists, so its result is merged into the archive
+    /// rather than substituted for it; replacing was what made history erode
+    /// from the back at the rate Claude Code prunes transcripts, and a streak
+    /// snap down to the first hole that opened.
     private func loadOrComputeSealedDays(
         lastComputedDate: String,
         todayStr: String,
         dateFormatter: DateFormatter,
         calendar: Calendar
     ) -> [StatsCache.DailyActivity] {
-        // Try loading from disk
-        if let data = FileManager.default.contents(atPath: supplementPath),
-           let persisted = try? JSONDecoder().decode(PersistedSupplement.self, from: data),
-           persisted.lastComputedDate == lastComputedDate {
-            // Check if we need to seal yesterday (it was "today" last time but is now past)
-            let hasAllSealedDays = persisted.days.allSatisfy { $0.date < todayStr }
-            let yesterdayStr: String? = {
-                guard let today = dateFormatter.date(from: todayStr),
-                      let yesterday = calendar.date(byAdding: .day, value: -1, to: today) else { return nil }
-                return dateFormatter.string(from: yesterday)
-            }()
-            let needsYesterdaySeal = yesterdayStr != nil
-                && yesterdayStr! > lastComputedDate
-                && !persisted.days.contains(where: { $0.date == yesterdayStr! })
+        let stored = loadArchive()
+        let storedDays = stored?.days ?? []
 
-            if hasAllSealedDays && !needsYesterdaySeal {
-                return persisted.days
-            }
+        let yesterdayStr: String? = {
+            guard let today = dateFormatter.date(from: todayStr),
+                  let yesterday = calendar.date(byAdding: .day, value: -1, to: today) else { return nil }
+            return dateFormatter.string(from: yesterday)
+        }()
+        // Yesterday is only Battery's to record when Claude Code's own cache
+        // stops short of it.
+        let needsYesterdaySeal = yesterdayStr != nil
+            && yesterdayStr! > lastComputedDate
+            && !storedDays.contains(where: { $0.date == yesterdayStr! })
+
+        guard stored?.lastComputedDate != lastComputedDate || needsYesterdaySeal else {
+            return storedDays.filter { $0.date < todayStr }
         }
 
-        // Compute sealed days by scanning JSONL for past gap days
+        let scanned = scanSealedDaysFromJSONL(
+            lastComputedDate: lastComputedDate,
+            todayStr: todayStr,
+            calendar: calendar
+        )
+        let earliest = earliestKeptDate(todayStr: todayStr, dateFormatter: dateFormatter, calendar: calendar)
+        return Self.mergeDailyActivity(storedDays, scanned, earliestKept: earliest)
+            .filter { $0.date < todayStr }
+    }
+
+    /// Rebuild past days from the transcripts still on disk.
+    ///
+    /// Only days after `lastComputedDate` are reported: everything at or before
+    /// it is Claude Code's own cache to describe, and this cannot improve on it.
+    private func scanSealedDaysFromJSONL(
+        lastComputedDate: String,
+        todayStr: String,
+        calendar: Calendar
+    ) -> [StatsCache.DailyActivity] {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = calendar.timeZone
         guard let cutoffDate = dateFormatter.date(from: lastComputedDate) else { return [] }
         let cutoffStart = calendar.startOfDay(for: cutoffDate)
 
@@ -436,26 +581,98 @@ class StatsCacheService: ObservableObject {
             }
         }
 
-        // Build sealed entries
-        var sealedDays: [StatsCache.DailyActivity] = []
-        for (dateStr, counts) in dayCounts where dateStr < todayStr {
-            sealedDays.append(StatsCache.DailyActivity(
+        return dayCounts.compactMap { dateStr, counts in
+            guard dateStr < todayStr else { return nil }
+            return StatsCache.DailyActivity(
                 date: dateStr,
                 messageCount: counts.messages,
                 sessionCount: counts.sessions.count,
                 toolCallCount: counts.toolCalls
-            ))
+            )
         }
+    }
 
-        // Persist to disk
-        let persisted = PersistedSupplement(lastComputedDate: lastComputedDate, days: sealedDays)
-        if let encoded = try? JSONEncoder().encode(persisted) {
-            let dir = (supplementPath as NSString).deletingLastPathComponent
-            try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            fm.createFile(atPath: supplementPath, contents: encoded)
+    /// Fold everything currently known about a day into the archive.
+    ///
+    /// Called on every reload with the assembled day set, so a day read out of
+    /// Claude Code's rolling window is written down while it is still there —
+    /// without this the archive only ever learned days Claude Code had already
+    /// stopped reporting, and everything the window dropped went with it.
+    ///
+    /// Today is archived too, at whatever it has reached so far. Merging takes
+    /// the higher counts, so later reloads carry it up as the day goes on, and
+    /// tomorrow finds it already recorded even if its transcript is gone by
+    /// then.
+    private func archiveDailyActivity(
+        _ parsed: [(date: Date, activity: StatsCache.DailyActivity)],
+        lastComputedDate: String,
+        todayStr: String,
+        dateFormatter: DateFormatter,
+        calendar: Calendar
+    ) {
+        let stored = loadArchive()
+        let merged = Self.mergeDailyActivity(
+            stored?.days ?? [],
+            parsed.map(\.activity),
+            earliestKept: earliestKeptDate(todayStr: todayStr, dateFormatter: dateFormatter, calendar: calendar)
+        )
+
+        // Rewriting an unchanged file on every reload would churn the disk and
+        // retrigger the watchers of anything observing it.
+        if let stored = stored, stored.lastComputedDate == lastComputedDate, stored.days == merged { return }
+        writeArchive(PersistedSupplement(lastComputedDate: lastComputedDate, days: merged))
+    }
+
+    /// The oldest day the archive keeps, as a `yyyy-MM-dd` string.
+    private func earliestKeptDate(todayStr: String, dateFormatter: DateFormatter, calendar: Calendar) -> String {
+        guard let today = dateFormatter.date(from: todayStr),
+              let earliest = calendar.date(byAdding: .day, value: -Constants.localHistoryRetentionDays, to: today)
+        else { return "" }
+        return dateFormatter.string(from: earliest)
+    }
+
+    /// Combine day sets into one, keyed by date, keeping the fullest account of
+    /// each day and dropping anything past the retention window.
+    ///
+    /// Conflicts resolve to the higher counts in every field. A day can
+    /// legitimately grow after the fact — a session resumed the next morning
+    /// adds messages to the day before — while a rescan of a partially deleted
+    /// transcript can only undercount, and the archive must not follow that
+    /// down.
+    ///
+    /// Pure and static so the merge rule is testable without a filesystem.
+    static func mergeDailyActivity(
+        _ archived: [StatsCache.DailyActivity],
+        _ incoming: [StatsCache.DailyActivity],
+        earliestKept: String
+    ) -> [StatsCache.DailyActivity] {
+        var byDate: [String: StatsCache.DailyActivity] = [:]
+        for day in archived + incoming where day.date >= earliestKept {
+            guard let existing = byDate[day.date] else {
+                byDate[day.date] = day
+                continue
+            }
+            byDate[day.date] = StatsCache.DailyActivity(
+                date: day.date,
+                messageCount: max(existing.messageCount, day.messageCount),
+                sessionCount: max(existing.sessionCount, day.sessionCount),
+                toolCallCount: max(existing.toolCallCount, day.toolCallCount)
+            )
         }
+        return byDate.values.sorted { $0.date < $1.date }
+    }
 
-        return sealedDays
+    private func loadArchive() -> PersistedSupplement? {
+        guard let data = FileManager.default.contents(atPath: supplementPath) else { return nil }
+        return try? JSONDecoder().decode(PersistedSupplement.self, from: data)
+    }
+
+    private func writeArchive(_ archive: PersistedSupplement) {
+        guard let encoded = try? JSONEncoder().encode(archive) else { return }
+        let fm = FileManager.default
+        let dir = (supplementPath as NSString).deletingLastPathComponent
+        try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        fm.createFile(atPath: supplementPath, contents: encoded)
     }
 
     // MARK: Today (live scan, cached in memory by file mod dates)

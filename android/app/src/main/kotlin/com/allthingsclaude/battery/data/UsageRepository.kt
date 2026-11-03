@@ -180,6 +180,8 @@ class UsageRepository(context: Context) {
             // the alternative to filling it in here is telling people to sign
             // out and back in for a cosmetic label. One request, once per
             // account, wrapped so it can never turn a good poll into a failure.
+            // A label stored before the Ultra rename is already respelled by
+            // AccountStore.load, so it never needs this request to heal.
             val planTier = account.planTier.ifEmpty { backfillPlanTier(account, stored) }
 
             val payload = buildPayload(usage, account.name, planTier, historyFor(account.id))
@@ -263,8 +265,17 @@ class UsageRepository(context: Context) {
         val sessionUtil = session?.utilization ?: 0.0
         val sessionReset = session?.resetsAt
 
+        // The window the regression and the activity signal follow: the
+        // session's, or the weekly one on an account with no five-hour limit.
+        // Re-decided on every poll, so an account whose limit appears or goes
+        // between two polls is tracked correctly on the second — SessionHistory
+        // keys its buffer on the window kind and starts over when it changes.
+        val weeklyOnly = !usage.hasSessionLimit
+        val primaryUtil = if (weeklyOnly) usage.sevenDay.utilization else sessionUtil
+        val primaryReset = if (weeklyOnly) usage.sevenDay.resetsAt else sessionReset
+
         val now = Instant.now()
-        val projection = history.record(sessionUtil, sessionReset, now)
+        val projection = history.record(primaryUtil, primaryReset, now, weekly = weeklyOnly)
 
         // Activity inference, mirroring iOS: a session is "active" if
         // utilization climbed within the last ten minutes.
@@ -275,15 +286,19 @@ class UsageRepository(context: Context) {
         // "last utilization" meant each one had to observe two polls of its own
         // before it could see a rise — and the service is constructed exactly
         // when the card is meant to appear, so it was always the blind one.
-        val lastRise = history.lastRiseAt(sessionReset)
-        val isActive = session != null && lastRise != null &&
+        val lastRise = history.lastRiseAt(primaryReset, weekly = weeklyOnly)
+        val isActive = lastRise != null &&
             now.epochSecond - lastRise.epochSecond < ACTIVE_WINDOW_SECONDS
 
         return UsagePayload(
+            // 0 and null when there is no session window. Never filled from the
+            // weekly: a surface that forgets to check hasSessionLimit must show
+            // an empty session, not the weekly number under a session label.
             sessionUtilization = sessionUtil,
             sessionResetsAt = sessionReset,
             weeklyUtilization = usage.sevenDay.utilization,
             weeklyResetsAt = usage.sevenDay.resetsAt,
+            hasSessionLimit = usage.hasSessionLimit,
             opusUtilization = usage.scopedWeekly?.utilization,
             scopedLabel = usage.scopedWeekly?.label ?: "",
             extraUsage = usage.extraUsage?.takeIf { it.isPresentable },
@@ -291,7 +306,9 @@ class UsageRepository(context: Context) {
             projectedLimitAt = projection.limitAt,
             isSessionActive = isActive,
             // From the account, not the usage response: that response has no
-            // rate_limit_tier at all, so this badge was permanently blank.
+            // rate_limit_tier at all, so this badge was permanently blank. The
+            // badge only labels; whether a session window exists came from the
+            // response above, because an unverified Ultra account still has one.
             planTier = accountPlanTier,
             accountName = accountName,
             isConnected = true,

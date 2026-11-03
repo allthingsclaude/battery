@@ -94,7 +94,7 @@ object NowBarGate {
     fun advice(state: State): Advice? = when (state) {
         State.DISABLED -> Advice(
             title = "Turn on the Now Bar",
-            body = "Your session card shows on the lock screen, but Samsung hides " +
+            body = "Your usage card shows on the lock screen, but Samsung hides " +
                 "the Now Bar pill and the status-bar chip behind a developer " +
                 "setting. Enable “Live notifications for all apps”.",
             action = "Open Developer options",

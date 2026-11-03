@@ -3,6 +3,7 @@ package com.allthingsclaude.battery.data
 import android.content.Context
 import com.allthingsclaude.battery.core.SnapshotStore
 import com.allthingsclaude.battery.core.ExtraUsage
+import com.allthingsclaude.battery.core.ProfileApi
 import com.allthingsclaude.battery.core.UsagePayload
 import org.json.JSONObject
 import java.time.Instant
@@ -74,6 +75,7 @@ class PayloadStore(context: Context, accountId: String) {
         put("sessionResetsAt", p.sessionResetsAt?.toEpochMilli() ?: JSONObject.NULL)
         put("weeklyUtilization", p.weeklyUtilization)
         put("weeklyResetsAt", p.weeklyResetsAt?.toEpochMilli() ?: JSONObject.NULL)
+        put("hasSessionLimit", p.hasSessionLimit)
         put("opusUtilization", p.opusUtilization ?: JSONObject.NULL)
         put("scopedLabel", p.scopedLabel)
         put("extraUsage", p.extraUsage?.let {
@@ -99,6 +101,9 @@ class PayloadStore(context: Context, accountId: String) {
         sessionResetsAt = o.instantOrNull("sessionResetsAt"),
         weeklyUtilization = o.getDouble("weeklyUtilization"),
         weeklyResetsAt = o.instantOrNull("weeklyResetsAt"),
+        // Absent in payloads written before weekly-only accounts existed, and
+        // every one of those described an account with a session window.
+        hasSessionLimit = o.optBoolean("hasSessionLimit", true),
         opusUtilization = if (o.isNull("opusUtilization")) null else o.getDouble("opusUtilization"),
         // Absent in payloads written before the label existed; an empty
         // label falls back to "Opus" at the render site, which is what
@@ -117,7 +122,10 @@ class PayloadStore(context: Context, accountId: String) {
         burnRatePerHour = o.optDouble("burnRatePerHour", 0.0),
         projectedLimitAt = o.instantOrNull("projectedLimitAt"),
         isSessionActive = o.optBoolean("isSessionActive", false),
-        planTier = o.optString("planTier", ""),
+        // Respelled for the same reason AccountStore respells it: a payload
+        // cached before the plans were renamed would otherwise show "Max 20x"
+        // until the next poll replaced it.
+        planTier = ProfileApi.migratePlanLabel(o.optString("planTier", "")),
         accountName = o.optString("accountName", "Account"),
         isConnected = o.optBoolean("isConnected", true),
         updatedAt = o.instantOrNull("updatedAt") ?: Instant.now(),

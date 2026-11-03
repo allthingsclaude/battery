@@ -4,6 +4,7 @@ import Foundation
 struct AccountUsageState {
     var sessionUtilization: Double = 0
     var sessionResetsAt: Date?
+    var hasSessionLimit: Bool = true
     var weeklyUtilization: Double = 0
     var weeklyResetsAt: Date?
     var sonnetUtilization: Double?
