@@ -98,6 +98,7 @@ class AppSettings: ObservableObject {
     @AppStorage("menuBarDisplayMode") var menuBarDisplayMode: String = MenuBarDisplayMode.percentageAndTime.rawValue
     @AppStorage("showPercentageRemaining") var showPercentageRemaining: Bool = false
     @AppStorage("showTimeSinceReset") var showTimeSinceReset: Bool = false
+    @AppStorage("showWeeklyAsDays") var showWeeklyAsDays: Bool = false
 
     // Polling
     @AppStorage("pollIntervalActive") var pollIntervalActive: Double = 60
@@ -129,5 +130,32 @@ class AppSettings: ObservableObject {
     /// "left" or "used" suffix matching the percentage display preference.
     var percentageSuffix: String {
         showPercentageRemaining ? "left" : "used"
+    }
+
+    // MARK: Weekly usage in days
+
+    static let daysPerWeek = 7
+
+    /// A 7-day window's usage as days of the week, honouring the "remaining"
+    /// preference: 25% used is 1.75 days used, or 5.25 days left.
+    static func weekDays(forUtilization utilization: Double, remaining: Bool) -> Double {
+        let percent = remaining ? max(0, 100 - utilization) : utilization
+        return percent / 100 * Double(daysPerWeek)
+    }
+
+    /// One decimal in the user's locale, so it reads "2,5" where commas are decimal marks.
+    static func formatWeekDays(_ days: Double, locale: Locale = .current) -> String {
+        days.formatted(.number.precision(.fractionLength(1)).locale(locale))
+    }
+
+    /// The headline figure for a 7-day window: "36" as a percentage, or "2.5" as days.
+    func weeklyDisplayValue(for utilization: Double) -> String {
+        guard showWeeklyAsDays else { return "\(displayPercentage(for: utilization))%" }
+        return Self.formatWeekDays(Self.weekDays(forUtilization: utilization, remaining: showPercentageRemaining))
+    }
+
+    /// The words after the headline figure: "used", or "of 7 days used".
+    var weeklySuffix: String {
+        showWeeklyAsDays ? "of \(Self.daysPerWeek) days \(percentageSuffix)" : percentageSuffix
     }
 }

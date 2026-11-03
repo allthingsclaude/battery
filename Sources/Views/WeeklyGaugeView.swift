@@ -17,18 +17,22 @@ struct WeeklyGaugeView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 HStack(spacing: 3) {
-                    Text("\(settings.displayPercentage(for: utilization))%")
+                    Text(settings.weeklyDisplayValue(for: utilization))
                         .font(.caption)
                         .fontWeight(.medium)
                         .foregroundStyle(color)
                         .monospacedDigit()
-                    Text(settings.percentageSuffix)
+                    Text(settings.weeklySuffix)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
             }
 
-            ProgressBarView(value: utilization / 100.0, color: color)
+            ProgressBarView(
+                value: utilization / 100.0,
+                color: color,
+                segments: settings.showWeeklyAsDays ? AppSettings.daysPerWeek : 1
+            )
 
             if let resetsAt = resetsAt {
                 CountdownLabel(targetDate: resetsAt, style: .compact, mode: settings.showTimeSinceReset ? .elapsed : .remaining, window: .weekly)
