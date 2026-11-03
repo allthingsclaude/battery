@@ -76,7 +76,6 @@ class UsageViewModel: ObservableObject {
     /// has used, which needs a starting point to measure from.
     private var todayWeeklyBaseline: [UUID: WeeklyBaseline] = [:]
     private var todayPeakDate: Date = Calendar.current.startOfDay(for: Date())
-    private var isReauthenticating = false
     private var projectTokenUsageTask: Task<Void, Never>?
     private var lastProjectTokenUsageRefresh: Date?
     private var lastProjectTokenUsageSessionReset: Date?
@@ -310,26 +309,31 @@ class UsageViewModel: ObservableObject {
     }
 
     /// Re-authenticate the current account (replaces tokens without creating a new account).
+    /// A click always reaches the browser, even while an automatic attempt is
+    /// still waiting on a tab that was never finished.
     func reauthenticateCurrentAccount() {
-        attemptSilentReauth()
+        startReauth()
     }
 
-    /// Silently re-authenticate the current account when the refresh token expires.
+    /// Re-authenticate automatically when the refresh token stops working.
+    /// Skipped while an attempt is already waiting on the browser.
+    private func attemptSilentReauth() {
+        guard !oauthService.isAuthenticating else { return }
+        startReauth()
+    }
+
     /// Opens the browser OAuth flow. If the user completes it, tokens are replaced
     /// and polling resumes. If it fails, falls back to a notification.
-    private func attemptSilentReauth() {
-        guard !isReauthenticating else { return }
+    private func startReauth() {
         guard let account = accountManager.selectedAccount else {
             notificationService.notifyTokenRefreshFailure()
             return
         }
 
-        isReauthenticating = true
         error = "Session expired — signing in again…"
 
         oauthService.startLogin { [weak self] result in
             guard let self = self else { return }
-            self.isReauthenticating = false
 
             switch result {
             case .success(let tokenPair):
@@ -344,6 +348,9 @@ class UsageViewModel: ObservableObject {
                 Task { await self.pollingService.pollNow() }
 
             case .failure:
+                // Back to the error that prompted the attempt, which is the
+                // state that offers Sign In again.
+                self.error = self.pollingService.lastError?.localizedDescription
                 self.notificationService.notifyTokenRefreshFailure()
             }
         }
@@ -451,7 +458,11 @@ class UsageViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$selectedAccountId)
 
+        // Every failing poll re-publishes `true`. Reacting only to the change
+        // opens the browser once per expiry instead of a new tab every poll
+        // after an attempt is abandoned.
         pollingService.$needsReauth
+            .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] needsReauth in
                 guard let self = self, needsReauth else { return }
