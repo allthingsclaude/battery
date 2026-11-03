@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug override of the main widget_session_row.xml, adding `keyguard` to
+  widgetCategory (check 5). If One UI 8.5 accepts third-party lock-screen
+  widgets this provider becomes placeable there; if not, nothing changes and the
+  answer is a plain no.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="40dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="1"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen|keyguard"
+    android:description="@string/widget_desc_session_row"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:configure="com.allthingsclaude.battery.widget.WidgetConfigActivity"
+    android:widgetFeatures="reconfigurable|configuration_optional" />

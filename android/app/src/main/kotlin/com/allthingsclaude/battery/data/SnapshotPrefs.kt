@@ -21,10 +21,18 @@ import java.time.Instant
  * is written on every poll, and the long form tripled the string for no reader's
  * benefit — nothing but this file ever parses it.
  */
-internal class SnapshotPrefs(private val prefs: SharedPreferences) : SnapshotStore {
+internal class SnapshotPrefs(
+    private val prefs: SharedPreferences,
+    /**
+     * Scoped per account. One shared buffer would mix two accounts' samples into
+     * a single regression the moment anything polled a second account — which is
+     * exactly what per-widget binding makes routine.
+     */
+    private val key: String,
+) : SnapshotStore {
 
     override fun load(): List<UsageSnapshot> {
-        val raw = prefs.getString(KEY, null) ?: return emptyList()
+        val raw = prefs.getString(key, null) ?: return emptyList()
         return runCatching {
             val array = JSONArray(raw)
             (0 until array.length()).map { i ->
@@ -52,14 +60,10 @@ internal class SnapshotPrefs(private val prefs: SharedPreferences) : SnapshotSto
             if (it.isWeekly) obj.put("w", true)
             array.put(obj)
         }
-        prefs.edit().putString(KEY, array.toString()).apply()
+        prefs.edit().putString(key, array.toString()).apply()
     }
 
     override fun clear() {
-        prefs.edit().remove(KEY).apply()
-    }
-
-    private companion object {
-        const val KEY = "snapshots"
+        prefs.edit().remove(key).apply()
     }
 }

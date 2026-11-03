@@ -285,26 +285,42 @@ internal suspend fun refresh(
     postCard: Boolean = false,
     onResult: (UsagePayload?, String) -> Unit,
 ) {
-    when (val result = repository.poll()) {
+    val result = repository.poll()
+    if (postCard && result is UsageRepository.PollResult.Success) {
+        LiveUpdateNotifier.post(context, result.payload)
+    }
+    result.report(onResult)
+}
+
+/**
+ * Turn a poll outcome into what the user should see.
+ *
+ * Split out of [refresh] so that a switch can say the same things: the seam
+ * polls inside itself (see `AccountSwitcher`), so it has a result in hand and
+ * nothing left to call [refresh] for.
+ *
+ * Every failure keeps its own message. Collapsing them into "poll failed" would
+ * hide the one distinction that matters to a user — a dead grant needs a new
+ * sign-in, everything else just needs waiting.
+ */
+internal fun UsageRepository.PollResult.report(onResult: (UsagePayload?, String) -> Unit) {
+    when (this) {
         is UsageRepository.PollResult.Success -> {
-            if (postCard) LiveUpdateNotifier.post(context, result.payload)
-            val p = result.payload
             // Names the window when it is the weekly one: a bare "Updated 28%."
             // reads as the session percentage it always used to be.
-            val what = if (p.hasSessionLimit) "" else "weekly "
-            onResult(p, "Updated ${what}${p.primaryUtilization.toInt()}%.")
+            val what = if (payload.hasSessionLimit) "" else "weekly "
+            onResult(payload, "Updated ${what}${payload.primaryUtilization.toInt()}%.")
         }
         UsageRepository.PollResult.SignedOut ->
             onResult(null, "Session expired — sign in again.")
         UsageRepository.PollResult.NoAccount ->
             onResult(null, "No account. Sign in first.")
-        UsageRepository.PollResult.Stale ->
-            onResult(null, "Account changed mid-poll; discarded.")
+        // Says nothing at all: the poll for the account now on screen reports
+        // for it, and may already have — answering here could blank it.
+        UsageRepository.PollResult.Stale -> Unit
         is UsageRepository.PollResult.Failed -> onResult(
             null,
-            result.retryAfterSeconds
-                ?.let { "${result.message} Retry in ${it}s." }
-                ?: result.message,
+            retryAfterSeconds?.let { "$message Retry in ${it}s." } ?: message,
         )
     }
 }

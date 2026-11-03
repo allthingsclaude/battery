@@ -48,6 +48,8 @@ class SessionService : Service() {
     private val settings by lazy { com.allthingsclaude.battery.data.Settings(this) }
     private var loop: Job? = null
     private var policyState = SessionPolicy.State()
+    /** The account [policyState] was built from. */
+    private var policyAccountId: String? = null
     private val backoff = PollBackoff()
 
     /**
@@ -139,8 +141,10 @@ class SessionService : Service() {
                 }
                 UsageRepository.PollResult.Stale -> {
                     // The account changed mid-poll; this result belongs to
-                    // nobody. Skip it and let the next tick fetch the new one.
-                    waitOrWake(SessionPolicy.pollIntervalSeconds(SessionPolicy.Decision.Hide))
+                    // nobody. Poll again now rather than at the next tick: the
+                    // switch's own wake was dropped above, and waiting would
+                    // leave the card naming the old account for an idle interval.
+                    // It cannot spin — a Stale needs another switch to repeat.
                     continue
                 }
                 is UsageRepository.PollResult.Failed -> {
@@ -159,6 +163,15 @@ class SessionService : Service() {
             // settings has to take effect on the next tick, not on a restart.
             backoff.recordSuccess()
 
+            // A switch, from the card or anywhere else, must not compare the new
+            // account's numbers with the old one's: 45% then 3% reads as a
+            // rollover and puts up a reset card. Starting over seeds the alert
+            // level silently, as a fresh card does.
+            val accountId = repo.selectedAccountId
+            if (accountId != policyAccountId) {
+                policyState = SessionPolicy.State()
+                policyAccountId = accountId
+            }
             val outcome = SessionPolicy.evaluate(policyState, payload, settings.cardMode)
             policyState = outcome.state
 

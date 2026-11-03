@@ -77,6 +77,39 @@
             android:name=".live.CardDismissedReceiver"
             android:exported="false" />
 
+        <!--
+          The live card's switch button. Not exported: only our own card may
+          fire it, and a PendingIntent carries the permission to do so without
+          the receiver being open to everyone.
+        -->
+        <receiver
+            android:name=".live.AccountSwitchReceiver"
+            android:exported="false" />
+
+        <!--
+          The account switcher that works from a locked phone. exported and
+          permission-guarded are both required: SystemUI binds this, and only
+          SystemUI may.
+
+          ACTIVE_TILE because the account can change from the app, the card or a
+          widget — without it the tile only learns of a switch when the user next
+          opens the panel. Deliberately NO TOGGLEABLE_TILE: that declares a
+          two-state switch, and this cycles through N accounts.
+        -->
+        <service
+            android:name=".quicksettings.AccountTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_stat_battery"
+            android:label="@string/tile_account_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
+
         <receiver
             android:name=".widget.SessionRowWidgetReceiver"
             android:exported="true"

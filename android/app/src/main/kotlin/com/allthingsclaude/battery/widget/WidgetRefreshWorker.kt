@@ -1,6 +1,13 @@
 package com.allthingsclaude.battery.widget
 
 import android.content.Context
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import com.allthingsclaude.battery.data.AccountStore
+import com.allthingsclaude.battery.data.AccountSwitcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -49,32 +56,87 @@ class WidgetRefreshWorker(
         // out three consecutive windows while the app was frozen.
         Log.i(TAG, "refresh: payload age=${ageSeconds(repository)}s")
 
-        val stored = repository.lastKnownPayload
+        val liveIds = placedWidgetIds()
+        // onDeleted is not guaranteed to fire, so bindings for widgets that are
+        // no longer placed have to be swept up somewhere. Cheap, and this runs
+        // on a schedule anyway.
+        WidgetConfig.reconcile(applicationContext, liveIds.toSet())
+
+        // Fan-in: N widgets collapse to the M distinct accounts they are bound
+        // to, plus whichever is selected. Four widgets on one account cost one
+        // poll, not four.
+        val activeId = AccountStore(applicationContext).activeId
+        val follows = Settings(applicationContext).followsActiveAccount
+        // Following the active account needs evidence from *every* account, not
+        // just the ones on a home screen — an account nobody has a widget for is
+        // exactly the one the mode has to be able to notice work on.
+        val candidates = if (follows) {
+            AccountStore(applicationContext).load().map { it.id }.toSet()
+        } else {
+            WidgetConfig.boundAccountIds(applicationContext, liveIds, activeId)
+        }
+
+        // Staleness is judged per account against its own cache, because a
+        // widget bound to an account nobody has opened for an hour is exactly
+        // the one that needs the poll.
+        //
         // abs for the same reason as the repository's freshness gate: a backward
         // clock jump makes a signed age negative, and a negative age reads as
         // "fresh" and skips the poll indefinitely.
-        val age = stored?.let { abs(Instant.now().epochSecond - it.updatedAt.epochSecond) }
-        val willPoll = repository.isSignedIn() && (age == null || age >= STALE_AFTER_SECONDS)
+        val due = if (!repository.isSignedIn()) emptyList() else candidates.filter { id ->
+            val age = repository.lastKnownPayload(id)
+                ?.let { abs(Instant.now().epochSecond - it.updatedAt.epochSecond) }
+            age == null || age >= STALE_AFTER_SECONDS
+        }
 
-        val result = if (willPoll) repository.poll() else null
-        val fresh = (result as? UsageRepository.PollResult.Success)?.payload
+        // Concurrent: the polls are independent, the locks are per account, and
+        // the radio is already up — so the second account costs latency it would
+        // have spent waiting anyway.
+        val results: Map<String, UsageRepository.PollResult> = coroutineScope {
+            due.map { id -> async { id to repository.pollAccount(id, repaintWidgets = false) } }
+                .awaitAll()
+        }.toMap()
 
-        // **Exactly one repaint per run, on every path.** `poll()` repaints
-        // itself on success; every other path stored nothing, so the repaint has
-        // to happen here. Two `updateAll` bursts cancel each other's Glance
-        // sessions and *both* compositions are lost — see `refreshAllWidgets`.
-        if (fresh == null) refreshWidgets()
+        // Acted on after the polls, so it decides on what this run just learned.
+        // repaintCard = false: this is a background worker, and the card is
+        // posted below by the path that is allowed to. repaintWidgets = false:
+        // the one repaint below covers it, and a second would cancel both.
+        runCatching {
+            AccountSwitcher(applicationContext, repository)
+                .applyAutoFollow(repaintCard = false, repaintWidgets = false)
+        }.onFailure { Log.w(TAG, "auto-follow skipped: $it") }
+
+        // **Exactly one repaint per run, on every path.** The polls above are
+        // told not to repaint for this reason: two `updateAll` bursts cancel
+        // each other's Glance sessions and *both* compositions are lost — see
+        // `refreshAllWidgets`.
+        refreshWidgets()
 
         // The card is a render of whatever payload we have, so it needs no
         // network and must not be gated behind a successful poll. It used to be,
         // which left a wide-open window showing no card at all for as long as the
         // poll was skipped or failing.
-        (fresh ?: stored)?.let {
+        //
+        // Read after auto-follow, by id, from the selected account's own cache:
+        // the card describes the *selected* account, and auto-follow may just
+        // have changed which one that is. Every poll above has already saved to
+        // its account's cache, so this is this run's reading when it succeeded
+        // and the last good one when it did not. Never matched by name — two
+        // accounts may share one.
+        repository.lastKnownPayload?.let {
             runCatching { postCardIfWarranted(it) }
                 .onFailure { e -> Log.w(TAG, "card post skipped: $e") }
         }
 
-        if (result is UsageRepository.PollResult.Failed) {
+        // Retry when the account on screen failed, or when every poll did. Not
+        // for any one failure: WorkManager's backoff is per worker, so a single
+        // widget-bound account that keeps failing would stretch the next run
+        // towards five hours for every widget and the card. That account is
+        // still polled again on the next scheduled run.
+        val failures = results.values.filterIsInstance<UsageRepository.PollResult.Failed>()
+        val result = (results[activeId] as? UsageRepository.PollResult.Failed)
+            ?: failures.firstOrNull()?.takeIf { failures.size == results.size }
+        if (result != null) {
             // Exponential backoff is the right shape for a failed fetch, and it
             // costs only freshness now that the repaint and the card have both
             // already happened above.
@@ -233,6 +295,21 @@ class WidgetRefreshWorker(
             // Upgrades that never call schedule() — no widget placed — would
             // otherwise leave the pre-v2 schedule running untouched.
             manager.cancelUniqueWork(LEGACY_WORK_NAME)
+        }
+    }
+
+    /** Every widget of ours currently on a home screen. */
+    private fun placedWidgetIds(): List<Int> {
+        val manager = AppWidgetManager.getInstance(applicationContext)
+        return listOf(
+            SessionRowWidgetReceiver::class.java,
+            SessionRingWidgetReceiver::class.java,
+            OverviewWidgetReceiver::class.java,
+            ForecastWidgetReceiver::class.java,
+        ).flatMap {
+            runCatching {
+                manager.getAppWidgetIds(ComponentName(applicationContext, it)).toList()
+            }.getOrDefault(emptyList())
         }
     }
 }
