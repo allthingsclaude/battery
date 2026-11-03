@@ -242,6 +242,17 @@ private fun Root() {
     LaunchedEffect(lifecycleOwner, signedIn) {
         if (!signedIn) return@LaunchedEffect
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            // The tile and the card switch accounts while the app is closed, and
+            // a pick from either turns Auto off. Neither can reach this state, so
+            // re-read both: otherwise the old tab stays highlighted over the new
+            // account's numbers, and tapping it does nothing because it already
+            // counts as selected.
+            val onScreen = repository.selectedAccountId
+            if (onScreen != selectedAccountId) {
+                selectedAccountId = onScreen
+                payload = repository.lastKnownPayload
+            }
+            followsActive = settings.followsActiveAccount
             val result = repository.poll()
             when (result) {
                 is UsageRepository.PollResult.Success -> {
@@ -347,8 +358,8 @@ private fun Root() {
         // A manual pick pins. Anything else would leave the mode free to move
         // the user straight back off the account they just chose, which is the
         // "I had to fight the algorithm" failure the research warns about.
+        // switchTo persists that for every switcher; this only mirrors it.
         if (followsActive) {
-            settings.followsActiveAccount = false
             followsActive = false
             followReason = null
         }

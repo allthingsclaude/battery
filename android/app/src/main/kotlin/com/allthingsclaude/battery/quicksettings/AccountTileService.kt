@@ -61,9 +61,8 @@ class AccountTileService : TileService() {
         }
 
         // Redraw against the incoming account before the poll, so the tile moves
-        // under the finger. The percentage is briefly the outgoing account's —
-        // which is why the switch clears the payload cache rather than leaving a
-        // stale number to be read as the new account's.
+        // under the finger. It reads "Switching…" rather than a percentage until
+        // the switch lands, so no number is shown under the wrong account.
         render(previewAccountId = next)
         scope.launch {
             switcher.switchTo(next)
@@ -111,7 +110,14 @@ class AccountTileService : TileService() {
     private fun subtitle(switching: Boolean): String {
         if (switching) return "Switching…"
         val payload = repository.lastKnownPayload ?: return "No reading yet"
-        return "${payload.sessionUtilization.roundToInt()}% used"
+        // The window the account is metered by, named when it is the weekly one,
+        // as the card's chip does: a weekly-only account has no session figure,
+        // so the session one would always read 0%.
+        return if (payload.hasSessionLimit) {
+            "${payload.sessionUtilization.roundToInt()}% used"
+        } else {
+            "${payload.weeklyUtilization.roundToInt()}% weekly"
+        }
     }
 
     private fun initialIcon(name: String): Icon {

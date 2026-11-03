@@ -79,9 +79,15 @@ class AccountStore(context: Context) {
     /**
      * The account everything should be reading, resolving an unset selection to
      * the first one — the same rule the repository polls by, kept here so the
-     * widgets and the tile cannot disagree with it.
+     * widgets and the tile cannot disagree with it. A selection that names a
+     * removed account resolves the same way, rather than to an id with no
+     * account behind it.
      */
-    val activeId: String? get() = selectedId ?: load().firstOrNull()?.id
+    val activeId: String?
+        get() {
+            val all = load()
+            return all.firstOrNull { it.id == selectedId }?.id ?: all.firstOrNull()?.id
+        }
 
     /**
      * The account after the selected one, wrapping past the end.
@@ -96,7 +102,7 @@ class AccountStore(context: Context) {
      * [AccountCycle] for the rules and the cases they are pinned to.
      */
     fun nextAccountId(): String? =
-        AccountCycle.next(load().map { it.id }, selectedId)
+        AccountCycle.next(load().map { it.id }, activeId)
 
     /**
      * "Account N" using the highest existing suffix, so removing #1 from [1, 2]

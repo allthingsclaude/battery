@@ -64,9 +64,19 @@ class AccountSwitcher(context: Context, private val repository: UsageRepository)
          * allowlist, which is why `AccountSwitchReceiver` leaves this true.
          */
         repaintCard: Boolean = true,
+        /**
+         * Whether a person chose this account. A manual pick turns Auto off
+         * here, so every switcher — tabs, tile, card — does it, not just the one
+         * that happens to have the toggle on screen. Otherwise a tile pick is
+         * undone by the next resume or worker run, which follows activity again.
+         */
+        manual: Boolean = true,
+        /** False when the caller repaints the widgets itself, as the worker does. */
+        repaintWidgets: Boolean = true,
     ): UsageRepository.PollResult {
+        if (manual) settings.followsActiveAccount = false
         repository.selectAccount(id)
-        val result = repository.poll()
+        val result = repository.poll(repaintWidgets = repaintWidgets)
         if (repaintCard) repaint()
         // The tile is ACTIVE_TILE, so it is bound only for taps and panel opens.
         // Without this nudge it would keep naming the account we just left.
@@ -104,6 +114,7 @@ class AccountSwitcher(context: Context, private val repository: UsageRepository)
     suspend fun applyAutoFollow(
         now: Instant = Instant.now(),
         repaintCard: Boolean = true,
+        repaintWidgets: Boolean = true,
     ): String? {
         if (!settings.followsActiveAccount) return null
 
@@ -114,7 +125,7 @@ class AccountSwitcher(context: Context, private val repository: UsageRepository)
         val pick = ActiveAccount.pick(rises, now) ?: return null
         if (pick == accounts.activeId) return null
 
-        switchTo(pick, repaintCard)
+        switchTo(pick, repaintCard, manual = false, repaintWidgets = repaintWidgets)
         return pick
     }
 

@@ -34,7 +34,7 @@ import java.time.Instant
 class PayloadStore(context: Context, accountId: String) {
 
     private val prefs = context.applicationContext
-        .getSharedPreferences("payload", Context.MODE_PRIVATE)
+        .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     private val payloadKey = "$KEY_PAYLOAD_PREFIX$accountId"
 
@@ -134,8 +134,20 @@ class PayloadStore(context: Context, accountId: String) {
     private fun JSONObject.instantOrNull(key: String): Instant? =
         if (isNull(key)) null else Instant.ofEpochMilli(getLong(key))
 
-    private companion object {
-        const val KEY_PAYLOAD_PREFIX = "latest_"
-        const val KEY_SNAPSHOTS_PREFIX = "snapshots_"
+    companion object {
+        private const val PREFS = "payload"
+        private const val KEY_PAYLOAD_PREFIX = "latest_"
+        private const val KEY_SNAPSHOTS_PREFIX = "snapshots_"
+
+        /**
+         * Every account's cache, plus the unscoped `latest` / `snapshots` keys an
+         * install from before per-account caching still holds. Those are never
+         * read again, but they carry the old account's name, so sign-out has to
+         * be able to reach them — which wiping the whole file used to do.
+         */
+        fun clearAll(context: Context) {
+            context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().clear().apply()
+        }
     }
 }

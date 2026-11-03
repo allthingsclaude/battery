@@ -315,8 +315,9 @@ internal fun UsageRepository.PollResult.report(onResult: (UsagePayload?, String)
             onResult(null, "Session expired — sign in again.")
         UsageRepository.PollResult.NoAccount ->
             onResult(null, "No account. Sign in first.")
-        UsageRepository.PollResult.Stale ->
-            onResult(null, "Account changed mid-poll; discarded.")
+        // Says nothing at all: the poll for the account now on screen reports
+        // for it, and may already have — answering here could blank it.
+        UsageRepository.PollResult.Stale -> Unit
         is UsageRepository.PollResult.Failed -> onResult(
             null,
             retryAfterSeconds?.let { "$message Retry in ${it}s." } ?: message,

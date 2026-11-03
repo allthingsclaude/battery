@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import android.app.StatusBarManager
 import android.content.ComponentName
 import android.content.Context
+import android.os.Build
 import android.graphics.drawable.Icon
 import com.allthingsclaude.battery.quicksettings.AccountTileService
 import androidx.compose.ui.platform.LocalContext
@@ -595,6 +596,10 @@ private fun StatusNote(text: String) {
  * which always works.
  */
 private fun requestAccountTile(context: Context): String {
+    // API 33. minSdk is 31, and calling it on 12/12L throws NoSuchMethodError.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+        return "Add it from the quick panel's edit screen: pull down twice and tap the pencil."
+    }
     val manager = context.getSystemService(StatusBarManager::class.java)
         ?: return "Not available on this device — add it from the quick panel's edit screen."
 

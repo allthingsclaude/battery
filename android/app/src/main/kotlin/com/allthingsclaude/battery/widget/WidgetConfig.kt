@@ -110,6 +110,14 @@ data class WidgetConfig(
 
         private fun key(id: Int, field: String) = "w${id}_$field"
 
+        /** Unpin every widget pinned to [accountId], so each follows the selected account again. */
+        fun unbindAccount(context: Context, accountId: String) {
+            val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val pinned = prefs.all.filter { (k, v) -> k.endsWith("_account") && v == accountId }.keys
+            if (pinned.isEmpty()) return
+            prefs.edit().apply { pinned.forEach { remove(it) } }.apply()
+        }
+
         /**
          * Drop settings for widgets that are no longer placed.
          *

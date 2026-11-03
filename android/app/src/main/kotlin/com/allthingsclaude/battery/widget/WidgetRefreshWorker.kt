@@ -62,8 +62,6 @@ class WidgetRefreshWorker(
         // on a schedule anyway.
         WidgetConfig.reconcile(applicationContext, liveIds.toSet())
 
-        val stored = repository.lastKnownPayload
-
         // Fan-in: N widgets collapse to the M distinct accounts they are bound
         // to, plus whichever is selected. Four widgets on one account cost one
         // poll, not four.
@@ -99,17 +97,14 @@ class WidgetRefreshWorker(
                 .awaitAll()
         }.toMap()
 
-        // Keyed by id, never matched by name: the card describes the *selected*
-        // account, and posting another account's payload to it would put a
-        // number on the lock screen under a heading that means something else.
-        // Two accounts may also share a display name.
-        val fresh = (results[activeId] as? UsageRepository.PollResult.Success)?.payload
-
         // Acted on after the polls, so it decides on what this run just learned.
         // repaintCard = false: this is a background worker, and the card is
-        // posted below by the path that is allowed to.
-        runCatching { AccountSwitcher(applicationContext, repository).applyAutoFollow(repaintCard = false) }
-            .onFailure { Log.w(TAG, "auto-follow skipped: $it") }
+        // posted below by the path that is allowed to. repaintWidgets = false:
+        // the one repaint below covers it, and a second would cancel both.
+        runCatching {
+            AccountSwitcher(applicationContext, repository)
+                .applyAutoFollow(repaintCard = false, repaintWidgets = false)
+        }.onFailure { Log.w(TAG, "auto-follow skipped: $it") }
 
         // **Exactly one repaint per run, on every path.** The polls above are
         // told not to repaint for this reason: two `updateAll` bursts cancel
@@ -121,15 +116,27 @@ class WidgetRefreshWorker(
         // network and must not be gated behind a successful poll. It used to be,
         // which left a wide-open window showing no card at all for as long as the
         // poll was skipped or failing.
-        (fresh ?: stored)?.let {
+        //
+        // Read after auto-follow, by id, from the selected account's own cache:
+        // the card describes the *selected* account, and auto-follow may just
+        // have changed which one that is. Every poll above has already saved to
+        // its account's cache, so this is this run's reading when it succeeded
+        // and the last good one when it did not. Never matched by name — two
+        // accounts may share one.
+        repository.lastKnownPayload?.let {
             runCatching { postCardIfWarranted(it) }
                 .onFailure { e -> Log.w(TAG, "card post skipped: $e") }
         }
 
-        // Retry if anything failed — a widget bound to a background account is
-        // as entitled to a retry as the selected one.
-        val result = results.values.firstOrNull { it is UsageRepository.PollResult.Failed }
-        if (result is UsageRepository.PollResult.Failed) {
+        // Retry when the account on screen failed, or when every poll did. Not
+        // for any one failure: WorkManager's backoff is per worker, so a single
+        // widget-bound account that keeps failing would stretch the next run
+        // towards five hours for every widget and the card. That account is
+        // still polled again on the next scheduled run.
+        val failures = results.values.filterIsInstance<UsageRepository.PollResult.Failed>()
+        val result = (results[activeId] as? UsageRepository.PollResult.Failed)
+            ?: failures.firstOrNull()?.takeIf { failures.size == results.size }
+        if (result != null) {
             // Exponential backoff is the right shape for a failed fetch, and it
             // costs only freshness now that the repaint and the card have both
             // already happened above.

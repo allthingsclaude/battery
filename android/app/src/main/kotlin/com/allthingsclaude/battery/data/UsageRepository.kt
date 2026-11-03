@@ -10,6 +10,7 @@ import com.allthingsclaude.battery.core.UsageApi
 import com.allthingsclaude.battery.core.UsageApiError
 import com.allthingsclaude.battery.core.UsagePayload
 import com.allthingsclaude.battery.core.UsageResponse
+import com.allthingsclaude.battery.widget.WidgetConfig
 import com.allthingsclaude.battery.widget.refreshAllWidgets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -60,7 +61,10 @@ class UsageRepository(context: Context) {
      */
     fun lastActivityAt(accountId: String): Instant? {
         val cached = storeFor(accountId).load() ?: return null
-        return historyFor(accountId).lastRiseAt(cached.sessionResetsAt)
+        // The primary window, as buildPayload records it: a weekly-only account
+        // has no session window, so reading the session one would make every
+        // Ultra account look idle and Auto could never follow it.
+        return historyFor(accountId).lastRiseAt(cached.primaryResetsAt, weekly = !cached.hasSessionLimit)
     }
 
     fun isSignedIn(): Boolean = accounts.load().isNotEmpty()
@@ -73,9 +77,9 @@ class UsageRepository(context: Context) {
         object NoAccount : PollResult()
 
         /**
-         * The account was switched while this poll was in flight, so its result
-         * belongs to an account nobody is looking at. Discarded rather than
-         * rendered.
+         * The account was switched or removed while this poll was in flight, so
+         * its result belongs to an account nobody is looking at. Not rendered —
+         * though a switch still leaves the response in that account's own cache.
          */
         object Stale : PollResult()
     }
@@ -84,12 +88,15 @@ class UsageRepository(context: Context) {
      * @param force skip the freshness gate. Only for an explicit user action —
      *   never for a lifecycle event, which is what caused the problem below.
      */
-    suspend fun poll(force: Boolean = false): PollResult {
-        val all = accounts.load()
-        val account = all.firstOrNull { it.id == accounts.selectedId }
-            ?: all.firstOrNull()
-            ?: return PollResult.NoAccount
-        return pollAccount(account.id, force)
+    suspend fun poll(force: Boolean = false, repaintWidgets: Boolean = true): PollResult {
+        val id = accounts.activeId ?: return PollResult.NoAccount
+        val result = pollAccount(id, force, repaintWidgets)
+        // pollAccount writes the response to this account's cache whatever has
+        // been selected since, which is right for the cache. It is not right for
+        // the caller: the dashboard and the card render this result as the
+        // account on screen, so one that lands after a switch would show the old
+        // account's numbers under the new one's name.
+        return if (accounts.activeId == id) result else PollResult.Stale
     }
 
     /**
@@ -351,7 +358,7 @@ class UsageRepository(context: Context) {
     }
 
     val selectedAccountId: String?
-        get() = accounts.selectedId ?: accounts.load().firstOrNull()?.id
+        get() = accounts.activeId
 
     fun removeAccount(id: String) {
         tokens.delete(id)
@@ -359,6 +366,9 @@ class UsageRepository(context: Context) {
         accounts.save(remaining)
         if (accounts.selectedId == id) accounts.selectedId = remaining.firstOrNull()?.id
         forget(id)
+        // A widget pinned to this account would otherwise sit on "Open Battery
+        // to sync" for good; unpinned, it follows the selected account.
+        WidgetConfig.unbindAccount(appContext, id)
     }
 
     fun signOutAll() {
@@ -367,6 +377,10 @@ class UsageRepository(context: Context) {
         accounts.save(emptyList())
         accounts.selectedId = null
         all.forEach { forget(it.id) }
+        // Also takes the cache keys from before it was per account, which
+        // forget() cannot name and which hold the old account's name.
+        PayloadStore.clearAll(appContext)
+        all.forEach { WidgetConfig.unbindAccount(appContext, it.id) }
     }
 
     fun listAccounts(): List<Account> = accounts.load()
