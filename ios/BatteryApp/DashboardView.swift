@@ -4,6 +4,11 @@ import SwiftUI
 /// a hero session ring, a weekly/Opus card with branded bars, an always-present
 /// forecast card (where this window is heading, and how fast you can spend), and
 /// a subtle note on when the Live Activity appears.
+///
+/// For an account with no five-hour limit (verified Ultra) the weekly window
+/// takes the hero slot and the forecast, the weekly row leaves the limits card
+/// (it would only repeat the hero), and a quiet "No 5-hour limit" note under the
+/// ring says where the session went.
 struct DashboardView: View {
     @ObservedObject var service: UsageService
     @State private var showSettings = false
@@ -19,9 +24,9 @@ struct DashboardView: View {
             VStack(spacing: BatteryMetrics.sectionSpacing) {
                 header
                 if service.payload != nil {
-                    sessionCard
+                    heroCard
                     forecastCard
-                    weeklyCard
+                    limitsCard
                 } else {
                     waitingCard
                 }
@@ -158,17 +163,20 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - Session hero
+    // MARK: - Hero (the primary window)
 
-    private var sessionCard: some View {
-        VStack(spacing: 16) {
+    /// The session ring — or, without a session limit, the weekly one.
+    private var heroCard: some View {
+        let isWeekly = !payload.hasSessionLimit
+        return VStack(spacing: 16) {
             HStack {
-                SectionLabel(title: "Session · 5-hour", systemImage: "bolt.fill")
+                SectionLabel(title: isWeekly ? "Weekly · 7-day" : "Session · 5-hour",
+                             systemImage: isWeekly ? "calendar" : "bolt.fill")
                 Spacer()
-                levelBadge(payload.sessionLevel)
+                levelBadge(payload.primaryLevel)
             }
 
-            UsageRing(utilization: payload.sessionUtilization,
+            UsageRing(utilization: payload.primaryUtilization,
                       size: 148, lineWidth: BatteryMetrics.ringLineHero,
                       gradientStroke: true)
                 .padding(.vertical, 4)
@@ -176,11 +184,15 @@ struct DashboardView: View {
                     Text("used").font(.caption2).foregroundStyle(.tertiary).offset(y: 20)
                 }
 
-            if let reset = payload.sessionResetsAt {
-                LiveCountdown(target: reset)
-            } else {
-                Label("No active session", systemImage: "moon.zzz")
-                    .font(.caption).foregroundStyle(.secondary)
+            VStack(spacing: 6) {
+                if let reset = payload.primaryResetsAt {
+                    LiveCountdown(target: reset)
+                } else {
+                    Label(isWeekly ? "No weekly window open" : "No active session",
+                          systemImage: "moon.zzz")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if isWeekly { NoSessionLimitNote() }
             }
         }
         .frame(maxWidth: .infinity)
@@ -189,20 +201,43 @@ struct DashboardView: View {
 
     // MARK: - Weekly + Opus
 
-    private var weeklyCard: some View {
-        VStack(spacing: 16) {
-            barRow(title: "Weekly · 7-day", icon: "calendar", utilization: payload.weeklyUtilization,
-                   reset: payload.weeklyResetsAt)
-            if let opus = payload.opusUtilization {
-                Divider().overlay(BatteryPalette.hairline)
-                barRow(title: "Opus · 7-day", icon: "sparkles", utilization: opus, reset: nil)
-            }
-            if let fable = payload.fableUtilization {
-                Divider().overlay(BatteryPalette.hairline)
-                barRow(title: "Fable · 7-day", icon: "sparkles", utilization: fable, reset: nil)
-            }
+    private struct LimitRow {
+        let title: String
+        let icon: String
+        let utilization: Double
+        let reset: Date?
+    }
+
+    /// Every 7-day limit the hero isn't already showing. The weekly window is
+    /// the hero for an account with no session limit, so it drops out here.
+    private var limitRows: [LimitRow] {
+        var rows: [LimitRow] = []
+        if payload.hasSessionLimit {
+            rows.append(LimitRow(title: "Weekly · 7-day", icon: "calendar",
+                                 utilization: payload.weeklyUtilization, reset: payload.weeklyResetsAt))
         }
-        .batteryCard()
+        if let opus = payload.opusUtilization {
+            rows.append(LimitRow(title: "Opus · 7-day", icon: "sparkles", utilization: opus, reset: nil))
+        }
+        if let fable = payload.fableUtilization {
+            rows.append(LimitRow(title: "Fable · 7-day", icon: "sparkles", utilization: fable, reset: nil))
+        }
+        return rows
+    }
+
+    /// Absent entirely when there's nothing left to list — an Ultra account
+    /// with no per-model usage this week — rather than an empty card.
+    @ViewBuilder private var limitsCard: some View {
+        let rows = limitRows
+        if !rows.isEmpty {
+            VStack(spacing: 16) {
+                ForEach(Array(rows.enumerated()), id: \.element.title) { index, row in
+                    if index > 0 { Divider().overlay(BatteryPalette.hairline) }
+                    barRow(title: row.title, icon: row.icon, utilization: row.utilization, reset: row.reset)
+                }
+            }
+            .batteryCard()
+        }
     }
 
     private func barRow(title: String, icon: String, utilization: Double, reset: Date?) -> some View {
@@ -329,11 +364,20 @@ struct DashboardView: View {
         case .off:
             text = "Live Activity is off — turn it on in Settings."
         case .alwaysOn:
-            text = "Live Activity stays on your Lock Screen for the whole session."
+            text = payload.hasSessionLimit
+                ? "Live Activity stays on your Lock Screen for the whole session."
+                : "Live Activity keeps your weekly usage on your Lock Screen."
         case .smart:
-            text = (payload.sessionUtilization >= 40 || payload.isSessionActive)
-                ? "Live Activity is on your Lock Screen while this session is hot."
-                : "A Live Activity appears on your Lock Screen once a session gets busy."
+            // Same test `LiveActivityController` applies, on the same window.
+            // Mirrors LiveActivityController: the 40% threshold is session-only;
+            // a weekly-only account's card follows activity alone.
+            let isHot = (payload.hasSessionLimit && payload.sessionUtilization >= 40) || payload.isSessionActive
+            switch (isHot, payload.hasSessionLimit) {
+            case (true, true):   text = "Live Activity is on your Lock Screen while this session is hot."
+            case (false, true):  text = "A Live Activity appears on your Lock Screen once a session gets busy."
+            case (true, false):  text = "Live Activity is on your Lock Screen while you're using Claude."
+            case (false, false): text = "A Live Activity appears on your Lock Screen while you're using Claude."
+            }
         }
         return Button { showSettings = true } label: {
             HStack(spacing: 10) {

@@ -33,6 +33,8 @@ internal class SnapshotPrefs(private val prefs: SharedPreferences) : SnapshotSto
                     timestamp = Instant.ofEpochMilli(obj.getLong("t")),
                     sessionUtilization = obj.getDouble("u"),
                     sessionResetsAt = Instant.ofEpochMilli(obj.getLong("r")),
+                    // Absent means session, which is all an older buffer held.
+                    isWeekly = obj.optBoolean("w", false),
                 )
             }
         }.getOrDefault(emptyList())
@@ -41,12 +43,14 @@ internal class SnapshotPrefs(private val prefs: SharedPreferences) : SnapshotSto
     override fun save(snapshots: List<UsageSnapshot>) {
         val array = JSONArray()
         snapshots.forEach {
-            array.put(
-                JSONObject()
-                    .put("t", it.timestamp.toEpochMilli())
-                    .put("u", it.sessionUtilization)
-                    .put("r", it.sessionResetsAt.toEpochMilli())
-            )
+            val obj = JSONObject()
+                .put("t", it.timestamp.toEpochMilli())
+                .put("u", it.sessionUtilization)
+                .put("r", it.sessionResetsAt.toEpochMilli())
+            // Written only when true, for the same reason the keys are one
+            // letter: a session sample is the default and needs no marker.
+            if (it.isWeekly) obj.put("w", true)
+            array.put(obj)
         }
         prefs.edit().putString(KEY, array.toString()).apply()
     }

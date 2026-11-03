@@ -64,11 +64,28 @@ object TimeFormatting {
      */
     fun untilReset(interval: Double): String? {
         if (interval <= 0) return null
+        return longDuration(interval)
+    }
+
+    /**
+     * A span of time that may run to days — "Hits 100% in 2d 5h", "resets in
+     * 3d 4h", or just "4d" when the hours come to nothing. A port of the Swift
+     * `TimeFormatting.longDuration`, with the same truncation and the same
+     * strings, so all three platforms spell a week alike.
+     *
+     * Identical to [shortDuration] below a day, so nothing about a five-hour
+     * window reads differently. Exists for the weekly window, which becomes the
+     * one being forecast on an account with no five-hour limit: its time to
+     * limit and time to reset are routinely days, and "53h 10m" is the same
+     * unreadable three-digit-hours problem [untilReset] was written to fix.
+     * Unlike [untilReset] it always answers, "0s" included.
+     */
+    fun longDuration(interval: Double): String {
         val totalSeconds = interval.toLong()
         if (totalSeconds < DAY_SECONDS) return shortDuration(interval)
         val days = totalSeconds / DAY_SECONDS
         val hours = (totalSeconds % DAY_SECONDS) / 3600
-        return "${days}d ${hours}h"
+        return if (hours > 0) "${days}d ${hours}h" else "${days}d"
     }
 
     private const val DAY_SECONDS = 24 * 60 * 60L

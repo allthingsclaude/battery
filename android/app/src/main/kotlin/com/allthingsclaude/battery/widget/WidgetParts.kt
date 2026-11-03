@@ -197,24 +197,30 @@ private fun Bar(palette: WidgetPalette, utilization: Double) {
  * inside a 38dp ring are a smudge. The percentage moves out beside it at 20sp,
  * where it actually reads — which is also why this shape has *less* whitespace
  * than the first attempt, not more.
+ *
+ * With no session window the weekly moves to the front, its caption says so,
+ * and the right-hand slot it vacated holds the model-scoped weekly when there is
+ * one — otherwise a quiet "no 5-hour limit", which explains the change instead
+ * of leaving a hole where a number used to be.
  */
 @Composable
 fun RowLayout(payload: UsagePayload, palette: WidgetPalette) {
-    val level = UsageLevel.from(payload.sessionUtilization)
+    val level = payload.primaryLevel
+    val reset = resetText(payload.primaryResetsAt)
     Frame(palette, padding = 6) {
         Row(
             modifier = GlanceModifier.fillMaxSize(),
             verticalAlignment = Alignment.Vertical.CenterVertically,
         ) {
             Image(
-                provider = ringImage(payload.sessionUtilization, 40, palette, showLabel = false),
+                provider = ringImage(payload.primaryUtilization, 40, palette, showLabel = false),
                 contentDescription = null,
                 modifier = GlanceModifier.size(40.dp),
             )
             Spacer(GlanceModifier.width(10.dp))
             Column(modifier = GlanceModifier.defaultWeight()) {
                 Text(
-                    "${payload.sessionUtilization.roundToInt()}%",
+                    "${payload.primaryUtilization.roundToInt()}%",
                     style = TextStyle(
                         color = ColorProvider(Color(level.color)),
                         fontWeight = FontWeight.Bold,
@@ -222,24 +228,41 @@ fun RowLayout(payload: UsagePayload, palette: WidgetPalette) {
                     ),
                 )
                 Text(
-                    resetText(payload.sessionResetsAt)?.let { "resets in $it" } ?: "no window",
+                    when {
+                        payload.hasSessionLimit -> reset?.let { "resets in $it" } ?: "no window"
+                        else -> reset?.let { "weekly · resets in $it" } ?: "weekly · no window"
+                    },
                     style = TextStyle(color = palette.muted, fontSize = 11.sp()),
                     maxLines = 1,
                 )
             }
             Column(horizontalAlignment = Alignment.Horizontal.End) {
-                Text("WEEK", style = TextStyle(color = palette.muted, fontSize = 9.sp()))
-                Text(
-                    "${payload.weeklyUtilization.roundToInt()}%",
-                    style = TextStyle(
-                        color = ColorProvider(Color(UsageLevel.from(payload.weeklyUtilization).color)),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp(),
-                    ),
-                )
+                val scoped = payload.opusUtilization
+                when {
+                    payload.hasSessionLimit -> SideStat(palette, "WEEK", payload.weeklyUtilization)
+                    scoped != null -> SideStat(palette, payload.scopedTitle.uppercase(), scoped)
+                    else -> {
+                        Text("5-HOUR", style = TextStyle(color = palette.muted, fontSize = 9.sp()))
+                        Text("no limit", style = TextStyle(color = palette.muted, fontSize = 12.sp()))
+                    }
+                }
             }
         }
     }
+}
+
+/** The row widget's right-hand figure: a small caps label over a percentage. */
+@Composable
+private fun SideStat(palette: WidgetPalette, label: String, utilization: Double) {
+    Text(label, style = TextStyle(color = palette.muted, fontSize = 9.sp()), maxLines = 1)
+    Text(
+        "${utilization.roundToInt()}%",
+        style = TextStyle(
+            color = ColorProvider(Color(UsageLevel.from(utilization).color)),
+            fontWeight = FontWeight.Bold,
+            fontSize = 15.sp(),
+        ),
+    )
 }
 
 /**
@@ -284,6 +307,7 @@ fun RingLayout(palette: WidgetPalette, title: String, utilization: Double, capti
  */
 @Composable
 fun OverviewLayout(payload: UsagePayload, palette: WidgetPalette, short: Boolean) {
+    if (!payload.hasSessionLimit) return WeeklyOverviewLayout(payload, palette, short)
     Frame(palette, padding = if (short) 8 else 12) {
         if (short) {
             Row(
@@ -330,24 +354,106 @@ fun OverviewLayout(payload: UsagePayload, palette: WidgetPalette, short: Boolean
     }
 }
 
-/** 4x2 — where the window is heading, in `UsageForecast`'s own words. */
+/**
+ * The overview for an account with no session window: the weekly ring as the
+ * hero, where the session's used to be, and the model-scoped weekly beside it.
+ *
+ * A layout of its own rather than flags threaded through [OverviewLayout],
+ * because what changes is the arrangement and not just the labels. The slot the
+ * weekly row vacated is not left empty: it carries the scoped row when there is
+ * one, and in both cases a quiet note saying why there is no session ring.
+ */
+@Composable
+private fun WeeklyOverviewLayout(payload: UsagePayload, palette: WidgetPalette, short: Boolean) {
+    val scoped = payload.opusUtilization
+    Frame(palette, padding = if (short) 8 else 12) {
+        if (short) {
+            Row(
+                modifier = GlanceModifier.fillMaxSize(),
+                verticalAlignment = Alignment.Vertical.CenterVertically,
+            ) {
+                Column(modifier = GlanceModifier.defaultWeight()) {
+                    WindowRow(palette, "Weekly", payload.weeklyUtilization, null)
+                }
+                Spacer(GlanceModifier.width(12.dp))
+                Column(modifier = GlanceModifier.defaultWeight()) {
+                    if (scoped != null) {
+                        WindowRow(palette, payload.scopedTitle, scoped, null)
+                    } else {
+                        NoSessionNote(palette)
+                    }
+                }
+            }
+            return@Frame
+        }
+
+        Row(
+            modifier = GlanceModifier.fillMaxSize(),
+            verticalAlignment = Alignment.Vertical.CenterVertically,
+        ) {
+            Column(horizontalAlignment = Alignment.Horizontal.CenterHorizontally) {
+                Text("WEEKLY", style = TextStyle(color = palette.muted, fontSize = 10.sp()))
+                Spacer(GlanceModifier.height(5.dp))
+                Image(
+                    provider = ringImage(payload.weeklyUtilization, 88, palette),
+                    contentDescription = null,
+                    modifier = GlanceModifier.size(88.dp),
+                )
+                resetText(payload.weeklyResetsAt)?.let {
+                    Spacer(GlanceModifier.height(5.dp))
+                    Text(it, style = TextStyle(color = palette.muted, fontSize = 10.sp()), maxLines = 1)
+                }
+            }
+            Spacer(GlanceModifier.width(16.dp))
+            Column(modifier = GlanceModifier.defaultWeight()) {
+                scoped?.let {
+                    WindowRow(palette, payload.scopedTitle, it, null)
+                    Spacer(GlanceModifier.height(12.dp))
+                }
+                NoSessionNote(palette)
+            }
+        }
+    }
+}
+
+/**
+ * The quiet line that stands in for a session window an account doesn't have.
+ * Muted and small on purpose: it explains an absence, it is not a reading.
+ */
+@Composable
+private fun NoSessionNote(palette: WidgetPalette) {
+    Text(
+        "No 5-hour limit",
+        style = TextStyle(color = palette.muted, fontSize = 11.sp()),
+        maxLines = 1,
+    )
+}
+
+/**
+ * 4x2 — where the window is heading, in `UsageForecast`'s own words.
+ *
+ * The primary window's: the weekly one on an account with no five-hour limit,
+ * which the badge line then names, since the ring and the headline alone look
+ * exactly like a session forecast.
+ */
 @Composable
 fun ForecastLayout(payload: UsagePayload, palette: WidgetPalette) {
     val forecast = UsageForecast(payload)
+    val badge = forecast.badgeLabel.uppercase()
     Frame(palette, padding = 12) {
         Row(
             modifier = GlanceModifier.fillMaxSize(),
             verticalAlignment = Alignment.Vertical.CenterVertically,
         ) {
             Image(
-                provider = ringImage(payload.sessionUtilization, 84, palette),
+                provider = ringImage(payload.primaryUtilization, 84, palette),
                 contentDescription = null,
                 modifier = GlanceModifier.size(84.dp),
             )
             Spacer(GlanceModifier.width(14.dp))
             Column(modifier = GlanceModifier.defaultWeight()) {
                 Text(
-                    forecast.badgeLabel.uppercase(),
+                    if (forecast.isWeekly) "WEEKLY · $badge" else badge,
                     style = TextStyle(
                         color = ColorProvider(Color(forecast.tintColor)),
                         fontSize = 10.sp(),
@@ -361,7 +467,7 @@ fun ForecastLayout(payload: UsagePayload, palette: WidgetPalette) {
                     maxLines = 2,
                 )
                 Spacer(GlanceModifier.height(6.dp))
-                Bar(palette, payload.sessionUtilization)
+                Bar(palette, payload.primaryUtilization)
                 Spacer(GlanceModifier.height(6.dp))
                 Text(
                     "${forecast.landingStat.label} ${forecast.landingStat.value}   ·   pace ${forecast.rateText}",

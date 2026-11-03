@@ -103,6 +103,32 @@ struct LiveCountdown: View {
     }
 }
 
+// MARK: - No session limit
+
+/// The quiet stand-in for a session window the account doesn't have.
+///
+/// Verified Ultra accounts have weekly limits only, so every surface leads with
+/// the weekly window instead. Where that leaves a slot the session used to fill,
+/// this sits in it — explaining why the session ring is gone rather than drawing
+/// one at 0%, which would read as "nothing used" instead of "no such limit".
+/// Styled like the countdown lines it sits among: caption, tertiary icon.
+struct NoSessionLimitNote: View {
+    static let text = "No 5-hour limit"
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "infinity")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Text(Self.text)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+    }
+}
+
 // MARK: - Active-session pulse
 
 /// A soft pulsing brand dot signalling a live, burning session.

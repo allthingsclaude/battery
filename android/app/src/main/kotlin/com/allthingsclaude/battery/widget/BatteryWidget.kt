@@ -25,6 +25,12 @@ import com.allthingsclaude.battery.data.PayloadStore
  * acknowledge. Glance widgets run in the app's process and read what the service
  * already wrote, so no credential is ever copied anywhere. That whole class of
  * exposure has no Android equivalent.
+ *
+ * Every one of them leads with the payload's *primary* window. On an account
+ * with no five-hour limit that is the weekly one, labelled "Weekly" wherever a
+ * slot used to say "Session" — including the two widgets named for the session,
+ * which a user may have placed long before their account lost the window, and
+ * which must not turn into a ring stuck at 0%.
  */
 abstract class BasePayloadWidget : GlanceAppWidget() {
 
@@ -56,7 +62,10 @@ class SessionRowWidget : BasePayloadWidget() {
     }
 }
 
-/** 2x2 — the session ring, a port of iOS's SmallGaugeView. */
+/**
+ * 2x2 — the session ring, a port of iOS's SmallGaugeView. The weekly ring, under
+ * a "Weekly" heading, on an account with no session window to draw.
+ */
 class SessionRingWidget : BasePayloadWidget() {
     @Composable
     override fun Content(payload: UsagePayload?, config: WidgetConfig) {
@@ -64,9 +73,9 @@ class SessionRingWidget : BasePayloadWidget() {
         if (payload == null) return EmptyState(palette, compact = false)
         RingLayout(
             palette = palette,
-            title = "Session",
-            utilization = payload.sessionUtilization,
-            caption = resetText(payload.sessionResetsAt),
+            title = if (payload.hasSessionLimit) "Session" else "Weekly",
+            utilization = payload.primaryUtilization,
+            caption = resetText(payload.primaryResetsAt),
             active = payload.isSessionActive,
         )
     }
@@ -75,7 +84,8 @@ class SessionRingWidget : BasePayloadWidget() {
 /**
  * Session, weekly and Opus. Responsive by height: 4x2 gets the hero ring plus
  * bar rows (iOS's MediumOverviewView), 4x1 gets bars only — which is the
- * "smaller overview" shape, without inventing a fifth widget for it.
+ * "smaller overview" shape, without inventing a fifth widget for it. Weekly and
+ * the model-scoped window alone on an account with no session window.
  */
 class OverviewWidget : BasePayloadWidget() {
     override val sizeMode = SizeMode.Responsive(setOf(SHORT, TALL))

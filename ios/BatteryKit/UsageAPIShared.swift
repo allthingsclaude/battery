@@ -69,13 +69,71 @@ struct UsageResponse: Codable {
 
     var fableUtilization: Double? { fableLimit?.utilization }
 
+    /// The five-hour (session) window, wherever the API reported it — nil when
+    /// the account doesn't have one.
+    ///
+    /// A verified Ultra account has weekly limits only: the API answers with
+    /// `"five_hour": null` and no `session` entry in `limits`. Everyone else
+    /// gets the top-level bucket; the `limits` entry only fills in for a
+    /// response that reports the window there and nowhere else.
+    var sessionBucket: UsageBucket? {
+        if let fiveHour { return fiveHour }
+        guard let limit = limits.first(where: { $0.kind == "session" }) else { return nil }
+        return UsageBucket(utilization: limit.utilization, resetsAt: limit.resetsAt)
+    }
+
+    /// Whether this account has a five-hour window at all. Read from the data,
+    /// never from the plan: an unverified Ultra account still carries a
+    /// temporary five-hour limit, so the name alone can't say.
+    var hasSessionLimit: Bool { sessionBucket != nil }
+
+    /// The window every glanceable surface leads with: the session when there
+    /// is one, otherwise the weekly. See `UsagePayload.primaryWindow`.
+    var primaryWindow: UsagePayload.FocusWindow { hasSessionLimit ? .session : .weekly }
+
+    var primaryUtilization: Double {
+        if let session = sessionBucket { return session.utilization }
+        return sevenDay.utilization
+    }
+
+    var primaryResetsAt: Date? {
+        if let session = sessionBucket { return session.resetsAtDate }
+        return sevenDay.resetsAtDate
+    }
+
     /// Display name for the plan, or "" when unknown.
-    var planDisplayName: String {
+    var planDisplayName: String { PlanLabel.from(rateLimitTier: rateLimitTier) }
+}
+
+// MARK: - Plan labels
+
+/// The plan names every platform shows — the Mac, this app, and Android all
+/// produce the same strings from the same tier.
+///
+/// Anthropic renamed the plans on 2026-10-30: Max 20x is now **Ultra** and Max
+/// 5x is plain **Max**. The tier string for Ultra still reads
+/// `default_claude_max_20x` today and may later say `ultra`, so both spellings
+/// land on the new name. Order matters: every Max tier contains "max".
+enum PlanLabel {
+    static func from(rateLimitTier: String?) -> String {
         guard let t = rateLimitTier?.lowercased() else { return "" }
-        if t.contains("max_5x") || t.contains("max5x") { return "Max 5x" }
+        if t.contains("ultra") || t.contains("max_20x") || t.contains("max20x") { return "Ultra" }
+        if t.contains("max_5x") || t.contains("max5x") { return "Max" }
         if t.contains("max") { return "Max" }
         if t.contains("pro") { return "Pro" }
         return ""
+    }
+
+    /// Bring a label written before the rename up to date. Applied wherever a
+    /// stored or remotely-supplied label is read — a payload saved by the
+    /// previous version, or the plan a Mac stamped on a Live Activity — so
+    /// "Max 20x" doesn't linger until the next successful poll replaces it.
+    static func migrated(_ label: String) -> String {
+        switch label {
+        case "Max 20x": return "Ultra"
+        case "Max 5x":  return "Max"
+        default:        return label
+        }
     }
 }
 
@@ -190,33 +248,48 @@ extension UsagePayload {
     /// widgets refreshed on WidgetKit's schedule saw a permanent em dash. Both
     /// now record into the shared `SessionHistory`, so every poll — whoever
     /// makes it — builds the regression up.
+    ///
+    /// The regression follows the primary window: the session when the account
+    /// has one, the weekly window when it doesn't (verified Ultra). The session
+    /// fields are then written as 0 / nil — never a fabricated window.
     static func from(usage: UsageResponse, previous: UsagePayload?, accountName: String) -> UsagePayload {
-        let session = usage.fiveHour
-        let sessionUtil = session?.utilization ?? 0
-        let sessionReset = session?.resetsAtDate
+        let session = usage.sessionBucket
+        let window = usage.primaryWindow
+        let primaryUtil = usage.primaryUtilization
 
-        let projection = SessionHistory.record(utilization: sessionUtil, resetsAt: sessionReset)
+        let projection = SessionHistory.record(
+            utilization: primaryUtil,
+            resetsAt: usage.primaryResetsAt,
+            window: window
+        )
+
+        // Only a payload that described the same window has anything to carry:
+        // a session rate is meaningless against the weekly window, and the
+        // other way round. An account flipping between the two (verification
+        // landing, or a temporary limit coming back) starts from scratch.
+        let comparable = previous?.primaryWindow == window ? previous : nil
 
         // Until the shared buffer holds enough samples to regress, fall back to
         // the last payload's rate — but only while the sample it came from is
         // recent enough to mean anything, otherwise an hours-old "9.2%/hr" gets
         // presented as current.
-        let carriedIsFresh = previous.map { Date().timeIntervalSince($0.updatedAt) < 3600 } ?? false
-        let carriedLimit = carriedIsFresh ? previous?.liveProjectedLimitAt : nil
-        let carriedRate = carriedLimit != nil ? (previous?.burnRatePerHour ?? 0) : 0
+        let carriedIsFresh = comparable.map { Date().timeIntervalSince($0.updatedAt) < 3600 } ?? false
+        let carriedLimit = carriedIsFresh ? comparable?.liveProjectedLimitAt : nil
+        let carriedRate = carriedLimit != nil ? (comparable?.burnRatePerHour ?? 0) : 0
 
         let hasFreshProjection = projection.ratePerHour > 0
 
         return UsagePayload(
-            sessionUtilization: sessionUtil,
-            sessionResetsAt: sessionReset,
+            hasSessionLimit: session != nil,
+            sessionUtilization: session?.utilization ?? 0,
+            sessionResetsAt: session?.resetsAtDate,
             weeklyUtilization: usage.sevenDay.utilization,
             weeklyResetsAt: usage.sevenDay.resetsAtDate,
             opusUtilization: usage.sevenDayOpus?.utilization,
             fableUtilization: usage.fableUtilization,
             burnRatePerHour: hasFreshProjection ? projection.ratePerHour : carriedRate,
             projectedLimitAt: hasFreshProjection ? projection.limitAt : carriedLimit,
-            isSessionActive: session != nil && sessionUtil > (previous?.sessionUtilization ?? 0),
+            isSessionActive: primaryUtil > (comparable?.primaryUtilization ?? 0),
             planTier: usage.planDisplayName,
             accountName: accountName,
             isConnected: true,

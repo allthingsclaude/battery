@@ -583,6 +583,67 @@ await check('a window rollover ends the card with a reset state', async () => {
   assert.ok(aps['dismissal-date'] > aps.timestamp);
 });
 
+// ── weekly-only accounts (verified Ultra: `five_hour` is null) ───────────
+
+const weeklyOnly = (weekly) => () => ({
+  status: 200,
+  body: {
+    five_hour: null,
+    seven_day: { utilization: weekly, resets_at: new Date(Date.now() + 3 * 86400e3).toISOString() },
+    limits: [{ kind: 'weekly_all', group: 'weekly', percent: weekly, scope: null }],
+  },
+});
+
+await check('a weekly-only account tracks the weekly window', async () => {
+  usageBehaviour = weeklyOnly(82);
+
+  apnsCalls.length = 0;
+  await cronTick();
+  const aps = apnsCalls[0].payload.aps;
+  const state = aps['content-state'];
+  assert.equal(aps.event, 'update');
+  assert.equal(state.hasSessionLimit, false);
+  assert.equal(state.sessionUtilization, 0);
+  assert.equal(state.sessionResetsAt, undefined, 'no session window to count down');
+  assert.equal(state.weeklyUtilization, 82);
+  assert.equal(typeof state.weeklyResetsAt, 'number');
+  assert.equal(aps['relevance-score'], 82);
+  assert.ok(aps.alert, 'the weekly window crossing into High is worth an alert');
+  assert.match(aps.alert.body, /82% of your weekly limit/);
+});
+
+await check('a weekly move derives a weekly burn rate', async () => {
+  await backdateLastPush(300);
+  usageBehaviour = weeklyOnly(83);
+
+  apnsCalls.length = 0;
+  await cronTick();
+  const state = apnsCalls[0].payload.aps['content-state'];
+  assert.equal(state.weeklyUtilization, 83);
+  assert.ok(state.burnRatePerHour > 0, 'two weekly points should yield a rate');
+  assert.ok(state.projectedLimitAt < state.weeklyResetsAt, 'projection must land before the weekly reset');
+});
+
+await check('switching back to a session window is not a reset', async () => {
+  // Weekly 83% then session 5% would read as a collapse if the two were
+  // compared — an unverified Ultra account regaining its temporary limit.
+  usageBehaviour = () => ({
+    status: 200,
+    body: {
+      five_hour: { utilization: 5, resets_at: new Date(Date.now() + 4 * 3600e3).toISOString() },
+      seven_day: { utilization: 83, resets_at: new Date(Date.now() + 3 * 86400e3).toISOString() },
+    },
+  });
+
+  apnsCalls.length = 0;
+  await cronTick();
+  const aps = apnsCalls[0].payload.aps;
+  assert.equal(aps.event, 'update');
+  assert.equal(aps['content-state'].didReset, false);
+  assert.equal(aps['content-state'].hasSessionLimit, true);
+  assert.equal(aps['content-state'].sessionUtilization, 5);
+});
+
 await check('a rotated refresh token is persisted, not dropped', async () => {
   // Force the next tick to refresh by expiring the stored access token.
   const cloud = JSON.parse(env.DEVICES.store.get(`cloud:${DEVICE_ID}`));

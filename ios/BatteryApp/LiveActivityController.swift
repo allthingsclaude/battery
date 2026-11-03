@@ -27,6 +27,17 @@ import ActivityKit
 ///
 /// Thresholds mirror the macOS `NotificationService` so phone + Mac agree on
 /// what "worth surfacing" means.
+///
+/// The utilization and reset time above are the payload's *primary* window.
+/// For an account with no five-hour limit (verified Ultra) that's the weekly
+/// window: it's what "reset" means and what the alert copy names — the same
+/// policy the Mac and the relay apply.
+///
+/// The level thresholds, though, are session-only. Weekly utilization only
+/// climbs until the weekly reset, so "start at 40%, end only when idle below
+/// 25%" would pin the card to the Lock Screen for days once the week passed
+/// 40%. A weekly-only account's card follows activity instead: it starts when
+/// usage is moving and ends after `endGrace` of idleness, whatever the level.
 @MainActor
 final class LiveActivityController {
     static let shared = LiveActivityController()
@@ -40,6 +51,8 @@ final class LiveActivityController {
 
     // Rolling state between calls
     private var previousUtilization: Double?
+    /// The window `previousUtilization` measured.
+    private var previousWindow: UsagePayload.FocusWindow?
     private var alertedLevel: UsageLevel?
     private var idleSince: Date?
 
@@ -57,8 +70,22 @@ final class LiveActivityController {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
 
         let mode = LiveActivityMode.current
-        let util = payload.sessionUtilization
-        defer { previousUtilization = util }
+        let window = payload.primaryWindow
+        let util = payload.primaryUtilization
+
+        // The account switched windows — verification landed and the session
+        // limit went away, or a temporary one came back. `util` now measures a
+        // different window, so nothing from before compares: a drop from 63%
+        // weekly to 4% session isn't a reset, and a level alerted for one
+        // limit says nothing about the other.
+        if let previousWindow, previousWindow != window {
+            previousUtilization = nil
+            alertedLevel = nil
+        }
+        defer {
+            previousUtilization = util
+            previousWindow = window
+        }
 
         // The relay may only start an activity remotely when the user wants one.
         PushRelayClient.shared.setPushToStartAllowed(mode != .off)
@@ -74,9 +101,10 @@ final class LiveActivityController {
 
         let alwaysOn = mode == .alwaysOn
 
-        // Session reset — a sharp collapse means the 5-hour window rolled over.
-        // In Smart mode we show a reset card and dismiss; in Always On we just let
-        // the ring drop to the new window's value without dismissing.
+        // Reset — a sharp collapse means the primary window rolled over (the
+        // 5-hour session, or the week without one). In Smart mode we show a
+        // reset card and dismiss; in Always On we just let the ring drop to the
+        // new window's value without dismissing.
         let didReset = (previousUtilization ?? 0) > 30 && util < 10
         if didReset && !alwaysOn {
             if let existing { Task { await endWithReset(existing, payload: payload) } }
@@ -86,8 +114,9 @@ final class LiveActivityController {
 
         // Smart-only auto-end: past the reset time, or idle+low for a while.
         if !alwaysOn {
-            let pastReset = payload.sessionResetsAt.map { $0 < Date() } ?? false
-            let isIdleLow = !payload.isSessionActive && util < endThreshold
+            let pastReset = payload.primaryResetsAt.map { $0 < Date() } ?? false
+            let isLow = window == .weekly || util < endThreshold
+            let isIdleLow = !payload.isSessionActive && isLow
             idleSince = isIdleLow ? (idleSince ?? Date()) : nil
             let idledLongEnough = idleSince.map { Date().timeIntervalSince($0) >= endGrace } ?? false
             if let existing, pastReset || idledLongEnough {
@@ -99,8 +128,10 @@ final class LiveActivityController {
             idleSince = nil
         }
 
-        // Should one be running? Always On ⇒ yes; Smart ⇒ only when hot/active.
-        let shouldRun = alwaysOn || payload.isSessionActive || util >= startThreshold
+        // Should one be running? Always On ⇒ yes; Smart ⇒ only when hot/active
+        // (only when active, for a weekly-only account — see the type comment).
+        let isHot = window == .session && util >= startThreshold
+        let shouldRun = alwaysOn || payload.isSessionActive || isHot
         guard shouldRun else {
             if let existing { Task { await end(existing) } }
             return
@@ -164,10 +195,12 @@ final class LiveActivityController {
     @available(iOS 16.2, *)
     private func contentState(from payload: UsagePayload, didReset: Bool) -> UsageActivityAttributes.ContentState {
         UsageActivityAttributes.ContentState(
+            hasSessionLimit: payload.hasSessionLimit,
             sessionUtilization: payload.sessionUtilization,
             sessionResetsAt: payload.sessionResetsAt,
             weeklyUtilization: payload.weeklyUtilization,
-            burnRatePerHour: payload.burnRatePerHour,
+            weeklyResetsAt: payload.weeklyResetsAt,
+            burnRatePerHour: payload.burnRatePerHour,     // already the primary window's
             projectedLimitAt: payload.liveProjectedLimitAt, // never push an expired projection
             isSessionActive: payload.isSessionActive,
             didReset: didReset,
@@ -183,7 +216,7 @@ final class LiveActivityController {
         let content = ActivityContent(
             state: state,
             staleDate: Date().addingTimeInterval(staleAfter),
-            relevanceScore: relevance(for: state.sessionUtilization)
+            relevanceScore: relevance(for: state.primaryUtilization)
         )
         do {
             // `.token` asks ActivityKit for an APNs token so the relay can keep
@@ -225,11 +258,16 @@ final class LiveActivityController {
         let content = ActivityContent(
             state: state,
             staleDate: Date().addingTimeInterval(staleAfter),
-            relevanceScore: relevance(for: state.sessionUtilization)
+            relevanceScore: relevance(for: state.primaryUtilization)
         )
+        // Names the limit the card is actually tracking — "weekly" for an
+        // account with no five-hour limit.
+        let window = state.hasSessionLimit ? "Session" : "Weekly"
+        let limit = state.hasSessionLimit ? "5-hour" : "weekly"
+        let percent = Int(state.primaryUtilization.rounded())
         let alert: AlertConfiguration? = alerting ? AlertConfiguration(
-            title: "Session usage \(level.label.lowercased())",
-            body: "You're at \(Int(state.sessionUtilization.rounded()))% of your 5-hour limit.",
+            title: "\(window) usage \(level.label.lowercased())",
+            body: "You're at \(percent)% of your \(limit) limit.",
             sound: .default
         ) : nil
         await activity.update(content, alertConfiguration: alert)

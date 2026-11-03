@@ -34,6 +34,9 @@ final class PushRelayService: ObservableObject {
     @Published private(set) var isWorking = false
 
     /// One poll's worth of state, in the shape the Live Activity wants.
+    ///
+    /// `burnRatePerHour` and `projectedLimitAt` describe the primary window:
+    /// the session, or the weekly window when `hasSessionLimit` is false.
     struct Snapshot {
         var sessionUtilization: Double
         var sessionResetsAt: Date?
@@ -41,8 +44,21 @@ final class PushRelayService: ObservableObject {
         var burnRatePerHour: Double
         var projectedLimitAt: Date?
         var isSessionActive: Bool
+        /// False for weekly-only accounts (verified Ultra).
+        var hasSessionLimit: Bool
+        var weeklyResetsAt: Date?
         var planTier: String
         var accountName: String
+
+        /// The window the card tracks: the session, or the weekly window when
+        /// the account has no session limit.
+        var primaryUtilization: Double {
+            hasSessionLimit ? sessionUtilization : weeklyUtilization
+        }
+
+        var primaryResetsAt: Date? {
+            hasSessionLimit ? sessionResetsAt : weeklyResetsAt
+        }
     }
 
     // MARK: - Tunables
@@ -158,12 +174,19 @@ final class PushRelayService: ObservableObject {
     func send(_ snapshot: Snapshot) {
         guard isPaired, credentials != nil, relayURL != nil, !inFlight else { return }
 
+        // A change of metering (Ultra verification landing or lapsing) swaps
+        // the window the card tracks. Its numbers are not comparable with the
+        // last push, so neither a "reset" nor a held-back delta applies.
+        if let previous = lastSent, previous.hasSessionLimit != snapshot.hasSessionLimit {
+            resetGate()
+        }
+
         let previous = lastSent
-        let didReset = (previous?.sessionUtilization ?? 0) > 30 && snapshot.sessionUtilization < 10
+        let didReset = (previous?.primaryUtilization ?? 0) > 30 && snapshot.primaryUtilization < 10
         guard didReset || shouldPush(snapshot) else { return }
 
-        // A collapse means the 5-hour window rolled over: close the card with a
-        // brief "session reset" message, matching what the phone does locally.
+        // A collapse means the tracked window rolled over: close the card with
+        // a brief "reset" message, matching what the phone does locally.
         if didReset {
             deliver(snapshot, event: "end", didReset: true, alert: nil)
             resetGate()
@@ -172,15 +195,16 @@ final class PushRelayService: ObservableObject {
             return
         }
 
-        let level = UsageLevel.from(utilization: snapshot.sessionUtilization)
+        let level = UsageLevel.from(utilization: snapshot.primaryUtilization)
         // Escalation banners are pushed from here rather than raised on the
         // phone, because the phone is usually asleep at the moment they matter.
         // `LiveActivityController` steps aside while we're paired.
         var alert: [String: Any]?
         if level.isAlarming && level != alertedLevel {
+            let window = snapshot.hasSessionLimit ? "5-hour" : "weekly"
             alert = [
-                "title": "Session usage \(level.label.lowercased())",
-                "body": "You're at \(Int(snapshot.sessionUtilization.rounded()))% of your 5-hour limit.",
+                "title": "\(snapshot.hasSessionLimit ? "Session" : "Weekly") usage \(level.label.lowercased())",
+                "body": "You're at \(Int(snapshot.primaryUtilization.rounded()))% of your \(window) limit.",
             ]
             alertedLevel = level
         } else if !level.isAlarming {
@@ -199,11 +223,11 @@ final class PushRelayService: ObservableObject {
         guard elapsed >= minimumInterval else { return false }
         if elapsed >= heartbeatInterval { return true }
 
-        if abs(snapshot.sessionUtilization - previous.sessionUtilization) >= minimumDelta { return true }
+        if abs(snapshot.primaryUtilization - previous.primaryUtilization) >= minimumDelta { return true }
         if snapshot.isSessionActive != previous.isSessionActive { return true }
-        if snapshot.sessionResetsAt != previous.sessionResetsAt { return true }
-        return UsageLevel.from(utilization: snapshot.sessionUtilization)
-            != UsageLevel.from(utilization: previous.sessionUtilization)
+        if snapshot.primaryResetsAt != previous.primaryResetsAt { return true }
+        return UsageLevel.from(utilization: snapshot.primaryUtilization)
+            != UsageLevel.from(utilization: previous.primaryUtilization)
     }
 
     private func deliver(_ snapshot: Snapshot, event: String, didReset: Bool, alert: [String: Any]?) {
@@ -215,7 +239,7 @@ final class PushRelayService: ObservableObject {
             "event": event,
             "contentState": contentState(from: snapshot, didReset: didReset),
             "staleAfter": staleAfter,
-            "relevanceScore": snapshot.sessionUtilization,
+            "relevanceScore": snapshot.primaryUtilization,
             // Nudge the phone awake so the Home Screen widgets reload too — the
             // ActivityKit push alone can't reach them.
             "reloadWidgets": true,
@@ -255,7 +279,11 @@ final class PushRelayService: ObservableObject {
     }
 
     private func startRemotely(_ snapshot: Snapshot, base: URL, creds: Credentials) async {
-        guard snapshot.isSessionActive || snapshot.sessionUtilization >= startThreshold else { return }
+        // The level threshold is session-only: weekly utilization only climbs
+        // until the weekly reset, so on a weekly-only account it would raise
+        // the card on every poll for days. Activity alone starts that one.
+        let isHot = snapshot.hasSessionLimit && snapshot.sessionUtilization >= startThreshold
+        guard snapshot.isSessionActive || isHot else { return }
 
         struct PushResponse: Decodable { let ok: Bool }
         let body: [String: Any] = [
@@ -268,7 +296,7 @@ final class PushRelayService: ObservableObject {
                 "accountName": snapshot.accountName,
             ],
             "staleAfter": staleAfter,
-            "relevanceScore": snapshot.sessionUtilization,
+            "relevanceScore": snapshot.primaryUtilization,
         ]
         do {
             _ = try await post("/v1/push", to: base, body: body) as PushResponse
@@ -282,17 +310,26 @@ final class PushRelayService: ObservableObject {
 
     /// Must match `UsageActivityAttributes.ContentState` on iOS, which decodes
     /// dates as Unix epoch seconds.
+    ///
+    /// `hasSessionLimit` is always sent; a phone decoding a state without it
+    /// (from an older Mac or relay) assumes a session window, as every account
+    /// had one then. For a weekly-only account the session fields are 0 and
+    /// absent, and the burn rate and projection describe the weekly window.
     private func contentState(from snapshot: Snapshot, didReset: Bool) -> [String: Any] {
         var state: [String: Any] = [
-            "sessionUtilization": snapshot.sessionUtilization,
+            "sessionUtilization": snapshot.hasSessionLimit ? snapshot.sessionUtilization : 0,
             "weeklyUtilization": snapshot.weeklyUtilization,
             "burnRatePerHour": snapshot.burnRatePerHour,
             "isSessionActive": snapshot.isSessionActive,
+            "hasSessionLimit": snapshot.hasSessionLimit,
             "didReset": didReset,
             "updatedAt": Date().timeIntervalSince1970,
         ]
-        if let resetsAt = snapshot.sessionResetsAt {
+        if snapshot.hasSessionLimit, let resetsAt = snapshot.sessionResetsAt {
             state["sessionResetsAt"] = resetsAt.timeIntervalSince1970
+        }
+        if let resetsAt = snapshot.weeklyResetsAt {
+            state["weeklyResetsAt"] = resetsAt.timeIntervalSince1970
         }
         // Only forward a projection that's still in the future; a stale one would
         // render as "hits limit in -3m".

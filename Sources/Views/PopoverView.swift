@@ -245,6 +245,32 @@ struct PopoverView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
+            } else if !viewModel.hasSessionLimit {
+                // Weekly-only account (verified Ultra): the weekly window is the
+                // one that can stop work, so it takes the big gauge, and a note
+                // stands where the session would have been — an absent session
+                // gauge otherwise reads as a failed fetch.
+                SessionGaugeView(
+                    title: "Weekly (7-day)",
+                    utilization: viewModel.weeklyUtilization,
+                    resetsAt: viewModel.weeklyResetsAt,
+                    color: viewModel.weeklyColor,
+                    window: .weekly
+                )
+                if renderDetails {
+                    ProjectTokenBreakdownView(entries: viewModel.weeklyProjectTokenUsage, revealed: detailsRevealed)
+                }
+                HStack(spacing: 6) {
+                    Image(systemName: "infinity")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Text("No 5-hour session limit")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                secondaryWindows
             } else {
                 // Session gauge (5-hour) or no active session
                 if viewModel.sessionResetsAt != nil {
@@ -283,64 +309,76 @@ struct PopoverView: View {
                     ProjectTokenBreakdownView(entries: viewModel.weeklyProjectTokenUsage, revealed: detailsRevealed)
                 }
 
-                // Opus gauge (if applicable)
-                if let opusUtil = viewModel.opusUtilization {
-                    Divider()
-                    WeeklyGaugeView(
-                        title: "Opus (7-day)",
-                        utilization: opusUtil,
-                        resetsAt: viewModel.weeklyResetsAt,
-                        color: UsageLevel.from(utilization: opusUtil).color
-                    )
-                }
-
-                // Fable gauge (if applicable)
-                if let fableUtil = viewModel.fableUtilization {
-                    Divider()
-                    WeeklyGaugeView(
-                        title: "Fable (7-day)",
-                        utilization: fableUtil,
-                        resetsAt: viewModel.fableResetsAt ?? viewModel.weeklyResetsAt,
-                        color: UsageLevel.from(utilization: fableUtil).color
-                    )
-                }
-
-                // Extra usage (if enabled)
-                if viewModel.extraUsageEnabled {
-                    Divider()
-                    ExtraUsageView(
-                        usedCredits: viewModel.extraUsageCost,
-                        monthlyLimit: viewModel.extraUsageLimit,
-                        utilization: viewModel.extraUsageUtilization
-                    )
-                }
-
-                // Projections (Phase 2)
-                Divider()
-                if let projection = viewModel.projection, projection.hasEnoughData {
-                    ProjectionView(projection: viewModel.projection, sessionResetsAt: viewModel.sessionResetsAt)
-                } else {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chart.line.uptrend.xyaxis")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                        Text("Projections appear after more activity")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-
-                // Stats: streak, heat map, 7-day chart (Phase 2+3)
-                if !viewModel.dailyPeaks.isEmpty || !viewModel.activeDays.isEmpty {
-                    Divider()
-                    StatsView(
-                        dailyPeaks: viewModel.dailyPeaks,
-                        currentStreak: viewModel.currentStreak,
-                        activeDays: viewModel.activeDays,
-                        todaySessionCount: viewModel.todaySessionCount
-                    )
-                }
+                secondaryWindows
             }
+        }
+    }
+
+    /// Everything below the session and weekly gauges: per-model weekly
+    /// windows, extra usage, projections and history. The same whichever
+    /// window leads.
+    @ViewBuilder
+    private var secondaryWindows: some View {
+        // Opus gauge (if applicable)
+        if let opusUtil = viewModel.opusUtilization {
+            Divider()
+            WeeklyGaugeView(
+                title: "Opus (7-day)",
+                utilization: opusUtil,
+                resetsAt: viewModel.weeklyResetsAt,
+                color: UsageLevel.from(utilization: opusUtil).color
+            )
+        }
+
+        // Fable gauge (if applicable)
+        if let fableUtil = viewModel.fableUtilization {
+            Divider()
+            WeeklyGaugeView(
+                title: "Fable (7-day)",
+                utilization: fableUtil,
+                resetsAt: viewModel.fableResetsAt ?? viewModel.weeklyResetsAt,
+                color: UsageLevel.from(utilization: fableUtil).color
+            )
+        }
+
+        // Extra usage (if enabled)
+        if viewModel.extraUsageEnabled {
+            Divider()
+            ExtraUsageView(
+                usedCredits: viewModel.extraUsageCost,
+                monthlyLimit: viewModel.extraUsageLimit,
+                utilization: viewModel.extraUsageUtilization
+            )
+        }
+
+        // Projections (Phase 2)
+        Divider()
+        if let projection = viewModel.projection, projection.hasEnoughData {
+            ProjectionView(
+                projection: viewModel.projection,
+                resetsAt: viewModel.primaryResetsAt,
+                window: viewModel.primaryWindow
+            )
+        } else {
+            HStack(spacing: 4) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Text("Projections appear after more activity")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+
+        // Stats: streak, heat map, 7-day chart (Phase 2+3)
+        if !viewModel.dailyPeaks.isEmpty || !viewModel.activeDays.isEmpty {
+            Divider()
+            StatsView(
+                dailyPeaks: viewModel.dailyPeaks,
+                currentStreak: viewModel.currentStreak,
+                activeDays: viewModel.activeDays,
+                todaySessionCount: viewModel.todaySessionCount
+            )
         }
     }
 

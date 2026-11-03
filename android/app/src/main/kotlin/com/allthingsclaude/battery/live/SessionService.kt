@@ -106,7 +106,7 @@ class SessionService : Service() {
 
         // An already-dismissed window is handled by promoting and immediately
         // standing down rather than by skipping the promote call above.
-        if (initial != null && dismissal.isDismissed(initial.sessionResetsAt)) {
+        if (initial != null && dismissal.isDismissed(initial.primaryResetsAt)) {
             stopWithoutCard()
             return START_NOT_STICKY
         }
@@ -164,8 +164,10 @@ class SessionService : Service() {
 
             // The user swiped this window's card away. Reposting it is precisely
             // what costs an app its promotion permission, so stop instead. The
-            // dismissal is scoped to the window, so the next one starts clean.
-            if (dismissal.isDismissed(payload.sessionResetsAt)) {
+            // dismissal is scoped to the window, so the next one starts clean —
+            // the primary window, which is the weekly one on an account with no
+            // five-hour limit, so there a swipe holds until the weekly reset.
+            if (dismissal.isDismissed(payload.primaryResetsAt)) {
                 stopWithoutCard()
                 return
             }

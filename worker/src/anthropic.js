@@ -95,6 +95,37 @@ const epoch = (iso) => {
 };
 
 /**
+ * The five-hour window from a usage response: `five_hour`, or the `limits`
+ * array's `session` entry. Null when the account has no session limit at all —
+ * verified Ultra accounts are metered weekly only, and the API answers for
+ * them with `"five_hour": null`.
+ */
+function sessionWindow(usage) {
+  if (usage.five_hour) return usage.five_hour;
+  const entry = Array.isArray(usage.limits) ? usage.limits.find((l) => l && l.kind === 'session') : null;
+  return entry ? { utilization: entry.percent, resets_at: entry.resets_at } : null;
+}
+
+/** Whether this usage response meters the account by a five-hour window. */
+export function usageHasSessionLimit(usage) {
+  return Boolean(sessionWindow(usage));
+}
+
+/**
+ * The utilization the card tracks: the session's, or the weekly window's for
+ * an account with no session limit. A state without `hasSessionLimit` predates
+ * weekly-only plans and had a session window.
+ */
+export function primaryUtilization(state) {
+  return state.hasSessionLimit === false ? state.weeklyUtilization : state.sessionUtilization;
+}
+
+/** Whether two states track the same window and so can be compared. */
+export function sameMetering(a, b) {
+  return (a.hasSessionLimit !== false) === (b.hasSessionLimit !== false);
+}
+
+/**
  * Map a usage response into `UsageActivityAttributes.ContentState`.
  *
  * Field names and Unix-epoch dates must match the Swift type in
@@ -104,24 +135,36 @@ const epoch = (iso) => {
  * Mac computes this from a proper regression over a snapshot buffer; up here
  * there's no history to regress over, so this is deliberately the cruder
  * estimate — enough for "hits limit in ~2h", not a forecast.
+ *
+ * For an account with no session limit the burn rate and projection describe
+ * the weekly window instead, the session fields are 0 / absent, and
+ * `hasSessionLimit` says so.
  */
 export function buildContentState(usage, previous) {
-  const fiveHour = usage.five_hour || null;
-  const sessionUtilization = fiveHour ? Number(fiveHour.utilization) || 0 : 0;
-  const sessionResetsAt = fiveHour ? epoch(fiveHour.resets_at) : null;
+  const session = sessionWindow(usage);
+  const hasSessionLimit = Boolean(session);
+  const sessionUtilization = session ? Number(session.utilization) || 0 : 0;
+  const sessionResetsAt = session ? epoch(session.resets_at) : null;
+  const weeklyUtilization = Number(usage.seven_day?.utilization) || 0;
+  const weeklyResetsAt = epoch(usage.seven_day?.resets_at);
+  const utilization = hasSessionLimit ? sessionUtilization : weeklyUtilization;
+  const resetsAt = hasSessionLimit ? sessionResetsAt : weeklyResetsAt;
   const nowSec = Math.floor(Date.now() / 1000);
 
   let burnRatePerHour = 0;
   let projectedLimitAt = null;
-  if (previous && previous.updatedAt && previous.sessionUtilization != null) {
+  // A sample from the other window (Ultra verification landed or lapsed in
+  // between) says nothing about this one's rate.
+  const comparable = previous && sameMetering(previous, { hasSessionLimit });
+  if (comparable && previous.updatedAt && primaryUtilization(previous) != null) {
     const elapsedHours = (nowSec - previous.updatedAt) / 3600;
     // Ignore samples too close together (noise) or too far apart (the window
     // probably rolled over in between).
     if (elapsedHours > 0.02 && elapsedHours < 2) {
-      const delta = sessionUtilization - previous.sessionUtilization;
+      const delta = utilization - primaryUtilization(previous);
       if (delta > 0) {
         burnRatePerHour = delta / elapsedHours;
-        const remaining = 100 - sessionUtilization;
+        const remaining = 100 - utilization;
         if (burnRatePerHour > 0.05 && remaining > 0) {
           projectedLimitAt = nowSec + Math.round((remaining / burnRatePerHour) * 3600);
         }
@@ -130,22 +173,24 @@ export function buildContentState(usage, previous) {
   }
 
   // Don't project past the reset — the window empties before the limit lands.
-  if (projectedLimitAt && sessionResetsAt && projectedLimitAt > sessionResetsAt) {
+  if (projectedLimitAt && resetsAt && projectedLimitAt > resetsAt) {
     projectedLimitAt = null;
     burnRatePerHour = burnRatePerHour > 0 ? burnRatePerHour : 0;
   }
 
   const state = {
     sessionUtilization,
-    weeklyUtilization: Number(usage.seven_day?.utilization) || 0,
+    weeklyUtilization,
     burnRatePerHour,
     // The API exposes no "is a session running" flag, so infer it the same way
     // the phone does when it has no hook data: usage is moving.
     isSessionActive: burnRatePerHour > 0.05,
+    hasSessionLimit,
     didReset: false,
     updatedAt: nowSec,
   };
   if (sessionResetsAt) state.sessionResetsAt = sessionResetsAt;
+  if (weeklyResetsAt) state.weeklyResetsAt = weeklyResetsAt;
   if (projectedLimitAt) state.projectedLimitAt = projectedLimitAt;
   return state;
 }

@@ -3,7 +3,7 @@ package com.allthingsclaude.battery.core
 import java.time.Instant
 
 /**
- * Where the open session window is heading — the numbers *and* the words.
+ * Where the primary window is heading — the numbers *and* the words.
  *
  * A port of `ios/BatteryKit/UsageForecast.swift`. Every surface that talks about
  * a projection builds one of these, so they can never disagree about the pace,
@@ -13,9 +13,14 @@ import java.time.Instant
  *
  * It prefers a payload's **precomputed** burn rate — surfaces never run the
  * regression themselves. When there isn't one it falls back to the window's own
- * average, derivable from `utilization` and `resetsAt` alone because the session
- * window is a fixed five hours. That fallback is why a projection exists on a
- * cold launch and in a widget that has never seen two samples.
+ * average, derivable from `utilization` and `resetsAt` alone because the window
+ * has a fixed length. That fallback is why a projection exists on a cold launch
+ * and in a widget that has never seen two samples.
+ *
+ * The window is the session's by default and the weekly one on an account with
+ * no five-hour limit ([UsagePayload.primaryWindow]). The arithmetic is the same
+ * for both — only the window length and the wording differ — so a weekly-only
+ * account gets the same outlook, pace and landing point the session always had.
  *
  * Deliberately free of any UI type: Swift's version carries `Color` and SF
  * Symbol names, which don't cross platforms. [tintColor] returns an ARGB [Int]
@@ -33,6 +38,12 @@ class UsageForecast(
      * get a self-consistent card rather than a mix of two moments.
      */
     val now: Instant = Instant.now(),
+    /**
+     * Which window this describes. Sets the length the average pace is spread
+     * over, and the words: a weekly forecast says "this week" where a session
+     * one says "this window".
+     */
+    val window: UsagePayload.FocusWindow = UsagePayload.FocusWindow.SESSION,
 ) {
 
     /** What this window is heading for, most urgent first. */
@@ -45,7 +56,7 @@ class UsageForecast(
         ON_PACE,
         /** No measurable pace — idle, or too early to tell. */
         IDLE,
-        /** No session window is open. */
+        /** No window is open. */
         NO_WINDOW,
     }
 
@@ -108,9 +119,16 @@ class UsageForecast(
         // the window. Derived from `utilization` and `resetsAt` alone, both of
         // which every surface already has, so no extra field has to travel over
         // the wire for this to work everywhere.
-        val elapsed = if (hasWindow) maxOf(0.0, SESSION_WINDOW - secondsLeft) else 0.0
+        val windowLength = window.seconds.toDouble()
+        val elapsed = if (hasWindow) maxOf(0.0, windowLength - secondsLeft) else 0.0
+        // The same *share* of the window must have passed whatever its length:
+        // twelve minutes of a five-hour session is 4%, and 4% of a week is
+        // nearly seven hours. Twelve minutes into a week, 1% used would average
+        // out to "hits 100% in 20h" — the confident-looking lie the floor exists
+        // to prevent, scaled up.
+        val minimumElapsed = MINIMUM_ELAPSED_FOR_AVERAGE * (windowLength / SESSION_WINDOW)
         val average: Double? = run {
-            if (!hasWindow || util <= 0 || elapsed < MINIMUM_ELAPSED_FOR_AVERAGE) return@run null
+            if (!hasWindow || util <= 0 || elapsed < minimumElapsed) return@run null
             val r = util / (elapsed / 3600)
             if (r > MINIMUM_RATE) r else null
         }
@@ -170,14 +188,24 @@ class UsageForecast(
         }
     }
 
+    /**
+     * The forecast for the payload's primary window — the session's, or the
+     * weekly one on an account without a five-hour limit. The payload's burn
+     * rate and projection already describe that same window, so the pieces
+     * cannot come from two different windows.
+     */
     constructor(payload: UsagePayload, now: Instant = Instant.now()) : this(
-        utilization = payload.sessionUtilization,
-        resetsAt = payload.sessionResetsAt,
+        utilization = payload.primaryUtilization,
+        resetsAt = payload.primaryResetsAt,
         burnRatePerHour = payload.burnRatePerHour,
         projectedLimitAt = payload.projectedLimitAt,
         isSessionActive = payload.isSessionActive,
         now = now,
+        window = payload.primaryWindow,
     )
+
+    /** Whether this describes the weekly window rather than a session. */
+    val isWeekly: Boolean get() = window == UsagePayload.FocusWindow.WEEKLY
 
     /** Seconds until the projected limit, when one is projected. */
     val secondsToLimit: Double?
@@ -190,22 +218,32 @@ class UsageForecast(
     // One phrasing per outlook, written once. Deliberately concrete: every line
     // carries a number the reader can act on, because "Holding steady" told them
     // nothing they couldn't already see from the bar.
+    //
+    // Durations go through TimeFormatting.longDuration, which is shortDuration
+    // for anything under a day — so a session reads exactly as it always has —
+    // and switches to days for the weekly window, where "Hits 100% in 53h 10m"
+    // would otherwise be the normal case.
+
+    /** "this window", or "this week" when the window is the weekly one. */
+    private val span: String get() = if (isWeekly) "this week" else "this window"
 
     /** The one-line insight for tight surfaces (the Live Update's contentText). */
     val headline: String
         get() = when (outlook) {
             Outlook.AT_LIMIT ->
-                "Limit reached · resets in ${TimeFormatting.shortDuration(secondsToReset)}"
+                "Limit reached · resets in ${TimeFormatting.longDuration(secondsToReset)}"
             Outlook.REACHES_LIMIT ->
-                "Hits 100% in ${TimeFormatting.shortDuration(secondsToLimit ?: 0.0)}"
+                "Hits 100% in ${TimeFormatting.longDuration(secondsToLimit ?: 0.0)}"
             Outlook.ON_PACE ->
                 "On pace for ${TimeFormatting.percent(projectedAtReset)}% at reset"
             Outlook.IDLE -> when {
-                utilization <= 0 -> "Nothing used yet this window"
+                utilization <= 0 -> "Nothing used yet $span"
                 isSessionActive -> "${TimeFormatting.percent(headroom)}% left · measuring pace"
+                isWeekly -> "${TimeFormatting.percent(headroom)}% left this week"
                 else -> "${TimeFormatting.percent(headroom)}% left in this window"
             }
-            Outlook.NO_WINDOW -> "No session window open"
+            Outlook.NO_WINDOW ->
+                if (isWeekly) "No weekly window open" else "No session window open"
         }
 
     /**
@@ -217,23 +255,31 @@ class UsageForecast(
      */
     val detail: String?
         get() {
+            val spent = if (isWeekly) {
+                "Nothing left until the weekly reset"
+            } else {
+                "Nothing left until this window resets"
+            }
+            val opens = if (isWeekly) {
+                "The weekly window opens with your next session"
+            } else {
+                "A new window opens with your next session"
+            }
             // "Room for 0.0%/hr" is not advice, so a spent window says the one
             // thing that is still actionable: the wait is finite.
-            if (outlook == Outlook.AT_LIMIT) return "Nothing left until this window resets"
-            val provenance = if (pace == Pace.AVERAGE) "Averaged over this window" else null
+            if (outlook == Outlook.AT_LIMIT) return spent
+            val provenance = if (pace == Pace.AVERAGE) "Averaged over $span" else null
             val sustainable = sustainableRatePerHour
-                ?: return if (outlook == Outlook.NO_WINDOW) {
-                    "A new window opens with your next session"
-                } else {
-                    provenance
-                }
+                ?: return if (outlook == Outlook.NO_WINDOW) opens else provenance
             val room = when (outlook) {
-                Outlook.REACHES_LIMIT ->
-                    "Ease to ${TimeFormatting.rate(sustainable)} to last the window"
+                Outlook.REACHES_LIMIT -> {
+                    val what = if (isWeekly) "week" else "window"
+                    "Ease to ${TimeFormatting.rate(sustainable)} to last the $what"
+                }
                 Outlook.ON_PACE, Outlook.IDLE ->
                     "Room for ${TimeFormatting.rate(sustainable)} until reset"
-                Outlook.AT_LIMIT -> return "Nothing left until this window resets"
-                Outlook.NO_WINDOW -> return "A new window opens with your next session"
+                Outlook.AT_LIMIT -> return spent
+                Outlook.NO_WINDOW -> return opens
             }
             return provenance?.let { "$it · $room" } ?: room
         }
@@ -277,7 +323,7 @@ class UsageForecast(
 
     /** Time until the limit, or an em dash when it isn't projected to arrive. */
     val timeToLimitText: String
-        get() = secondsToLimit?.let { TimeFormatting.shortDuration(it) } ?: "—"
+        get() = secondsToLimit?.let { TimeFormatting.longDuration(it) } ?: "—"
 
     /**
      * The "where does this land" stat for wide surfaces. Time-to-limit when 100%
@@ -291,7 +337,7 @@ class UsageForecast(
         get() = when (outlook) {
             Outlook.REACHES_LIMIT -> LandingStat("To limit", timeToLimitText, true)
             Outlook.AT_LIMIT ->
-                LandingStat("To reset", TimeFormatting.shortDuration(secondsToReset), true)
+                LandingStat("To reset", TimeFormatting.longDuration(secondsToReset), true)
             Outlook.NO_WINDOW -> LandingStat("At reset", "—", false)
             Outlook.ON_PACE, Outlook.IDLE ->
                 LandingStat("At reset", "${TimeFormatting.percent(projectedAtReset)}%", false)
@@ -312,9 +358,10 @@ class UsageForecast(
         const val SESSION_WINDOW = 5 * 3600.0
 
         /**
-         * How much of the window must have elapsed before its average means
-         * anything. Dividing by the first ninety seconds turns 2% used into
-         * "80%/hr", which would be a confident-looking lie.
+         * How much of the session window must have elapsed before its average
+         * means anything. Dividing by the first ninety seconds turns 2% used
+         * into "80%/hr", which would be a confident-looking lie. Scaled by
+         * window length for the weekly window — see `minimumElapsed`.
          */
         const val MINIMUM_ELAPSED_FOR_AVERAGE = 12 * 60.0
 

@@ -1,6 +1,8 @@
 import SwiftUI
 
-/// Where the open session window is heading — the numbers *and* the words.
+/// Where the open session window is heading — the numbers *and* the words. For
+/// an account with no five-hour limit (verified Ultra) it's the weekly window
+/// instead: same math, a seven-day length, and copy that says "week".
 ///
 /// Every surface that talks about a projection (the dashboard's Forecast card,
 /// the large Forecast widget, the Live Activity) builds one of these, so they can
@@ -9,7 +11,7 @@ import SwiftUI
 /// It prefers a payload's **precomputed** burn rate — surfaces still never run
 /// the regression themselves (see `UsagePayload`). When there isn't one it falls
 /// back to the window's own average, which it can derive from `utilization` and
-/// `resetsAt` alone because the session window is a fixed five hours. That
+/// `resetsAt` alone because each window has a fixed length. That
 /// fallback is why a projection is available on a cold launch, in a widget that
 /// has never seen two samples, and on a Live Activity whose state was built on a
 /// Mac — none of which need to send anything new for it to work.
@@ -25,7 +27,7 @@ struct UsageForecast {
         case onPace
         /// No measurable pace in this window — idle, or too early to tell.
         case idle
-        /// No session window is open, so there is nothing to project.
+        /// No window is open, so there is nothing to project.
         case noWindow
     }
 
@@ -52,10 +54,25 @@ struct UsageForecast {
     /// it resets, so `now` has a known position inside it.
     static let sessionWindow: TimeInterval = 5 * 3600
 
-    /// How much of the window must have elapsed before its average means
-    /// anything. Dividing by the first ninety seconds turns 2% used into
+    /// The weekly window's fixed length — the same trick, for an account whose
+    /// primary window is the week.
+    static let weeklyWindow: TimeInterval = 7 * 86400
+
+    /// How much of the session window must have elapsed before its average
+    /// means anything. Dividing by the first ninety seconds turns 2% used into
     /// "80%/hr", which would be a confident-looking lie.
     static let minimumElapsedForAverage: TimeInterval = 12 * 60
+
+    static func length(of window: UsagePayload.FocusWindow) -> TimeInterval {
+        window == .weekly ? weeklyWindow : sessionWindow
+    }
+
+    /// The same guard scaled to the window — the same 4% of it. A week's
+    /// average needs ~6.7 hours behind it, or 3% spent in its first hour reads
+    /// as "Hits 100% in 1d 8h".
+    static func minimumElapsed(for window: UsagePayload.FocusWindow) -> TimeInterval {
+        minimumElapsedForAverage * length(of: window) / sessionWindow
+    }
 
     let outlook: Outlook
     let utilization: Double
@@ -85,6 +102,9 @@ struct UsageForecast {
     /// anything (it tends to infinity as the reset approaches).
     let sustainableRatePerHour: Double?
     let isSessionActive: Bool
+    /// Which window this describes — the session, or the weekly window for an
+    /// account without a session limit. Only the length and the wording differ.
+    let window: UsagePayload.FocusWindow
     /// The instant this forecast describes. Every derived duration is measured
     /// from here, so a view that rebuilds on a clock can pass its own tick and
     /// get a self-consistent card rather than a mix of two moments.
@@ -98,6 +118,7 @@ struct UsageForecast {
         burnRatePerHour: Double,
         projectedLimitAt: Date?,
         isSessionActive: Bool,
+        window: UsagePayload.FocusWindow = .session,
         now: Date = Date()
     ) {
         let util = min(100, max(0, utilization))
@@ -114,9 +135,9 @@ struct UsageForecast {
         // the window. Derived from `utilization` and `resetsAt` alone, both of
         // which every surface already has, so no extra field has to travel over
         // the wire or through the push relay for this to work everywhere.
-        let elapsed = hasWindow ? max(0, Self.sessionWindow - secondsLeft) : 0
+        let elapsed = hasWindow ? max(0, Self.length(of: window) - secondsLeft) : 0
         let average: Double? = {
-            guard hasWindow, util > 0, elapsed >= Self.minimumElapsedForAverage else { return nil }
+            guard hasWindow, util > 0, elapsed >= Self.minimumElapsed(for: window) else { return nil }
             let rate = util / (elapsed / 3600)
             return rate > Self.minimumRate ? rate : nil
         }()
@@ -172,6 +193,7 @@ struct UsageForecast {
         // ("room for 3,400%/hr"), so we simply stop claiming one.
         self.sustainableRatePerHour = hoursLeft > 1.0 / 60 ? headroom / hoursLeft : nil
         self.isSessionActive = isSessionActive
+        self.window = window
         self.now = now
 
         if !hasWindow {
@@ -187,16 +209,21 @@ struct UsageForecast {
         }
     }
 
+    /// Forecasts the payload's primary window — the one its precomputed burn
+    /// rate and projection were measured on.
     init(payload: UsagePayload, now: Date = Date()) {
         self.init(
-            utilization: payload.sessionUtilization,
-            resetsAt: payload.sessionResetsAt,
+            utilization: payload.primaryUtilization,
+            resetsAt: payload.primaryResetsAt,
             burnRatePerHour: payload.burnRatePerHour,
             projectedLimitAt: payload.projectedLimitAt,
             isSessionActive: payload.isSessionActive,
+            window: payload.primaryWindow,
             now: now
         )
     }
+
+    private var isWeekly: Bool { window == .weekly }
 
     /// Seconds until the projected limit, when one is projected.
     var secondsToLimit: TimeInterval? {
@@ -210,6 +237,10 @@ struct UsageForecast {
     // One phrasing per outlook, written once. Deliberately concrete: every line
     // carries a number the reader can act on, because "Holding steady" told them
     // nothing they couldn't already see from the ring.
+    //
+    // Durations go through `longDuration`, which is `shortDuration` below a day
+    // and "4d 2h" above it — session copy is unchanged, and a weekly window
+    // doesn't read "98h 12m".
 
     /// The one-line insight for tight surfaces (Live Activity, Dynamic Island).
     ///
@@ -221,18 +252,19 @@ struct UsageForecast {
     var headline: String {
         switch outlook {
         case .atLimit:
-            return "Limit reached · resets in \(TimeFormatting.shortDuration(secondsToReset))"
+            return "Limit reached · resets in \(TimeFormatting.longDuration(secondsToReset))"
         case .reachesLimit:
-            return "Hits 100% in \(TimeFormatting.shortDuration(secondsToLimit ?? 0))"
+            return "Hits 100% in \(TimeFormatting.longDuration(secondsToLimit ?? 0))"
         case .onPace:
             return "On pace for \(Self.percent(projectedAtReset))% at reset"
         case .idle:
-            if utilization <= 0 { return "Nothing used yet this window" }
+            if utilization <= 0 { return isWeekly ? "Nothing used yet this week" : "Nothing used yet this window" }
             return isSessionActive
                 ? "\(Self.percent(headroom))% left · measuring pace"
-                : "\(Self.percent(headroom))% left in this window"
+                : (isWeekly ? "\(Self.percent(headroom))% left this week"
+                            : "\(Self.percent(headroom))% left in this window")
         case .noWindow:
-            return "No session window open"
+            return isWeekly ? "No weekly window open" : "No session window open"
         }
     }
 
@@ -244,19 +276,30 @@ struct UsageForecast {
     var detail: String? {
         // "Room for 0.0%/hr" is not advice, so a spent window says the one thing
         // that is still actionable: the wait is finite.
-        if outlook == .atLimit { return "Nothing left until this window resets" }
-        let provenance = pace == .average ? "Averaged over this window" : nil
+        if outlook == .atLimit { return atLimitDetail }
+        let provenance = pace == .average ? "Averaged over \(isWeekly ? "this week" : "this window")" : nil
         guard let sustainable = sustainableRatePerHour else {
-            return outlook == .noWindow ? "A new window opens with your next session" : provenance
+            return outlook == .noWindow ? noWindowDetail : provenance
         }
         let room: String
         switch outlook {
-        case .reachesLimit:  room = "Ease to \(Self.rate(sustainable)) to last the window"
+        case .reachesLimit:  room = "Ease to \(Self.rate(sustainable)) to last the \(isWeekly ? "week" : "window")"
         case .onPace, .idle: room = "Room for \(Self.rate(sustainable)) until reset"
-        case .atLimit:       return "Nothing left until this window resets"
-        case .noWindow:      return "A new window opens with your next session"
+        case .atLimit:       return atLimitDetail
+        case .noWindow:      return noWindowDetail
         }
         return provenance.map { "\($0) · \(room)" } ?? room
+    }
+
+    // The weekly phrasings are shared with the Android app: the forecast copy
+    // is one cross-platform spec (see fixtures/usage-forecast.json).
+
+    private var atLimitDetail: String {
+        isWeekly ? "Nothing left until the weekly reset" : "Nothing left until this window resets"
+    }
+
+    private var noWindowDetail: String {
+        isWeekly ? "The weekly window opens with your next session" : "A new window opens with your next session"
     }
 
     /// Short status for a badge — the outlook in two words or fewer.
@@ -300,7 +343,7 @@ struct UsageForecast {
     /// Time until the limit, or an em dash when it isn't projected to arrive.
     var timeToLimitText: String {
         guard let seconds = secondsToLimit else { return "—" }
-        return TimeFormatting.shortDuration(seconds)
+        return TimeFormatting.longDuration(seconds)
     }
 
     /// Time until the limit, rendered so it stays truthful between refreshes: a
@@ -311,9 +354,13 @@ struct UsageForecast {
         guard let limit = projectedLimitAt else { return nil }
         // `.timer` ("49:58") rather than `.relative` ("49 min, 58 sec") — the
         // relative phrasing spells out two units and is far too wide inline.
-        return limitIsAnchored
+        // A limit a day or more out (only ever a weekly one) stays static: a
+        // timer would read "52:13:20", and a refresh's worth of drift is
+        // invisible against "2d 4h".
+        let isDaysOut = (secondsToLimit ?? 0) >= 86400
+        return limitIsAnchored && !isDaysOut
             ? Text(limit, style: .timer)
-            : Text(TimeFormatting.shortDuration(secondsToLimit ?? 0))
+            : Text(TimeFormatting.longDuration(secondsToLimit ?? 0))
     }
 
     /// Headline as `Text`, with the time-based part rendered as a system-updating
@@ -335,7 +382,7 @@ struct UsageForecast {
         case .reachesLimit:
             return ("To limit", timeToLimitText, true)
         case .atLimit:
-            return ("To reset", TimeFormatting.shortDuration(secondsToReset), true)
+            return ("To reset", TimeFormatting.longDuration(secondsToReset), true)
         case .noWindow:
             return ("At reset", "—", false)
         case .onPace, .idle:

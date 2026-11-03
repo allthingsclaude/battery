@@ -9,11 +9,19 @@ import kotlin.math.abs
  * database is needed. Field set is the subset [BurnRateCalculator] reads.
  *
  * Port of `ios/BatteryKit/UsageSnapshot.swift`.
+ *
+ * The sample is of the account's *primary* window. On an account with no
+ * five-hour limit that is the weekly one, and the two `session*` fields carry
+ * the weekly numbers — renamed nowhere, because the names are shared with the
+ * Swift structs and the golden fixtures, and the regression does not care which
+ * window it is fitting. [isWeekly] says which it was, so a buffer of one
+ * window's samples can never be read as the other's.
  */
 data class UsageSnapshot(
     val timestamp: Instant,
     val sessionUtilization: Double,
     val sessionResetsAt: Instant,
+    val isWeekly: Boolean = false,
 )
 
 /** A burn-rate projection derived from recent snapshots. */

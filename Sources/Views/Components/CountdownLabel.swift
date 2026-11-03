@@ -6,6 +6,10 @@ struct CountdownLabel: View {
     let targetDate: Date
     var style: CountdownStyle = .full
     var mode: CountdownMode = .remaining
+    /// Length of the window being counted down. Pass it when known; otherwise
+    /// it is guessed from how far away the reset is, which can't tell a weekly
+    /// window in its last day from a five-hour one.
+    var window: UsageWindow?
 
     enum CountdownStyle {
         case full     // "2h 13m remaining" / "1h 30m into window"
@@ -19,6 +23,7 @@ struct CountdownLabel: View {
 
     /// Duration of the window. 5h for session, 7d for weekly.
     private var windowDuration: TimeInterval {
+        if let window { return window.duration }
         let remaining = targetDate.timeIntervalSinceNow
         // If remaining > 1 day, it's a weekly window (7 days)
         if remaining > 86400 { return 604800 }
@@ -59,7 +64,7 @@ struct CountdownLabel: View {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
-                Text(TimeFormatting.shortDuration(remaining))
+                Text(TimeFormatting.longDuration(remaining))
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -89,7 +94,7 @@ struct CountdownLabel: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            Text(TimeFormatting.shortDuration(elapsed))
+            Text(TimeFormatting.longDuration(elapsed))
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)

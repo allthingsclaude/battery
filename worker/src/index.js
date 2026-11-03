@@ -29,7 +29,8 @@ import {
 } from './store.js';
 import { activityPayload, ApnsKeyError, deliver, deliverWidgetReload } from './apns.js';
 import {
-  buildContentState, fetchUsage, GrantRevokedError, isAlarming, RateLimitedError,
+  buildContentState, fetchUsage, GrantRevokedError, isAlarming, primaryUtilization, RateLimitedError,
+  sameMetering, usageHasSessionLimit,
   refreshAccessToken, usageLevel,
 } from './anthropic.js';
 
@@ -459,12 +460,19 @@ async function pollDevice(env, deviceId, scheduledTime) {
     await putCloud(env, deviceId, cloud);
   }
 
-  const previous = cloud.lastPush;
+  // A push from the other window (Ultra verification landed or lapsed since)
+  // can't be compared with this reading — treat it as having none.
+  const lastPush = cloud.lastPush;
+  const hasSessionLimit = usageHasSessionLimit(usage);
+  const previous = lastPush && sameMetering(lastPush, { hasSessionLimit }) ? lastPush : null;
   const state = buildContentState(usage, previous);
-  const level = usageLevel(state.sessionUtilization);
+  // The window the card tracks: the session, or the weekly window for an
+  // account with no session limit (verified Ultra).
+  const utilization = primaryUtilization(state);
+  const level = usageLevel(utilization);
 
-  // A sharp collapse means the 5-hour window rolled over.
-  const didReset = previous && previous.sessionUtilization > 30 && state.sessionUtilization < 10;
+  // A sharp collapse means the tracked window rolled over.
+  const didReset = previous && primaryUtilization(previous) > 30 && utilization < 10;
   // Whether an activity is running is a fact about the device, not about our
   // own push history — the phone may have started one locally.
   const hasActivity = Boolean(record.liveActivityToken);
@@ -473,10 +481,15 @@ async function pollDevice(env, deviceId, scheduledTime) {
 
   let alert = null;
   if (!didReset && isAlarming(level) && level !== cloud.alertedLevel) {
-    alert = {
-      title: `Session usage ${level}`,
-      body: `You're at ${Math.round(state.sessionUtilization)}% of your 5-hour limit.`,
-    };
+    alert = state.hasSessionLimit
+      ? {
+        title: `Session usage ${level}`,
+        body: `You're at ${Math.round(utilization)}% of your 5-hour limit.`,
+      }
+      : {
+        title: `Weekly usage ${level}`,
+        body: `You're at ${Math.round(utilization)}% of your weekly limit.`,
+      };
   }
 
   const token = decision === 'start' ? record.pushToStartToken : record.liveActivityToken;
@@ -491,7 +504,7 @@ async function pollDevice(env, deviceId, scheduledTime) {
       event: decision,
       contentState: didReset ? { ...state, didReset: true } : state,
       staleAfter: didReset ? 0 : CLOUD_STALE_AFTER,
-      relevanceScore: state.sessionUtilization,
+      relevanceScore: utilization,
       dismissAfter: 30,
       attributes: { planTier: cloud.planTier || '', accountName: cloud.accountName || 'Account' },
       alert,
@@ -550,8 +563,12 @@ async function parkForBackoff(env, deviceId, cloud, retryAfter) {
 function pushDecision(state, previous, hasActivity) {
   if (!hasActivity) {
     // Nothing on the Lock Screen. Only raise a card for a session worth
-    // watching — the same threshold the phone applies locally.
-    return state.isSessionActive || state.sessionUtilization >= START_THRESHOLD ? 'start' : null;
+    // watching — the same threshold the phone applies locally. The threshold is
+    // session-only: weekly utilization only climbs until the weekly reset, so
+    // for a weekly-only account it would hold the card up for days. Activity
+    // alone starts that one.
+    const isHot = state.hasSessionLimit !== false && state.sessionUtilization >= START_THRESHOLD;
+    return state.isSessionActive || isHot ? 'start' : null;
   }
   // An activity exists but we've never pushed to it (the phone started it, or
   // cloud sync was just enabled) — take it over now rather than waiting for the
@@ -560,8 +577,10 @@ function pushDecision(state, previous, hasActivity) {
 
   const elapsed = nowSeconds() - (previous.pushedAt || 0);
   if (elapsed >= CLOUD_HEARTBEAT) return 'update';
-  if (Math.abs(state.sessionUtilization - previous.sessionUtilization) >= CLOUD_MIN_DELTA) return 'update';
-  if (usageLevel(state.sessionUtilization) !== usageLevel(previous.sessionUtilization)) return 'update';
+  const now = primaryUtilization(state);
+  const then = primaryUtilization(previous);
+  if (Math.abs(now - then) >= CLOUD_MIN_DELTA) return 'update';
+  if (usageLevel(now) !== usageLevel(then)) return 'update';
   return null;
 }
 

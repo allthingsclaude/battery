@@ -19,13 +19,29 @@ import java.time.Instant
  * FCM relay lands.)
  */
 data class UsagePayload(
-    // Session (5-hour) window
+    // Session (5-hour) window. 0 and null on an account without one — see
+    // [hasSessionLimit]; a session window is never invented to fill the slot.
     val sessionUtilization: Double,
     val sessionResetsAt: Instant?,
 
     // Weekly (7-day) window
     val weeklyUtilization: Double,
     val weeklyResetsAt: Instant?,
+
+    /**
+     * Whether the account is metered by a five-hour window at all.
+     *
+     * False for verified Ultra accounts, which have weekly limits only. Then the
+     * weekly window is the *primary* one — the window every glanceable surface
+     * leads with, the card tracks, alerts fire on and the burn rate describes —
+     * and session UI is hidden rather than drawn at a permanent 0%. Read every
+     * surface's number through [primaryUtilization] / [primaryResetsAt] rather
+     * than the session fields, so this switch is made once, here.
+     *
+     * Defaults to true so a payload stored by an earlier version — which only
+     * ever described accounts that had the window — still means what it meant.
+     */
+    val hasSessionLimit: Boolean = true,
 
     // The model-scoped 7-day window, null when the plan has none.
     val opusUtilization: Double? = null,
@@ -47,16 +63,20 @@ data class UsagePayload(
      */
     val extraUsage: ExtraUsage? = null,
 
-    // Precomputed burn-rate projection (see BurnRateCalculator — Phase 1)
+    // Precomputed burn-rate projection (see BurnRateCalculator — Phase 1), for
+    // the *primary* window: the session's when there is one, else the weekly.
     /** Percentage points per hour; 0 when unknown. */
     val burnRatePerHour: Double = 0.0,
-    /** When 100% is reached; null when not projected. */
+    /** When the primary window reaches 100%; null when not projected. */
     val projectedLimitAt: Instant? = null,
 
     // Context
-    /** A coding session is actively burning tokens right now. */
+    /**
+     * A coding session is actively burning tokens right now — inferred from the
+     * primary window's utilization rising, so it works on weekly-only accounts.
+     */
     val isSessionActive: Boolean = false,
-    /** "Pro" / "Max" / "Max 5x" / "" when unknown. */
+    /** "Pro" / "Max" / "Ultra" / "" when unknown. */
     val planTier: String = "",
     val accountName: String = "Account 1",
     val isConnected: Boolean = true,
@@ -64,6 +84,23 @@ data class UsagePayload(
 ) {
     val sessionLevel: UsageLevel get() = UsageLevel.from(sessionUtilization)
     val weeklyLevel: UsageLevel get() = UsageLevel.from(weeklyUtilization)
+
+    /**
+     * The window this account is actually stopped by first: the five-hour one
+     * when it exists, otherwise the weekly. Not [focusWindow], which picks
+     * whichever is *fuller* for a tight surface; this one decides what the card,
+     * the hero ring, the forecast and the alerts are about.
+     */
+    val primaryWindow: FocusWindow
+        get() = if (hasSessionLimit) FocusWindow.SESSION else FocusWindow.WEEKLY
+
+    val primaryUtilization: Double
+        get() = if (hasSessionLimit) sessionUtilization else weeklyUtilization
+
+    val primaryResetsAt: Instant?
+        get() = if (hasSessionLimit) sessionResetsAt else weeklyResetsAt
+
+    val primaryLevel: UsageLevel get() = UsageLevel.from(primaryUtilization)
 
     /**
      * Heading for the model-scoped weekly row.
@@ -74,14 +111,19 @@ data class UsagePayload(
      */
     val scopedTitle: String get() = scopedLabel.ifEmpty { "Opus" }
 
-    /** Whichever window is closer to its ceiling — what a glanceable surface leads with. */
-    val focusUtilization: Double get() = maxOf(sessionUtilization, weeklyUtilization)
+    /**
+     * Whichever window is closer to its ceiling — what a glanceable surface leads
+     * with. Simply the weekly on an account without a session window, whose
+     * stored 0% must never win a comparison it was not part of.
+     */
+    val focusUtilization: Double
+        get() = if (hasSessionLimit) maxOf(sessionUtilization, weeklyUtilization) else weeklyUtilization
 
     /**
-     * How far the *clock* has run through the five-hour window, 0–100. Null when
+     * How far the *clock* has run through the primary window, 0–100. Null when
      * no window is open, or when it cannot be computed honestly.
      *
-     * This is the budget line to compare [sessionUtilization] against: usage
+     * This is the budget line to compare [primaryUtilization] against: usage
      * behind it means the window is being spent slower than the clock, ahead of
      * it means faster. No other figure the app shows says that — the burn rate
      * answers "how fast", the projection answers "where will it land", neither
@@ -90,7 +132,8 @@ data class UsagePayload(
      * The window length has to be assumed rather than read, because the API only
      * reports when the window *ends*. macOS assumes the same five hours in
      * `UsageViewModel.menuBarText` (`18000 - remaining`, with the same comment),
-     * so at least the two agree.
+     * so at least the two agree; a weekly-only account's window is assumed to
+     * be the seven days its name says.
      *
      * Returning null rather than clamping when `remaining` exceeds the window is
      * deliberate: that means the assumption is wrong for this account, or the
@@ -98,11 +141,12 @@ data class UsagePayload(
      * mark is worse than no mark.
      */
     fun elapsedPercent(now: Instant = Instant.now()): Int? {
-        val resetsAt = sessionResetsAt ?: return null
+        val resetsAt = primaryResetsAt ?: return null
+        val window = primaryWindow.seconds
         val remaining = resetsAt.epochSecond - now.epochSecond
-        if (remaining < 0 || remaining > SESSION_WINDOW_SECONDS) return null
-        val elapsed = SESSION_WINDOW_SECONDS - remaining
-        return ((elapsed * 100.0) / SESSION_WINDOW_SECONDS).toInt().coerceIn(0, 100)
+        if (remaining < 0 || remaining > window) return null
+        val elapsed = window - remaining
+        return ((elapsed * 100.0) / window).toInt().coerceIn(0, 100)
     }
 
     /**
@@ -111,12 +155,24 @@ data class UsagePayload(
      * surface leads with".
      *
      * Ties go to the session: it is the faster-moving of the two and the one a
-     * reader can still act on.
+     * reader can still act on. Always the weekly when there is no session
+     * window to lead with.
      */
     val focusWindow: FocusWindow
-        get() = if (weeklyUtilization > sessionUtilization) FocusWindow.WEEKLY else FocusWindow.SESSION
+        get() = if (!hasSessionLimit || weeklyUtilization > sessionUtilization) {
+            FocusWindow.WEEKLY
+        } else {
+            FocusWindow.SESSION
+        }
 
-    enum class FocusWindow { SESSION, WEEKLY }
+    /**
+     * The two windows, with the length each is assumed to have. Assumed because
+     * the API reports only when a window ends, never how long it is.
+     */
+    enum class FocusWindow(val seconds: Long) {
+        SESSION(UsagePayload.SESSION_WINDOW_SECONDS),
+        WEEKLY(UsagePayload.WEEKLY_WINDOW_SECONDS),
+    }
 
     /**
      * A projection is only meaningful while it's still in the future and we have a
@@ -134,6 +190,9 @@ data class UsagePayload(
     fun sessionSecondsRemaining(now: Instant = Instant.now()): Long =
         sessionResetsAt?.let { maxOf(0L, it.epochSecond - now.epochSecond) } ?: 0L
 
+    fun primarySecondsRemaining(now: Instant = Instant.now()): Long =
+        primaryResetsAt?.let { maxOf(0L, it.epochSecond - now.epochSecond) } ?: 0L
+
     companion object {
         /**
          * The session window, in seconds. The API reports only when a window
@@ -142,6 +201,9 @@ data class UsagePayload(
          * `UsageViewModel.menuBarText`.
          */
         const val SESSION_WINDOW_SECONDS = 5L * 60 * 60
+
+        /** The weekly window, in seconds, assumed on the same terms. */
+        const val WEEKLY_WINDOW_SECONDS = 7L * 24 * 60 * 60
 
         /**
          * A neutral stand-in for surfaces that must render before any real data
@@ -165,7 +227,7 @@ data class UsagePayload(
          * foreground service has a few seconds to call `startForeground` or the
          * system kills it, so it *must* post something on a fresh install whose
          * first poll has not returned. [PLACEHOLDER] is the wrong thing to post
-         * there — it is demo data, and 87% with a live countdown and a "Max 5x"
+         * there — it is demo data, and 87% with a live countdown and a "Max"
          * badge is indistinguishable from a real reading on a lock screen. This
          * one is distinguishable: zeros, no window, no plan.
          */
@@ -195,7 +257,7 @@ data class UsagePayload(
                 burnRatePerHour = 9.2,
                 projectedLimitAt = Instant.now().plusSeconds(42 * 60),
                 isSessionActive = true,
-                planTier = "Max 5x",
+                planTier = "Max",
                 accountName = "Account 1",
                 isConnected = true,
                 updatedAt = Instant.now(),

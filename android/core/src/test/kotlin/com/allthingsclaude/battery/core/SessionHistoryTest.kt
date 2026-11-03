@@ -121,6 +121,36 @@ class SessionHistoryTest {
     }
 
     @Test
+    fun `session and weekly samples never share a regression`() {
+        // An account can gain or lose its five-hour limit between two polls.
+        // The windows' percentages are not comparable, so the buffer must start
+        // over rather than fit one line across both — even in the last five
+        // hours of a week, when the two can end at the very same instant.
+        val store = InMemorySnapshotStore(
+            listOf(
+                UsageSnapshot(now.minusSeconds(600), 10.0, resetsAt),
+                UsageSnapshot(now.minusSeconds(300), 20.0, resetsAt),
+            )
+        )
+        val h = SessionHistory(store)
+        h.record(21.0, resetsAt, now, weekly = true)
+
+        assertEquals(1, store.load().size, "session samples must not survive into a weekly buffer")
+        assertTrue(store.load().single().isWeekly)
+        // A single weekly sample cannot have risen, whatever the session did.
+        assertNull(h.lastRiseAt(resetsAt, weekly = true))
+        assertNull(h.lastRiseAt(resetsAt))
+    }
+
+    @Test
+    fun `a weekly buffer measures its own rises`() {
+        val h = SessionHistory(InMemorySnapshotStore())
+        h.record(30.0, resetsAt, now.minusSeconds(300), weekly = true)
+        h.record(31.0, resetsAt, now, weekly = true)
+        assertEquals(now, h.lastRiseAt(resetsAt, weekly = true))
+    }
+
+    @Test
     fun `the buffer is bounded`() {
         val store = InMemorySnapshotStore()
         val h = SessionHistory(store)
@@ -218,14 +248,15 @@ class UntilResetTest {
         // days out rendered "153h 0m" — a number nobody parses as "about a
         // week", and one iOS never shows.
         assertEquals("6d 9h", TimeFormatting.untilReset(6.0 * 86_400 + 9 * 3600))
-        assertEquals("7d 0h", TimeFormatting.untilReset(7.0 * 86_400))
+        // A whole number of days drops the "0h", as Swift's longDuration does.
+        assertEquals("7d", TimeFormatting.untilReset(7.0 * 86_400))
     }
 
     @Test
     fun `the boundary belongs to the day form`() {
         // shortDuration(86400) is pinned to "24h 0m" by the shared fixtures and
         // must keep returning that; the gate is what changes, not the formatter.
-        assertEquals("1d 0h", TimeFormatting.untilReset(86_400.0))
+        assertEquals("1d", TimeFormatting.untilReset(86_400.0))
         assertEquals("23h 59m", TimeFormatting.untilReset(86_400.0 - 60))
         assertEquals("24h 0m", TimeFormatting.shortDuration(86_400.0))
     }
@@ -297,9 +328,11 @@ class ApiShapeTest {
     }
 
     @Test
-    fun `the plan tier is read from the profile, and 20x is not plain Max`() {
-        // The live value. A contains("max") check ranks it as "Max", which is a
-        // different and cheaper plan — the narrower tiers must be tested first.
+    fun `the plan tier is read from the profile, and 20x is Ultra, not plain Max`() {
+        // The live value. Max 20x was renamed Ultra on 2026-10-30 without the
+        // tier string changing, and a contains("max") check ranks it as "Max",
+        // which is a different and cheaper plan — the narrower tiers must be
+        // tested first.
         val body = """
             {"account":{"email":"a@b.c","full_name":"Ivan"},
              "organization":{"rate_limit_tier":"default_claude_max_20x"}}
@@ -307,18 +340,38 @@ class ApiShapeTest {
         val profile = ProfileApi.parse(body)
         assertNotNull(profile)
         assertEquals("default_claude_max_20x", profile.rateLimitTier)
-        assertEquals("Max 20x", profile.planLabel)
+        assertEquals("Ultra", profile.planLabel)
     }
 
     @Test
     fun `every tier maps to something a reader recognises`() {
         fun label(tier: String) = ProfileApi.Profile(null, "x", tier).planLabel
-        assertEquals("Max 20x", label("default_claude_max_20x"))
-        assertEquals("Max 5x", label("default_claude_max_5x"))
+        assertEquals("Ultra", label("default_claude_max_20x"))
+        assertEquals("Ultra", label("claude_max20x"))
+        // The tier may yet be renamed to match the plan; it must not fall
+        // through to "" (or, worse, to "Max") when it is.
+        assertEquals("Ultra", label("default_claude_ultra"))
+        assertEquals("Ultra", label("DEFAULT_CLAUDE_ULTRA"))
+        // Max 5x is plain "Max" now — the same label the bare tier gets.
+        assertEquals("Max", label("default_claude_max_5x"))
+        assertEquals("Max", label("claude_max5x"))
         assertEquals("Max", label("claude_max"))
         assertEquals("Pro", label("default_claude_pro"))
         assertEquals("", label("something_unreleased"))
         assertEquals("", ProfileApi.Profile(null, "x", null).planLabel)
+    }
+
+    @Test
+    fun `labels stored before the rename are respelled on read`() {
+        // An account's label is resolved once at sign-in and never fetched
+        // again while it is non-empty, so without this every pre-rename
+        // account would wear "Max 20x" for good.
+        assertEquals("Ultra", ProfileApi.migratePlanLabel("Max 20x"))
+        assertEquals("Max", ProfileApi.migratePlanLabel("Max 5x"))
+        // Everything current passes through untouched.
+        for (label in listOf("Ultra", "Max", "Pro", "Team", "Enterprise", "")) {
+            assertEquals(label, ProfileApi.migratePlanLabel(label))
+        }
     }
 
     @Test

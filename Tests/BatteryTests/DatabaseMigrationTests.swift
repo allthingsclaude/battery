@@ -101,6 +101,56 @@ final class DatabaseMigrationTests: XCTestCase {
         XCTAssertEqual(loaded.first?.fableUtilization, 63)
     }
 
+    /// A database from before weekly-only plans has no `has_session_limit`.
+    /// The migration must add it, and the rows already there must read back as
+    /// session-window rows — which every row written then was.
+    func testInitializeAddsHasSessionLimitAndOldRowsReadAsSessionRows() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("battery-session-flag-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Seed the schema as it stood after fable_utilization, with one row.
+        let dbPath = dir.appendingPathComponent("battery.db").path
+        let legacy = try Connection(dbPath)
+        try legacy.execute("""
+        CREATE TABLE "usage_snapshots" (
+          "id" TEXT PRIMARY KEY NOT NULL,
+          "timestamp" REAL NOT NULL,
+          "session_utilization" REAL NOT NULL,
+          "session_resets_at" REAL NOT NULL,
+          "weekly_utilization" REAL NOT NULL,
+          "weekly_resets_at" REAL NOT NULL,
+          "sonnet_utilization" REAL,
+          "opus_utilization" REAL,
+          "fable_utilization" REAL,
+          "plan_tier" TEXT NOT NULL,
+          "account_id" TEXT
+        );
+        """)
+        let accountId = UUID()
+        try legacy.run(
+            "INSERT INTO usage_snapshots VALUES (?, ?, 20, 1000000, 30, 2000000, NULL, NULL, NULL, 'max', ?)",
+            UUID().uuidString, Date().addingTimeInterval(-60).timeIntervalSince1970, accountId.uuidString
+        )
+
+        let service = DatabaseService()
+        try await service.initialize(directory: dir)
+
+        try await service.saveSnapshot(UsageSnapshot(
+            sessionUtilization: 0,
+            sessionResetsAt: Date(timeIntervalSince1970: 0),
+            weeklyUtilization: 31,
+            weeklyResetsAt: Date(timeIntervalSince1970: 2_000_000),
+            planTier: "ultra",
+            accountId: accountId,
+            hasSessionLimit: false
+        ))
+
+        let loaded = try await service.getLatestSnapshots(count: 10, accountId: accountId)
+        XCTAssertEqual(loaded.map(\.hasSessionLimit), [true, false])
+    }
+
     /// Rows written before Fable tracking read back as nil rather than 0 — a
     /// zero would render as a real "0%" gauge in history.
     func testPreExistingRowsReadBackWithNilFable() async throws {

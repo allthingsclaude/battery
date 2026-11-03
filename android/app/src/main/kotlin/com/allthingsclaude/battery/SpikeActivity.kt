@@ -111,7 +111,11 @@ private fun SpikeScreen() {
                         style = MaterialTheme.typography.labelSmall,
                     )
                     Text(
-                        "Session ${p.sessionUtilization.toInt()}%  ·  Weekly ${p.weeklyUtilization.toInt()}%",
+                        if (p.hasSessionLimit) {
+                            "Session ${p.sessionUtilization.toInt()}%  ·  Weekly ${p.weeklyUtilization.toInt()}%"
+                        } else {
+                            "Weekly ${p.weeklyUtilization.toInt()}%  ·  no 5-hour limit"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(forecast.headline, style = MaterialTheme.typography.bodyMedium)
@@ -284,7 +288,11 @@ internal suspend fun refresh(
     when (val result = repository.poll()) {
         is UsageRepository.PollResult.Success -> {
             if (postCard) LiveUpdateNotifier.post(context, result.payload)
-            onResult(result.payload, "Updated ${result.payload.sessionUtilization.toInt()}%.")
+            val p = result.payload
+            // Names the window when it is the weekly one: a bare "Updated 28%."
+            // reads as the session percentage it always used to be.
+            val what = if (p.hasSessionLimit) "" else "weekly "
+            onResult(p, "Updated ${what}${p.primaryUtilization.toInt()}%.")
         }
         UsageRepository.PollResult.SignedOut ->
             onResult(null, "Session expired — sign in again.")

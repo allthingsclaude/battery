@@ -25,6 +25,38 @@ struct BurnRateProjection {
     }
 }
 
+/// Which usage window a projection is about.
+///
+/// Normally the five-hour session window. Accounts with no session limit
+/// (verified Ultra) are metered weekly only, so for them the weekly window is
+/// the one worth projecting.
+enum UsageWindow: String, Codable {
+    case session
+    case weekly
+
+    /// Nominal length of the window, for "time since reset" displays.
+    var duration: TimeInterval {
+        switch self {
+        case .session: return 5 * 3600
+        case .weekly: return 7 * 86400
+        }
+    }
+
+    func utilization(of snapshot: UsageSnapshot) -> Double {
+        switch self {
+        case .session: return snapshot.sessionUtilization
+        case .weekly: return snapshot.weeklyUtilization
+        }
+    }
+
+    func resetsAt(of snapshot: UsageSnapshot) -> Date {
+        switch self {
+        case .session: return snapshot.sessionResetsAt
+        case .weekly: return snapshot.weeklyResetsAt
+        }
+    }
+}
+
 enum BurnRateCalculator {
 
     /// Minimum number of snapshots needed for a meaningful projection.
@@ -39,18 +71,25 @@ enum BurnRateCalculator {
     ///   - snapshots: Recent usage snapshots in chronological order
     ///   - currentUtilization: The most recent utilization percentage (0-100)
     ///   - resetsAt: When the current usage window resets
+    ///   - window: Which window `currentUtilization` and `resetsAt` describe,
+    ///     and so which of each snapshot's readings to regress over.
     /// - Returns: A projection with burn rate, estimated limit time, and trend
     static func calculate(
         snapshots: [UsageSnapshot],
         currentUtilization: Double,
-        resetsAt: Date
+        resetsAt: Date,
+        window: UsageWindow = .session
     ) -> BurnRateProjection {
-        // Filter to only snapshots from the current session window.
-        // A session reset changes `sessionResetsAt`, so snapshots with a different
-        // reset time belong to a previous session and would poison the regression.
-        // Use 1-second tolerance to account for floating-point round-trips through SQLite.
+        // Filter to only snapshots from the current window. A reset changes the
+        // window's reset time, so snapshots with a different one belong to a
+        // previous window and would poison the regression. A snapshot taken
+        // while the account was metered differently carries no reading for this
+        // window at all — its session columns are placeholders when it had no
+        // session limit. Use 1-second tolerance to account for floating-point
+        // round-trips through SQLite.
         let currentSessionSnapshots = snapshots.filter {
-            abs($0.sessionResetsAt.timeIntervalSince(resetsAt)) < 1.0
+            (window == .weekly || $0.hasSessionLimit)
+                && abs(window.resetsAt(of: $0).timeIntervalSince(resetsAt)) < 1.0
         }
 
         guard currentSessionSnapshots.count >= minimumSnapshots else {
@@ -76,7 +115,7 @@ enum BurnRateCalculator {
 
         for snapshot in sorted {
             let x = (snapshot.timestamp.timeIntervalSince1970 - origin) / 3600.0  // hours
-            let y = snapshot.sessionUtilization
+            let y = window.utilization(of: snapshot)
             sumX += x
             sumY += y
             sumXY += x * y
@@ -89,7 +128,7 @@ enum BurnRateCalculator {
         }
 
         // Slope = percentage points per hour.
-        // Clamp to non-negative: within a single session window, utilization
+        // Clamp to non-negative: within a single window, utilization
         // can only increase (or stay flat). A negative slope would mean the
         // regression data is noisy, not that usage is actually decreasing.
         let rawSlope = (n * sumXY - sumX * sumY) / denominator

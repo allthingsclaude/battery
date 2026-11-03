@@ -1,6 +1,7 @@
 package com.allthingsclaude.battery.data
 
 import android.content.Context
+import com.allthingsclaude.battery.core.ProfileApi
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -45,7 +46,17 @@ class AccountStore(context: Context) {
                 val obj = array.getJSONObject(i)
                 // optString: accounts saved before the plan existed have no
                 // such key, and an empty badge is exactly what they mean.
-                Account(obj.getString("id"), obj.getString("name"), obj.optString("planTier", ""))
+                //
+                // Migrated on read: the label is resolved once at sign-in and
+                // never fetched again while it is non-empty, so an account
+                // stored as "Max 20x" before the plans were renamed would keep
+                // that badge forever. Respelled here, it heals everywhere at
+                // once and is written back the next time the list is saved.
+                Account(
+                    obj.getString("id"),
+                    obj.getString("name"),
+                    ProfileApi.migratePlanLabel(obj.optString("planTier", "")),
+                )
             }
         }.getOrDefault(emptyList())
     }

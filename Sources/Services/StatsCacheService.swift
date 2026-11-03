@@ -292,7 +292,13 @@ class StatsCacheService: ObservableObject {
 
     // MARK: - Project Token Usage
 
-    func scanProjectTokenUsage(from startDate: Date, to endDate: Date, limit: Int = 6) -> [ProjectTokenUsage] {
+    /// Per-project token share for a window, largest first.
+    ///
+    /// At most `limit` rows: when there are more projects than that, the last
+    /// row is "Other projects", rolling up the rest. The default is the ten
+    /// projects the popover can expand to, plus that roll-up — it shows five
+    /// until asked for more (see `ProjectTokenBreakdownView`).
+    func scanProjectTokenUsage(from startDate: Date, to endDate: Date, limit: Int = 11) -> [ProjectTokenUsage] {
         guard startDate < endDate else { return [] }
 
         let fm = FileManager.default
@@ -358,7 +364,7 @@ class StatsCacheService: ObservableObject {
         }
         let otherTokens = sortedTotals.dropFirst(visibleCount).reduce(0) { $0 + $1.tokens }
         let other = ProjectTokenUsage(
-            id: "__other_projects__",
+            id: ProjectTokenUsage.otherProjectsID,
             name: "Other projects",
             path: "Other projects",
             tokens: otherTokens,

@@ -8,6 +8,9 @@ import java.time.Instant
 /**
  * Remembers that the user swiped the card away, so nothing reposts it.
  *
+ * Callers pass the payload's *primary* window — the weekly one on an account
+ * with no five-hour limit, where a swipe therefore holds until the weekly reset.
+ *
  * Google is explicit that reposting a dismissed Live Update is what drives users
  * to revoke an app's promotion permission — and that revocation is effectively
  * permanent, recoverable only through a settings deep link the user has no

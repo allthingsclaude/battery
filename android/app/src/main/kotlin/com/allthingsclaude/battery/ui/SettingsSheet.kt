@@ -74,6 +74,12 @@ fun SettingsSheet(
     updateState: UpdateUiState,
     appIcon: AppIcon,
     onAppIconChange: (AppIcon) -> Unit,
+    /**
+     * From the last payload. Only rewords the card modes — see
+     * [SessionPolicy.Mode.subtitle] — so an unknown answer falls back to the
+     * session wording every account had before weekly-only ones existed.
+     */
+    hasSessionLimit: Boolean = true,
 ) {
     val context = LocalContext.current
     val settings = remember { Settings(context) }
@@ -105,8 +111,8 @@ fun SettingsSheet(
         SectionHeader("Lock-screen card")
         SessionPolicy.Mode.entries.forEach { mode ->
             ChoiceRow(
-                title = mode.title,
-                subtitle = mode.subtitle,
+                title = mode.title(hasSessionLimit),
+                subtitle = mode.subtitle(hasSessionLimit),
                 selected = mode == cardMode,
                 onClick = {
                     cardMode = mode
@@ -120,7 +126,7 @@ fun SettingsSheet(
         val gate = remember { NowBarGate.state(context) }
         when (gate) {
             NowBarGate.State.ENABLED -> StatusNote(
-                "Enabled — the session card appears on the Now Bar, the lock " +
+                "Enabled — the usage card appears on the Now Bar, the lock " +
                     "screen and the status bar."
             )
             NowBarGate.State.NOT_APPLICABLE -> StatusNote(

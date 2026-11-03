@@ -18,6 +18,15 @@ struct SettingsView: View {
     private var mode: LiveActivityMode { LiveActivityMode(rawValue: modeRaw) ?? .smart }
     private var appIcon: AppIconChoice { AppIconChoice(rawValue: appIconRaw) ?? .light }
 
+    /// Names the window the Live Activity actually follows — the week, for an
+    /// account with no five-hour limit.
+    private var alwaysOnFooter: String {
+        let what = service.payload?.hasSessionLimit == false
+            ? "your weekly usage on your Lock Screen and Dynamic Island"
+            : "the session on your Lock Screen and Dynamic Island the whole window"
+        return "“Always On” keeps \(what). It may appear dimmed if the app hasn’t refreshed recently in the background."
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -43,7 +52,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Lock Screen Live Activity")
                 } footer: {
-                    Text("“Always On” keeps the session on your Lock Screen and Dynamic Island the whole window. It may appear dimmed if the app hasn’t refreshed recently in the background.")
+                    Text(alwaysOnFooter)
                 }
 
                 if relay.isConfigured {

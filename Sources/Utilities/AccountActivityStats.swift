@@ -3,12 +3,13 @@ import Foundation
 /// Streak, heat map and sparkline derived from one account's recorded daily
 /// peaks.
 ///
-/// A day counts as active for an account when Battery recorded at least one
-/// snapshot for it that day. Snapshots are only written while a five-hour
-/// window is open, so a day being present means that account was actually
-/// used — and the peak itself may legitimately be 0 (a window opened but never
-/// registered measurable usage), which is why activity keys on presence rather
-/// than on a non-zero value.
+/// A day counts as active for an account when it appears in `dayPeaks`.
+/// `DatabaseService.dailyPeakUtilization` decides that: for an account with a
+/// five-hour window, any snapshot that day (they are only written while a
+/// window is open), so the peak itself may legitimately be 0 — a window opened
+/// but never registered measurable usage — which is why activity keys on
+/// presence rather than on a non-zero value. For a weekly-only account, only a
+/// day whose weekly utilization rose.
 struct AccountActivityStats {
     var currentStreak: Int = 0
     /// Day → peak session utilization, for the heat map window. Only days with

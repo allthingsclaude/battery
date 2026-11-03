@@ -39,6 +39,24 @@ struct UsageResponse: Codable {
     }
 
     var fableUtilization: Double? { fableLimit?.utilization }
+
+    /// The five-hour window, from `five_hour` or, failing that, the `limits`
+    /// array's `session` entry.
+    ///
+    /// Nil means the account has no five-hour limit at all. That is not an
+    /// error: verified Ultra accounts (the plan formerly sold as Max 20x) are
+    /// metered weekly only, and the API answers for them with
+    /// `"five_hour": null` and no `session` entry.
+    var sessionBucket: UsageBucket? {
+        if let fiveHour { return fiveHour }
+        guard let session = limits.first(where: { $0.kind == "session" }) else { return nil }
+        return UsageBucket(utilization: session.utilization, resetsAt: session.resetsAt)
+    }
+
+    /// Whether this account is metered by a five-hour window at all. When it
+    /// isn't, the weekly window is the one that can stop work, so it takes
+    /// over everything the session window used to drive.
+    var hasSessionLimit: Bool { sessionBucket != nil }
 }
 
 /// One entry in the API's `limits` array — a generic per-window shape that sits

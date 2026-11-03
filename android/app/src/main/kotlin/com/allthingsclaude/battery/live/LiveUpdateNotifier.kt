@@ -47,6 +47,12 @@ import kotlin.math.roundToInt
  * notification still posts and still looks correct in the shade — it simply
  * never gets promoted, and nothing is logged to say why. That silence is why
  * [diagnose] exists.
+ *
+ * The card follows the payload's **primary** window. On an account with no
+ * five-hour limit that is the weekly one: the bar, the ring, the colour, the
+ * chip and the forecast line all describe the week, the copy says "weekly"
+ * wherever it would have said "session", and nothing session-shaped — a 0%
+ * session, a five-hour countdown — is drawn for a window that does not exist.
  */
 object LiveUpdateNotifier {
 
@@ -61,7 +67,13 @@ object LiveUpdateNotifier {
         val channel = NotificationChannelCompat
             .Builder(CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_DEFAULT)
             .setName("Session usage")
-            .setDescription("Your live Claude Code 5-hour session window")
+            // One channel for both kinds of account. Only the description says
+            // so: the name is what every existing install already shows in its
+            // notification settings, and a channel is not worth renaming.
+            .setDescription(
+                "Your live Claude Code usage: the 5-hour session window, or the " +
+                    "weekly window on accounts without a 5-hour limit"
+            )
             .build()
         NotificationManagerCompat.from(context).createNotificationChannel(channel)
     }
@@ -72,8 +84,8 @@ object LiveUpdateNotifier {
         didReset: Boolean = false,
         alertLevel: UsageLevel? = null,
     ): Notification {
-        val percent = payload.sessionUtilization.roundToInt().coerceIn(0, 100)
-        val level = UsageLevel.from(payload.sessionUtilization)
+        val percent = payload.primaryUtilization.roundToInt().coerceIn(0, 100)
+        val level = payload.primaryLevel
 
         val style = NotificationCompat.ProgressStyle()
             // The tracker sits at the live value; segments below paint the ramp.
@@ -122,15 +134,13 @@ object LiveUpdateNotifier {
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_battery)
-            .setContentTitle(if (didReset) "Session reset" else title(payload))
+            .setContentTitle(if (didReset) resetTitle(payload) else title(payload))
             // Renders as a circular badge at the top right of the expanded card
             // and the shade entry. Ignored by the collapsed Now Bar pill, which
             // draws the small icon on a coloured disc instead — so this is the
             // only place the ring reaches a lock screen.
-            .setLargeIcon(UsageRingRenderer.renderBadge(payload.sessionUtilization))
-            .setContentText(
-                if (didReset) "A fresh 5-hour window just opened." else headline(payload)
-            )
+            .setLargeIcon(UsageRingRenderer.renderBadge(payload.primaryUtilization))
+            .setContentText(if (didReset) resetText(payload) else headline(payload))
             // An alerting update makes a sound and shows a banner. Only ever set
             // on a level crossing — SessionPolicy guarantees at most one per
             // level, because re-alerting on every poll at 91% is how a user
@@ -173,7 +183,11 @@ object LiveUpdateNotifier {
 
         // The countdown to reset, ticked by the system with zero updates from us —
         // the direct analogue of iOS's `Text(resetsAt, style: .relative)`.
-        payload.sessionResetsAt?.let { resetsAt ->
+        //
+        // Session only. The chronometer has no day unit, so a weekly reset six
+        // days out would tick as "153:12:45" in the shade header; the weekly
+        // countdown is in the title instead, in days, where it reads.
+        payload.sessionResetsAt?.takeIf { payload.hasSessionLimit }?.let { resetsAt ->
             builder.setWhen(resetsAt.toEpochMilli())
                 .setShowWhen(true)
                 .setUsesChronometer(true)
@@ -257,7 +271,7 @@ object LiveUpdateNotifier {
             .setAction(CardDismissedReceiver.ACTION)
             .putExtra(
                 CardDismissedReceiver.EXTRA_WINDOW,
-                payload.sessionResetsAt?.toEpochMilli() ?: -1L,
+                payload.primaryResetsAt?.toEpochMilli() ?: -1L,
             )
         return android.app.PendingIntent.getBroadcast(
             context,
@@ -353,8 +367,25 @@ object LiveUpdateNotifier {
      */
     private fun title(payload: UsagePayload): String {
         val weekly = payload.weeklyUtilization.roundToInt()
+        // With no session window the weekly *is* the glance, so it leads and is
+        // named in full — "Weekly 28% · 6d9h" — rather than trailing as "wk".
+        // Nothing else on the card would otherwise say which window this is.
+        if (!payload.hasSessionLimit) {
+            return listOfNotNull("Weekly $weekly%", remaining(payload)).joinToString(" · ")
+        }
         return listOfNotNull(glance(payload), "wk $weekly%").joinToString(" · ")
     }
+
+    /** The reset card's title, naming the window that actually rolled over. */
+    private fun resetTitle(payload: UsagePayload): String =
+        if (payload.hasSessionLimit) "Session reset" else "Weekly limit reset"
+
+    private fun resetText(payload: UsagePayload): String =
+        if (payload.hasSessionLimit) {
+            "A fresh 5-hour window just opened."
+        } else {
+            "A fresh weekly window just opened."
+        }
 
     /**
      * `11% · 1h17m` — percentage first, then time left in the window.
@@ -365,14 +396,18 @@ object LiveUpdateNotifier {
      * have to read them differently.
      */
     private fun glance(payload: UsagePayload, separator: String = " · "): String =
-        listOfNotNull("${payload.sessionUtilization.roundToInt()}%", remaining(payload))
+        listOfNotNull("${payload.primaryUtilization.roundToInt()}%", remaining(payload))
             .joinToString(separator)
 
-    /** Time left in the session window, compact: `1h17m`, `47m`. Null once past. */
-    private fun remaining(payload: UsagePayload): String? = payload.sessionResetsAt
+    /**
+     * Time left in the primary window, compact: `1h17m`, `47m`, or `6d9h` for
+     * a weekly one. Null once past. [TimeFormatting.untilReset] rather than
+     * `shortDuration`, which has no day unit and would spell a week "153h0m".
+     */
+    private fun remaining(payload: UsagePayload): String? = payload.primaryResetsAt
         ?.let { (it.toEpochMilli() - System.currentTimeMillis()) / 1000.0 }
-        ?.takeIf { it > 0 }
-        ?.let { TimeFormatting.shortDuration(it).replace(" ", "") }
+        ?.let { TimeFormatting.untilReset(it) }
+        ?.replace(" ", "")
 
     /**
      * The status-bar chip, and the pill's second line — one string, two
@@ -384,9 +419,17 @@ object LiveUpdateNotifier {
      * Session only, not [UsagePayload.focusWindow]. Both windows already appear
      * in [title]; what the chip wants is the fast-moving one a reader can still
      * act on.
+     *
+     * With no session window the weekly is that number, and it carries its
+     * `wk` prefix: the chip is the one surface with no room for anything else,
+     * and a bare percentage there would read as the session it used to be.
      */
     private fun criticalText(payload: UsagePayload): String =
-        "${payload.sessionUtilization.roundToInt()}%"
+        if (payload.hasSessionLimit) {
+            "${payload.sessionUtilization.roundToInt()}%"
+        } else {
+            "wk ${payload.weeklyUtilization.roundToInt()}%"
+        }
 
     /**
      * The marks on the bar. At most two, and they answer different questions.

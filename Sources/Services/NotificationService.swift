@@ -6,7 +6,10 @@ class NotificationService {
     private var notifiedThresholds: Set<Int> = []
     private var lastProjectionNotification: Date?
     private var lastResetNotification: Date?
-    private var previousSessionUtilization: Double?
+    /// The last reading checked, and which window it was for. A switch between
+    /// windows (Ultra verification landing or lapsing) is not a reset, however
+    /// far the number moves.
+    private var previousReading: (window: UsageWindow, utilization: Double)?
     private var lastCredentialNotification: Date?
 
     private let projectionDebounceInterval: TimeInterval = 1800  // 30 minutes
@@ -24,39 +27,51 @@ class NotificationService {
         }
     }
 
+    /// - Parameters:
+    ///   - window: The window that can stop work — the five-hour session, or
+    ///     the weekly window for an account with no session limit.
+    ///   - utilization: That window's utilization.
+    ///   - resetsAt: When that window resets.
     func checkAndNotify(
-        sessionUtilization: Double,
-        weeklyUtilization: Double,
+        window: UsageWindow,
+        utilization: Double,
         projection: BurnRateProjection? = nil,
-        sessionResetsAt: Date? = nil,
+        resetsAt: Date? = nil,
         settings: AppSettings = .shared
     ) {
+        if let previous = previousReading, previous.window != window {
+            // Thresholds crossed in one window say nothing about the other.
+            notifiedThresholds.removeAll()
+            thresholdNotifiedAt.removeAll()
+            previousReading = nil
+        }
+
         // Threshold-based notifications
-        checkThresholds(sessionUtilization: sessionUtilization, settings: settings)
+        checkThresholds(window: window, utilization: utilization, settings: settings)
 
         // Projection-based notification: projected to hit limit within 30 min
-        // Skip if the projected limit is after the session reset (usage resets first)
+        // Skip if the projected limit is after the window resets (usage resets first)
         if let projection = projection, let limitTime = projection.projectedLimitTime {
-            let limitAfterReset = sessionResetsAt.map { limitTime > $0 } ?? false
+            let limitAfterReset = resetsAt.map { limitTime > $0 } ?? false
             let remaining = limitTime.timeIntervalSinceNow
             if remaining > 0 && remaining < 1800 && !limitAfterReset {
                 if shouldSendProjectionNotification() {
                     sendNotification(
                         title: "Approaching Usage Limit",
-                        body: "At current pace, you'll hit the session limit in \(TimeFormatting.shortDuration(remaining))."
+                        body: "At current pace, you'll hit the \(Self.limitName(window)) in \(TimeFormatting.shortDuration(remaining))."
                     )
                     lastProjectionNotification = Date()
                 }
             }
         }
 
-        // Session reset detection: utilization dropped significantly
-        if let previous = previousSessionUtilization,
-           previous > 30 && sessionUtilization < 10 {
+        // Reset detection: utilization dropped significantly
+        if let previous = previousReading?.utilization,
+           previous > 30 && utilization < 10 {
             if shouldSendResetNotification() {
                 sendNotification(
-                    title: "Session Reset",
-                    body: "Your 5-hour session usage has reset. You're back to \(Int(sessionUtilization.rounded()))%."
+                    title: window == .session ? "Session Reset" : "Weekly Usage Reset",
+                    body: "Your \(window == .session ? "5-hour session" : "weekly") usage has reset. You're back to \(Int(utilization.rounded()))%."
                 )
                 lastResetNotification = Date()
                 // Clear notified thresholds on reset
@@ -65,7 +80,7 @@ class NotificationService {
             }
         }
 
-        previousSessionUtilization = sessionUtilization
+        previousReading = (window, utilization)
     }
 
     func notifyTokenRefreshFailure() {
@@ -87,7 +102,7 @@ class NotificationService {
 
     // MARK: - Private
 
-    private func checkThresholds(sessionUtilization: Double, settings: AppSettings) {
+    private func checkThresholds(window: UsageWindow, utilization: Double, settings: AppSettings) {
         let activeThresholds: [(Int, Bool)] = [
             (80, settings.notifyAt80),
             (90, settings.notifyAt90),
@@ -96,17 +111,23 @@ class NotificationService {
 
         for (threshold, enabled) in activeThresholds {
             guard enabled else { continue }
-            if sessionUtilization >= Double(threshold) && !notifiedThresholds.contains(threshold) {
+            if utilization >= Double(threshold) && !notifiedThresholds.contains(threshold) {
                 if shouldSendThresholdNotification(threshold) {
                     sendNotification(
-                        title: "Session Usage at \(threshold)%",
-                        body: "Your 5-hour Claude Code session is at \(Int(sessionUtilization.rounded()))% utilization."
+                        title: "\(window == .session ? "Session" : "Weekly") Usage at \(threshold)%",
+                        body: window == .session
+                            ? "Your 5-hour Claude Code session is at \(Int(utilization.rounded()))% utilization."
+                            : "Your weekly Claude usage is at \(Int(utilization.rounded()))% utilization."
                     )
                     notifiedThresholds.insert(threshold)
                     thresholdNotifiedAt[threshold] = Date()
                 }
             }
         }
+    }
+
+    private static func limitName(_ window: UsageWindow) -> String {
+        window == .session ? "session limit" : "weekly limit"
     }
 
     private func shouldSendThresholdNotification(_ threshold: Int) -> Bool {

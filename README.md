@@ -11,6 +11,7 @@ Battery lives in your menu bar and shows how much of your Claude Code rate limit
 ## Features
 
 - **Session & weekly gauges** - Circular progress rings showing utilization for both the 5-hour and 7-day rate limit windows
+- **Ultra plan support** - Accounts with no 5-hour limit (verified Ultra, formerly Max 20x) are tracked on their weekly window: menu bar, gauge, projections, alerts and history all follow it
 - **Opus tracking** - Separate gauge for Opus model usage when applicable
 - **Extra usage monitoring** - Track overuse credits and monthly spending limits
 - **Burn rate projections** - Linear regression on recent snapshots predicts when you'll hit your limit and what your utilization will be at reset

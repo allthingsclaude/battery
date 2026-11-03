@@ -90,7 +90,9 @@ class WidgetRefreshWorker(
      * Closes the hole left by `card ⟺ service ⟺ polling`: when SessionPolicy
      * says Hide the service stops, and with it the only thing that polls, so
      * nothing notices a new five-hour window and the card cannot return until
-     * the app is opened by hand.
+     * the app is opened by hand. On an account with no five-hour limit the same
+     * hole is "usage started rising again", and the policy's activity rule
+     * covers it the same way.
      *
      * **This posts the notification directly and must not start the service.**
      * The first version called `SessionService.start` and threw
@@ -124,9 +126,9 @@ class WidgetRefreshWorker(
         // The user swiped this window's card away. Reposting it is the single
         // action that costs an app its promotion permission, and the worker is
         // not exempt from that just because it is a background job.
-        if (CardDismissal(context).isDismissed(payload.sessionResetsAt)) return
+        if (CardDismissal(context).isDismissed(payload.primaryResetsAt)) return
 
-        Log.i(TAG, "posting card from the background; window open at ${payload.sessionUtilization.toInt()}%")
+        Log.i(TAG, "posting card from the background; window open at ${payload.primaryUtilization.toInt()}%")
         LiveUpdateNotifier.post(context, payload)
     }
 

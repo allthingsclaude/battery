@@ -36,7 +36,7 @@ enum MenuBarLabel {
         let spacing = (drawIcon && hasText) ? gap : 0
 
         let fraction = viewModel.isConnected
-            ? Double(settings.displayPercentage(for: viewModel.sessionUtilization)) / 100
+            ? Double(settings.displayPercentage(for: viewModel.primaryUtilization)) / 100
             : 0
 
         let width = ceil(iconWidth + spacing + textSize.width)

@@ -34,8 +34,10 @@ enum BurnRateCalculator {
         currentUtilization: Double,
         resetsAt: Date
     ) -> BurnRateProjection {
-        // Only keep samples belonging to the current session window; a reset
-        // changes `sessionResetsAt` and would otherwise poison the regression.
+        // Only keep samples belonging to the current window; a reset changes
+        // `sessionResetsAt` and would otherwise poison the regression. (That's
+        // the weekly window's reset for an account with no session limit — see
+        // `SessionHistory`, which also keeps the two windows' samples apart.)
         let currentSession = snapshots.filter {
             abs($0.sessionResetsAt.timeIntervalSince(resetsAt)) < 1.0
         }

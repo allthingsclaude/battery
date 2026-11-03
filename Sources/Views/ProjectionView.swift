@@ -3,7 +3,11 @@ import SwiftUI
 /// Displays burn rate projections when sufficient data is available.
 struct ProjectionView: View {
     let projection: BurnRateProjection?
-    let sessionResetsAt: Date?
+    /// When the projected window resets.
+    let resetsAt: Date?
+    /// The window projected: the session, or the weekly window for an account
+    /// with no session limit.
+    var window: UsageWindow = .session
 
     var body: some View {
         if let projection = projection, projection.hasEnoughData {
@@ -21,21 +25,22 @@ struct ProjectionView: View {
 
                 if let limitTime = projection.projectedLimitTime {
                     let remaining = limitTime.timeIntervalSinceNow
-                    let limitAfterReset = sessionResetsAt.map { limitTime > $0 } ?? false
-                    if remaining > 0 && remaining < 18000 { // Only show if < 5 hours away
+                    let limitAfterReset = resetsAt.map { limitTime > $0 } ?? false
+                    // Only show if it could land within one window's length
+                    if remaining > 0 && remaining < window.duration {
                         HStack(spacing: 4) {
                             if limitAfterReset {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.caption2)
                                     .foregroundStyle(safeColor)
-                                Text("Limit in \(TimeFormatting.shortDuration(remaining)) (after reset)")
+                                Text("Limit in \(TimeFormatting.longDuration(remaining)) (after reset)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             } else {
                                 Image(systemName: "exclamationmark.triangle.fill")
                                     .font(.caption2)
                                     .foregroundStyle(remaining < 1800 ? warningCriticalColor : warningColor)
-                                Text("Limit in \(TimeFormatting.shortDuration(remaining))")
+                                Text("Limit in \(TimeFormatting.longDuration(remaining))")
                                     .font(.caption)
                                     .foregroundStyle(remaining < 1800 ? warningCriticalColor : .primary)
                             }
@@ -121,6 +126,11 @@ struct ProjectionView: View {
         let absRate = abs(rate)
         if absRate < 0.1 {
             return "Burn rate: minimal"
+        }
+        // A weekly pace reads naturally per day: "9.6%/day" rather than
+        // "0.4%/hr".
+        if window == .weekly {
+            return String(format: "Burn rate: %.1f%%/day", absRate * 24)
         }
         return String(format: "Burn rate: %.1f%%/hr", absRate)
     }
