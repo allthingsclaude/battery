@@ -328,11 +328,11 @@ class StatsCacheService: ObservableObject {
             }
         }
 
-        let totalTokens = totals.values.reduce(0) { $0 + $1.tokens }
+        let projects = Self.foldIntoProjects(totals) { self.displayName(forPath: $0) }
+        let totalTokens = projects.reduce(0) { $0 + $1.tokens }
         guard totalTokens > 0 else { return [] }
 
-        let sortedTotals = totals
-            .values
+        let sortedTotals = projects
             .sorted { lhs, rhs in
                 if lhs.tokens == rhs.tokens {
                     return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
@@ -973,6 +973,79 @@ class StatsCacheService: ObservableObject {
         }
 
         return nil
+    }
+
+    /// Combines working directories that belong to the same project: a session
+    /// started in `repo/web` and one started in `repo` both count toward `repo`,
+    /// as do sessions in the repo's linked worktrees. Paths that no longer exist
+    /// keep their recorded directory.
+    private static func foldIntoProjects(
+        _ totals: [String: ProjectTokenAccumulator],
+        displayName: (String) -> String?
+    ) -> [ProjectTokenAccumulator] {
+        var folded: [String: ProjectTokenAccumulator] = [:]
+        for entry in totals.values {
+            let root = projectRoot(for: entry.path)
+            if var existing = folded[root] {
+                existing.tokens += entry.tokens
+                folded[root] = existing
+            } else {
+                let name = root == entry.path ? entry.name : (displayName(root) ?? root)
+                folded[root] = ProjectTokenAccumulator(name: name, path: root, tokens: entry.tokens)
+            }
+        }
+        return Array(folded.values)
+    }
+
+    /// The Git project a directory belongs to: the nearest enclosing directory
+    /// with a `.git`, and for a linked worktree, the main checkout it was made
+    /// from. Returns the path unchanged when no enclosing repository exists.
+    ///
+    /// The walk stops below the home directory, so a dotfiles repo at `~`
+    /// doesn't swallow every folder that isn't a repository of its own.
+    static func projectRoot(
+        for path: String,
+        home: String = FileManager.default.homeDirectoryForCurrentUser.path,
+        fileManager fm: FileManager = .default
+    ) -> String {
+        guard path.hasPrefix("/") else { return path }
+        let start = URL(fileURLWithPath: path).standardizedFileURL
+        let homePath = URL(fileURLWithPath: home).standardizedFileURL.path
+        var cursor = start
+        while cursor.path != "/" {
+            if cursor.path == homePath, cursor.path != start.path { break }
+            let git = cursor.appendingPathComponent(".git")
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: git.path, isDirectory: &isDirectory) {
+                if !isDirectory.boolValue,
+                   let main = mainCheckout(forGitFile: git, in: cursor) {
+                    return main
+                }
+                return cursor.path
+            }
+            cursor.deleteLastPathComponent()
+        }
+        return path
+    }
+
+    /// A worktree's `.git` is a file pointing at `<main>/.git/worktrees/<name>`,
+    /// whose `commondir` leads back to `<main>/.git`. Submodules have a `.git`
+    /// file too but no `commondir`, so they stay projects of their own.
+    private static func mainCheckout(forGitFile git: URL, in directory: URL) -> String? {
+        guard let text = try? String(contentsOf: git, encoding: .utf8),
+              text.hasPrefix("gitdir:") else { return nil }
+        let target = text.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+        let gitDir = URL(fileURLWithPath: target, isDirectory: true, relativeTo: directory).standardizedFileURL
+        guard let common = try? String(contentsOf: gitDir.appendingPathComponent("commondir"), encoding: .utf8) else {
+            return nil
+        }
+        let commonDir = URL(
+            fileURLWithPath: common.trimmingCharacters(in: .whitespacesAndNewlines),
+            isDirectory: true,
+            relativeTo: gitDir
+        ).standardizedFileURL
+        guard commonDir.lastPathComponent == ".git" else { return nil }
+        return commonDir.deletingLastPathComponent().path
     }
 
     private func projectIdentity(cwd: String?, projectDirectoryName: String) -> (name: String, path: String) {
