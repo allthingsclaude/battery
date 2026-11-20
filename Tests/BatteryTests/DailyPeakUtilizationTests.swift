@@ -8,6 +8,12 @@ final class DailyPeakUtilizationTests: XCTestCase {
 
     private let calendar = Calendar.current
 
+    /// Queries end at the close of today, not `Date()`: the fixtures sit at
+    /// today's noon, which is still in the future when tests run before it.
+    private var endOfToday: Date {
+        calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date()))!
+    }
+
     private func makeService() async throws -> (DatabaseService, URL) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("battery-peaks-\(UUID().uuidString)", isDirectory: true)
@@ -43,8 +49,8 @@ final class DailyPeakUtilizationTests: XCTestCase {
         try await service.saveSnapshot(snapshot(at: yesterdayNoon, utilization: 55, account: bob))
 
         let start = calendar.date(byAdding: .day, value: -7, to: calendar.startOfDay(for: Date()))!
-        let alicePeaks = try await service.dailyPeakUtilization(from: start, to: Date(), accountId: alice)
-        let bobPeaks = try await service.dailyPeakUtilization(from: start, to: Date(), accountId: bob)
+        let alicePeaks = try await service.dailyPeakUtilization(from: start, to: endOfToday, accountId: alice)
+        let bobPeaks = try await service.dailyPeakUtilization(from: start, to: endOfToday, accountId: bob)
 
         XCTAssertEqual(alicePeaks.count, 1)
         XCTAssertEqual(alicePeaks[calendar.startOfDay(for: noon)], 40)
@@ -92,7 +98,7 @@ final class DailyPeakUtilizationTests: XCTestCase {
         try await service.saveSnapshot(snapshot(at: longAgo, utilization: 99, account: account))
 
         let start = calendar.date(byAdding: .day, value: -35, to: calendar.startOfDay(for: Date()))!
-        let peaks = try await service.dailyPeakUtilization(from: start, to: Date(), accountId: account)
+        let peaks = try await service.dailyPeakUtilization(from: start, to: endOfToday, accountId: account)
 
         XCTAssertEqual(peaks.count, 1)
         XCTAssertNil(peaks[calendar.startOfDay(for: longAgo)])
@@ -109,7 +115,7 @@ final class DailyPeakUtilizationTests: XCTestCase {
         try await service.saveSnapshot(snapshot(at: noon, utilization: 0, account: account))
 
         let start = calendar.date(byAdding: .day, value: -7, to: calendar.startOfDay(for: Date()))!
-        let peaks = try await service.dailyPeakUtilization(from: start, to: Date(), accountId: account)
+        let peaks = try await service.dailyPeakUtilization(from: start, to: endOfToday, accountId: account)
 
         XCTAssertEqual(peaks[calendar.startOfDay(for: noon)], 0)
     }
